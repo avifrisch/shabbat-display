@@ -1,6 +1,8 @@
 cache.json
 cache.json.tmp
+settings.json
 *.log
 *.log.old
+launcher.lock
 browser-profile/
 __pycache__/

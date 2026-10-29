@@ -1,6 +1,6 @@
 # Shabbat Display
 
-A full-screen dashboard for a spare laptop. It updates itself on fixed timers and needs no one to touch it, from candle lighting through havdalah.
+A full-screen dashboard for a spare Windows PC or laptop, or a Raspberry Pi on a wall monitor. It updates itself on fixed timers and needs no one to touch it, from candle lighting through havdalah.
 
 **What it shows**
 
@@ -29,38 +29,77 @@ A full-screen dashboard for a spare laptop. It updates itself on fixed timers an
 
 If a source fails, the screen keeps showing the last good data, notes how old it is, and the server keeps retrying. Everything is also saved to `cache.json`, so a restart comes back with data right away.
 
-## Setup on a Windows laptop
+## Setup on a Windows PC or laptop
 
-1. **Install Python 3** from python.org. On the first installer screen, tick **Add python.exe to PATH**.
-2. **Copy this folder** somewhere permanent, such as `C:\ShabbatDisplay`.
-3. **Test the feeds.** Double-click `check-feeds.bat`. Every line should say OK. One or two failures on the first try are usually a slow connection.
-4. **Start it.** Double-click `start-display.bat`. Chrome (or Edge if Chrome isn't installed) opens full screen on the dashboard.
-   - The launcher restarts the server or the browser if either one closes or crashes.
-   - To get out of full screen, press Alt+F4.
-5. **Start it automatically.**
-   - Press Win+R, type `shell:startup`, and press Enter.
-   - Put a shortcut to `start-display.bat` in that folder.
+1. **Copy this folder** somewhere permanent, such as `C:\ShabbatDisplay`. Not Downloads, and not inside the zip.
+2. **Double-click `setup-windows.bat`.** It asks before each change:
+   - installs Python 3 with winget if it isn't already installed (nothing else to install)
+   - creates `settings.json`
+   - tests every data source
+   - sets the screen and computer to never sleep while plugged in, and lid close to do nothing
+   - makes the display start when you sign in
+   - starts it
+3. **Do the manual steps** under [Keeping it running unattended](#keeping-it-running-unattended).
 
-## Windows settings for a 25-hour unattended run
+Chrome is used if it's installed; otherwise Edge, which comes with Windows.
 
-- **Power:** while it's running, the launcher tells Windows to keep the screen on and not sleep, and the page asks the browser to do the same. As a backup, set "When plugged in, turn off my screen" and "put my device to sleep" to **Never**. **Lid close must be set to Do nothing**: nothing a program does can override closing the lid. Keep it plugged in.
+## Setup on a Raspberry Pi
+
+**What you need:** a Raspberry Pi 4 (2 GB or more) or Pi 5, its official power supply, a microSD card of 16 GB or more, and an HDMI cable for the monitor or TV.
+
+1. **Install Raspberry Pi OS.** In Raspberry Pi Imager, choose **Raspberry Pi OS (64-bit)**, the version with the desktop. Under the settings (gear icon), set a username and password and your Wi-Fi, and turn on SSH if you want to manage it from another computer.
+2. **Copy this folder to the Pi**, into the home folder. Either:
+   - put it on a USB stick and drag it across in the Pi's file manager, or
+   - from another computer: `scp -r shabbat-display <user>@<pi-name>.local:~/`
+3. **Run the setup.** Open a terminal on the Pi (or SSH in) and run:
+
+   ```
+   cd ~/shabbat-display
+   bash setup-pi.sh
+   ```
+
+   It asks before each change:
+   - installs Chromium if needed (Python is already on the Pi)
+   - creates `settings.json`
+   - sets the Pi's time zone to the one in `settings.json`
+   - tests every data source
+   - boots straight to the desktop and logs in, with screen blanking off
+   - makes the display start when the desktop starts
+   - reboots to check that it comes up on its own
+
+**Starting and stopping:** `./start-display.sh` and `./stop-display.sh` (run these from the Pi's own desktop, not over SSH). `./check-feeds.sh` tests the data sources.
+
+**The clock:** a Pi 4 has no clock battery and sets its time from the internet at boot. If it starts up with no network after a power cut, the time, zmanim and Shabbat mode are wrong until it reconnects. A Pi 5 keeps time if you add its clock battery.
+
+The same script works on other Debian or Ubuntu desktops, such as a mini PC. There it skips the Pi-only steps and tells you which settings to change by hand.
+
+## Keeping it running unattended
+
+**Both:**
+
+- **Power failures:** the display comes back on its own once the computer boots and logs in. A Pi does this by itself. On a PC, see below.
+- **Network:** wired Ethernet is the most reliable. On Wi-Fi, make sure it connects automatically.
+- If a browser window is closed or crashes, the launcher reopens it within a minute. To stop the display entirely, run `stop-display.bat` (Windows) or `./stop-display.sh` (Pi).
+
+**Windows, by hand:**
+
 - **Windows Update:** set active hours to cover Shabbat, or pause updates before Shabbat, so it doesn't restart itself.
-- **Notifications:** turn on Do Not Disturb permanently. Turn off the screen saver.
-- **Power failures:** set automatic sign-in (run `netplwiz` and untick "Users must enter a user name and password"). If the laptop's BIOS has a "power on after AC loss" option, turn it on. Together these bring the display back after an outage with no one touching it.
-- **Network:** a wired Ethernet adapter is the most reliable. If you use Wi-Fi, make sure it's set to connect automatically.
-- **Input:** cover the keyboard so nobody bumps a key. If you lower the lid partway, make sure it doesn't trip the lid sensor.
+- **Notifications:** turn on Do Not Disturb.
+- **Power failures:** run `netplwiz` and untick "Users must enter a user name and password". If the BIOS has a "power on after AC loss" option, turn it on.
+- **Laptop lid:** setup sets lid close to "do nothing", but keep it plugged in. If you lower the lid partway, make sure it doesn't trip the lid sensor. Cover the keyboard so nobody bumps a key.
 
 ## Settings
 
-Open `server.py` in Notepad and edit the `CONFIG` block at the top. Restart the display afterward.
+Edit `settings.json` (Notepad on Windows, or `nano settings.json` on the Pi), then restart the display. Setup creates it from `settings.example.json`. Anything you leave out uses the default in `server.py`, and updating the program never overwrites your settings.
 
-- **Location:** latitude, longitude, ZIP (used for Hebcal).
-- **Candle lighting minutes** (default 18).
+- **Location:** `location_name`, `lat`, `lon`, `zip` (used for Hebcal) and `tzid`. The computer's own time zone must match `tzid`.
+- **Candle lighting minutes:** `candle_minutes` (default 18).
 - **Havdalah method:** `"M=on"` is tzeit at 8.5°; `"m=50"` is 50 minutes after sunset.
 - **Zmanim labels:** `"hebrew"` or `"english"`.
-- **Dimming:** start time, end time, and how dark.
-- **Rotation:** seconds each screen stays up.
-- **Other devices:** set `"bind": "0.0.0.0"` to view the dashboard from another device on your network, such as a tablet in another room, at `http://<laptop-ip>:8765`.
+- **Dimming:** `dim_start`, `dim_end`, and `dim_level` (0 = no dimming, 0.8 = very dark).
+- **Rotation:** `rotation_seconds`, how long each screen stays up.
+- **Other devices:** set `"bind": "0.0.0.0"` to view the dashboard from another device on your network, such as a tablet in another room, at `http://<computer-name-or-ip>:8765`.
+- **Team:** `team_id`, `team_abbr`, `division_id`, `division_name`, `league_id` (not in the example file; defaults are the Yankees and the AL East).
 
 ## Previewing and testing
 
@@ -75,10 +114,13 @@ With the server running, you can add these to the address:
 
 | File | What it does |
 |---|---|
+| `setup-windows.bat`, `setup-pi.sh` | One-time setup. Safe to run again. |
+| `start-display.*`, `stop-display.*` | Start or stop the display (`.bat` on Windows, `.sh` on the Pi). |
+| `check-feeds.*` | Tests every data source once. |
+| `settings.example.json` | Template for `settings.json`, your settings. |
 | `server.py` | Data server. Uses only the Python standard library; nothing to install. |
 | `index.html` | The dashboard page. |
-| `launcher.pyw` | Keeps the server and the full-screen browser running. |
-| `start-display.bat` | Starts everything with no console window. |
-| `check-feeds.bat` | Tests every data source once. |
+| `launcher.pyw` | Keeps the server and the full-screen browser running, on Windows and Linux. |
+| `setup-windows.ps1` | The Windows setup steps; `setup-windows.bat` runs it. |
 | `fonts/` | Archivo, Newsreader and Frank Ruhl Libre, bundled so the page looks right offline. All are under the SIL Open Font License. |
-| `cache.json`, `server.log`, `launcher.log` | Created when it runs. Safe to delete. |
+| `settings.json`, `cache.json`, `*.log`, `browser-profile/` | Created when it runs. All but `settings.json` are safe to delete. |

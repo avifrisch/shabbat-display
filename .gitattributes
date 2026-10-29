@@ -1,0 +1,5 @@
+# Shell scripts run on the Pi and must keep Unix line endings, even when
+# checked out or zipped on Windows. Batch files need Windows line endings.
+*.sh  text eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf

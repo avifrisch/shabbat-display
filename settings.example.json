@@ -1,0 +1,21 @@
+{
+  "_help": "Copy to settings.json (setup does this for you) and edit. Restart the display after a change. Any setting left out uses the default in server.py.",
+
+  "location_name": "Teaneck",
+  "lat": 40.8885,
+  "lon": -74.0160,
+  "zip": "07666",
+  "tzid": "America/New_York",
+
+  "candle_minutes": 18,
+  "havdalah": "M=on",
+
+  "zmanim_labels": "hebrew",
+  "dim_start": "23:00",
+  "dim_end": "06:30",
+  "dim_level": 0.55,
+  "rotation_seconds": {"yankees": 30, "mlb": 30, "news": 30, "israel": 25},
+
+  "bind": "127.0.0.1",
+  "port": 8765
+}

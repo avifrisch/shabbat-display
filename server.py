@@ -10,6 +10,8 @@ Standard library only - no pip installs needed.
 
     python server.py            run the server
     python server.py --check    fetch every source once and report what worked
+
+Runs on Windows, macOS and Linux (including Raspberry Pi OS).
 """
 
 import html
@@ -28,7 +30,9 @@ from email.utils import parsedate_to_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # --------------------------------------------------------------------------
-# Settings - edit these
+# Settings - these are the defaults. To change one, put it in settings.json
+# (the setup scripts create it from settings.example.json); anything in that
+# file overrides the value here, and it survives updates to this file.
 # --------------------------------------------------------------------------
 CONFIG = {
     "location_name": "Teaneck",
@@ -82,6 +86,7 @@ CNN_BACKUP = "https://news.google.com/rss/search?q=site:cnn.com+when:1d&hl=en-US
 # --------------------------------------------------------------------------
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+SETTINGS_FILE = os.path.join(HERE, "settings.json")
 CACHE_FILE = os.path.join(HERE, "cache.json")
 LOG_FILE = os.path.join(HERE, "server.log")
 PAGE_FILE = os.path.join(HERE, "index.html")
@@ -96,7 +101,7 @@ _log_lock = threading.Lock()
 
 def log(msg):
     line = f"{datetime.now():%Y-%m-%d %H:%M:%S}  {msg}"
-    print(line, flush=True)
+    print(line, file=sys.stderr, flush=True)  # stderr, so --setting output stays clean
     with _log_lock:
         try:
             if os.path.exists(LOG_FILE) and os.path.getsize(LOG_FILE) > 1_000_000:
@@ -105,6 +110,27 @@ def log(msg):
                 f.write(line + "\n")
         except OSError:
             pass
+
+
+def load_settings():
+    """Overlay settings.json on CONFIG. A bad file is logged and ignored."""
+    if not os.path.exists(SETTINGS_FILE):
+        return
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8-sig") as f:
+            user = json.load(f)
+    except (OSError, ValueError) as e:
+        log(f"settings.json not used ({e}); running with defaults")
+        return
+    for k, v in user.items():
+        if k.startswith("_"):
+            continue
+        if k not in CONFIG:
+            log(f"settings.json: unknown setting '{k}' ignored")
+        elif isinstance(CONFIG[k], dict) and isinstance(v, dict):
+            CONFIG[k] = {**CONFIG[k], **v}
+        else:
+            CONFIG[k] = v
 
 
 # ---------------------------------------------------------------- helpers
@@ -739,6 +765,10 @@ def check():
 
 
 def main():
+    load_settings()
+    if "--setting" in sys.argv:  # used by the setup scripts
+        print(CONFIG.get(sys.argv[sys.argv.index("--setting") + 1], ""))
+        return
     if "--check" in sys.argv:
         check()
         return

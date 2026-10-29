@@ -1,9 +1,9 @@
 # Shabbat Display
 
-Echo Show replacement for Avi's home: a full-screen, hands-off information display that runs on a spare Windows laptop and updates itself on timers through Shabbat. Nobody interacts with it, so there is no touch, mic, camera or motion input, and the display changes only on a schedule.
+Echo Show replacement for Avi's home: a full-screen, hands-off information display that runs on a spare Windows PC/laptop or a Raspberry Pi and updates itself on timers through Shabbat. Nobody interacts with it, so there is no touch, mic, camera or motion input, and the display changes only on a schedule.
 
 Owner preferences:
-- Builds and runs locally on his Windows PC.
+- Builds and runs locally on his Windows PC. Setup must stay easy on both Windows and Raspberry Pi OS: one setup script per platform, no manual config files to hand-edit before first run.
 - No GitHub Actions or CI workflows.
 - Python standard library only on the server, so there is nothing to pip install.
 
@@ -14,7 +14,8 @@ Owner preferences:
   - Keeps the last good result per source in memory and in `cache.json`. Failures keep the old data, are recorded in `meta`, and retry with backoff.
   - Serves `index.html` at `/`, all data at `/api/state`, and `/health` and `/fonts/*`.
   - `python server.py --check` fetches every source once and prints OK/FAIL.
-  - Settings live in the `CONFIG` dict at the top of the file (location, candle-lighting minutes, havdalah method, team, dimming, rotation, bind address).
+  - Defaults live in the `CONFIG` dict at the top of the file (location, candle-lighting minutes, havdalah method, team, dimming, rotation, bind address). `settings.json` (gitignored, created by setup from `settings.example.json`) overrides them at startup in `load_settings()`; dict values such as `rotation_seconds` merge.
+  - `python server.py --setting KEY` prints one resolved setting (used by `setup-pi.sh` for `tzid`).
 - `index.html`: single page with no build step, all CSS and JS inline.
   - Polls `/api/state` every 20 seconds.
   - Designed on a fixed 120×67.5 rem canvas (16:9), scaled by setting the root font-size from the viewport.
@@ -23,10 +24,13 @@ Owner preferences:
   - Shabbat/Yom Tov mode (`body.holy`) runs from the last candle-lighting item until havdalah, based on Hebcal calendar items.
   - Overnight dimming uses a black overlay. A small pixel shift every 10 minutes guards against burn-in. The page reloads every 6 hours if `/health` answers. It requests a Screen Wake Lock.
   - Opened as a file with no server, it renders built-in demo data (`makeDemo()`) for layout work.
-- `launcher.pyw`: Windows supervisor.
-  - Starts the server and Chrome or Edge in `--kiosk` mode with its own profile in `browser-profile/`, and restarts either one if it exits.
-  - Calls `SetThreadExecutionState` to keep the display and system awake.
-- `start-display.bat` runs the launcher with no console window. `check-feeds.bat` runs `--check`.
+- `launcher.pyw`: supervisor for Windows and Linux.
+  - Starts the server and Chrome, Edge or Chromium in `--kiosk` mode with its own profile in `browser-profile/`, and restarts either one if it exits. Reads `port` from `settings.json`.
+  - Single instance (a named mutex on Windows, `flock` on `launcher.lock` on Linux).
+  - Before each browser start it marks the profile as cleanly exited, and on Linux removes stale `Singleton*` locks, so a power cut never leaves a restore-pages bubble or a refused profile.
+  - Keeps the screen awake with `SetThreadExecutionState` on Windows and `xset` on X11. Under Wayland it relies on `setup-pi.sh` turning blanking off with `raspi-config`.
+- Windows: `setup-windows.bat` runs `setup-windows.ps1` (finds real Python while skipping the WindowsApps Store stub, or installs it with winget, then powercfg settings and a Startup-folder shortcut to `pythonw launcher.pyw`). `start-display.bat`, `stop-display.bat`, `check-feeds.bat`.
+- Pi/Linux: `setup-pi.sh` (Chromium, time zone, `raspi-config` autologin and blanking, an XDG autostart entry in `~/.config/autostart`). `start-display.sh`, `stop-display.sh`, `check-feeds.sh`. `.gitattributes` keeps `*.sh` LF.
 - `fonts/`: Archivo (UI), Newsreader (headlines) and Frank Ruhl Libre (Hebrew), all OFL and bundled so the page works offline.
 
 ## Data sources and known quirks
@@ -53,7 +57,7 @@ Owner preferences:
   - `?at=2026-10-30T15:10`: fakes the clock. Note this affects only the client side, since the server still fetches for the real "now".
   - `?scene=mlb&hold=1`: pins one scene and stops the rotation.
 - Screenshots: from the cloud session, Playwright was used at 1920×1080, 1366×768 and 1440×900. All three fit.
-- Never tested on real Windows: `launcher.pyw`, the kiosk flags, `SetThreadExecutionState` and the wake lock. Verify these first.
+- Never tested on real hardware: `launcher.pyw`, the kiosk flags, `SetThreadExecutionState`, the wake lock, both setup scripts, and labwc honoring XDG autostart on Pi OS. Verify these first.
 
 ## Design
 
@@ -73,5 +77,5 @@ Owner preferences:
      - (c) Ask the shul whether ShulCloud can publish the schedule as text or an ICS feed.
    - Awaiting his choice.
 2. **Echo Show 15.** Can't host this. There is no sideloading, Silk times out to the home screen, and the device reacts to motion and voice. Not pursuing.
-3. **Possible hardware later:** a wall monitor with a Raspberry Pi or mini PC, or an e-ink panel.
+3. **Hardware:** Raspberry Pi 4 or 5 on a wall monitor is now supported via `setup-pi.sh`. An e-ink panel is still only an idea.
 4. **Possibly to verify:** two-day Yom Tov and Shabbat running into Yom Tov in `holyState()`, which has only been exercised with demo data for a regular Shabbat.
