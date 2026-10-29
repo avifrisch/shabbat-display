@@ -60,6 +60,22 @@ On a PC you sit at, the display can come up as a screen saver instead of running
 - **Changing the wait:** set `screensaver_minutes` in `settings.json`, then sign out and back in.
 - **Starting and stopping it by hand:** `start-screensaver.bat` turns it on and `stop-display.bat` turns it off.
 
+## On an iPad, as a second screen
+
+An iPad can't run the display itself, but it can show the one running on your PC or Pi over Wi-Fi. It needs iPadOS 14.5 or later (iPad Air 2, iPad mini 4, iPad 5th generation, or newer).
+
+1. On the computer running the display, set `"bind": "0.0.0.0"` in `settings.json` and restart the display. On Windows, allow TCP port 8765 in the firewall for the local network:
+   `New-NetFirewallRule -DisplayName "Shabbat Display (local network)" -Direction Inbound -Protocol TCP -LocalPort 8765 -RemoteAddress LocalSubnet -Action Allow` (in an administrator PowerShell).
+2. On the iPad, open `http://<computer's IP address>:8765` in Safari. Then tap Share → **Add to Home Screen** and open it from the home screen, which shows it full screen.
+3. Set **Auto-Lock** to Never (Settings → Display & Brightness), turn on **Do Not Disturb**, and turn off automatic iPadOS updates. Optionally, use **Guided Access** (Settings → Accessibility) so nobody can leave the page.
+
+**What to know:**
+
+- **Fixed address:** give the computer a fixed IP address in your router (a "DHCP reservation"), so the address doesn't change.
+- **Who can see it:** anyone on your home Wi-Fi can open the page, agenda included.
+- **If the computer restarts,** the iPad shows an error until someone reloads the page.
+- **The battery:** an old iPad left plugged in all the time can develop a swollen battery. Check it now and then.
+
 ## Setup on a Raspberry Pi
 
 **What you need:** a Raspberry Pi 4 (2 GB or more) or Pi 5, its official power supply, a microSD card of 16 GB or more, and an HDMI cable for the monitor or TV.

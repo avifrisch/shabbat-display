@@ -13,6 +13,7 @@ screensaver_minutes without mouse or keyboard input, and any input closes it.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -201,33 +202,22 @@ def idle_seconds():
     return ((ctypes.windll.kernel32.GetTickCount() - last_input()) & 0xFFFFFFFF) / 1000
 
 
+# SHQueryUserNotificationState: Windows' own test for "don't interrupt now", the one it
+# uses to hold back notifications. A maximized window doesn't count; a slideshow does.
+BUSY_STATES = {1: "locked or away", 2: "a full-screen app is in front", 3: "a full-screen game or video is in front",
+               4: "presentation mode is on"}
+
+
 def screen_busy():
-    """True when the session is locked or a full-screen window (a slideshow, a video call,
-    a game) is in front: times a screen saver shouldn't appear."""
+    """Why the screen saver shouldn't appear now (locked, slideshow, video call...), or ''."""
     import ctypes
-    import ctypes.wintypes as wt
-    u32 = ctypes.windll.user32
-    u32.GetForegroundWindow.restype = wt.HWND
-    u32.MonitorFromWindow.restype = wt.HANDLE
-    u32.MonitorFromWindow.argtypes = [wt.HWND, wt.DWORD]
-    hwnd = u32.GetForegroundWindow()
-    if not hwnd:  # nothing in front: locked, or the secure desktop is up
-        return True
-    cls = ctypes.create_unicode_buffer(64)
-    u32.GetClassNameW(hwnd, cls, 64)
-    if cls.value in ("Progman", "WorkerW", "Shell_TrayWnd"):  # the desktop itself
-        return False
-
-    class MONITORINFO(ctypes.Structure):
-        _fields_ = [("cbSize", wt.DWORD), ("rcMonitor", wt.RECT), ("rcWork", wt.RECT), ("dwFlags", wt.DWORD)]
-
-    win = wt.RECT()
-    u32.GetWindowRect(hwnd, ctypes.byref(win))
-    mi = MONITORINFO()
-    mi.cbSize = ctypes.sizeof(MONITORINFO)
-    u32.GetMonitorInfoW(u32.MonitorFromWindow(hwnd, 2), ctypes.byref(mi))  # MONITOR_DEFAULTTONEAREST
-    m = mi.rcMonitor
-    return win.left <= m.left and win.top <= m.top and win.right >= m.right and win.bottom >= m.bottom
+    state = ctypes.c_int(0)
+    try:
+        if ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(state)) != 0:
+            return ""
+    except (OSError, AttributeError):
+        return ""
+    return BUSY_STATES.get(state.value, "")
 
 
 def browser_pids():
@@ -259,14 +249,35 @@ def stop_browser(pids):
         pids = None  # look again, in case it had relaunched under a new process
 
 
+def screen_off_seconds():
+    """The power plan's 'turn off my screen after' while plugged in, in seconds (0 = never)."""
+    try:
+        out = subprocess.run(["powercfg", "/q", "SCHEME_CURRENT", "SUB_VIDEO", "VIDEOIDLE"], capture_output=True,
+                             text=True, timeout=15, creationflags=NO_WINDOW).stdout
+        return int(re.findall(r"0x[0-9a-fA-F]+", out)[-2], 16)  # the last two are plugged in, then battery
+    except (OSError, subprocess.SubprocessError, IndexError, ValueError):
+        return 0
+
+
 def saver_loop(browser_path, server):
     wait = max(0.25, setting("screensaver_minutes", 10.0)) * 60
     log(f"screen saver on: opens after {wait / 60:g} minutes idle")
-    showing, pids = False, []
+    off = screen_off_seconds()
+    if off and off <= wait:
+        log(f"warning: the power plan turns the screen off after {off / 60:g} minutes, before the screen saver"
+            " opens. Raise 'Turn off my screen after' in Settings > System > Power, or run setup again.")
+    showing, pids, noted = False, [], ""
     while True:
         if not showing:
             time.sleep(2)
-            if idle_seconds() >= wait and not screen_busy():
+            idle = idle_seconds()
+            busy = screen_busy() if idle >= wait else ""
+            if busy != noted:  # log each reason once, so screensaver.log shows why it didn't appear
+                if busy:
+                    log(f"not opening: {busy}")
+                noted = busy
+            if idle >= wait and not busy:
+                log("opening")
                 start_browser(browser_path)
                 showing, pids, shown_at = True, [], last_input()
                 for _ in range(50):  # wait for the relaunched browser, then remember its process
@@ -280,6 +291,7 @@ def saver_loop(browser_path, server):
             if last_input() != shown_at or not browser_running():
                 stop_browser(pids)
                 showing = False
+                log("closed: input" if last_input() != shown_at else "closed: browser exited")
         if server is not None and server.poll() is not None:
             log(f"server exited with code {server.returncode}; restarting")
             server = start_server()

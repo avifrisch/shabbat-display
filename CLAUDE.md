@@ -33,9 +33,11 @@ Owner preferences:
   - `--screensaver` (Windows only; `start-screensaver.bat`, or option 2 in `setup-windows.ps1`):
     - The server runs all the time. The browser opens after `screensaver_minutes` of no input (`GetLastInputInfo`), using its own `browser-profile-saver/`, mutex and `screensaver.log`.
     - Any input (the last-input tick changing) force-closes it within about a second.
-    - Skipped while the PC is locked (no foreground window) or a full-screen window is in front.
+    - Skipped while `SHQueryUserNotificationState` reports locked, a full-screen app, D3D full screen or presentation mode. This is Windows' own test, so a maximized window doesn't count. An earlier window-rect check wrongly treated maximized windows as full screen when the taskbar auto-hides or on a second monitor.
+    - The reason it was skipped is logged once to `screensaver.log`. At startup it warns if the power plan's screen-off time (`powercfg VIDEOIDLE`, plugged in) comes before `screensaver_minutes`. Setup offers to move it to that many minutes plus 20.
     - Doesn't keep the screen awake. The page gets `?saver=1`, so it skips its wake lock and the power plan still turns the screen off.
     - Chrome relaunches itself at startup, so the real main process is found by profile path (`browser_pids()`, a PowerShell CIM query) after the window is up.
+- iPad as a second screen: set `"bind": "0.0.0.0"` and a Windows firewall rule for TCP 8765 from `LocalSubnet`. Then open `http://<ip>:8765` in Safari and add it to the Home Screen; Apple's web-app meta tags make that full screen. Needs iPadOS 14.5+, because the page uses `??` and flex `gap`. Avi's home PC is set up this way.
 - Windows: `setup-windows.bat` runs `setup-windows.ps1` (finds real Python while skipping the WindowsApps Store stub, or installs it with winget, then powercfg settings and a Startup-folder shortcut to `pythonw launcher.pyw`). `start-display.bat`, `stop-display.bat`, `check-feeds.bat`.
 - Pi/Linux: `setup-pi.sh` (Chromium, time zone, `raspi-config` autologin and blanking, an XDG autostart entry in `~/.config/autostart`). `start-display.sh`, `stop-display.sh`, `check-feeds.sh`. `.gitattributes` keeps `*.sh` LF.
 - `fonts/`: Archivo (UI), Newsreader (headlines) and Frank Ruhl Libre (Hebrew), all OFL and bundled so the page works offline.

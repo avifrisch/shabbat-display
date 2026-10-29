@@ -124,6 +124,19 @@ if ($saver) {
         Set-ItemProperty 'HKCU:\Control Panel\Desktop' -Name ScreenSaveActive -Value '0'
         Write-Host 'Done.'
     }
+    # If the screen turns off before the display would appear, it opens on a dark screen.
+    $minutes = 10
+    try { $m = (Get-Content 'settings.json' -Raw | ConvertFrom-Json).screensaver_minutes; if ($m) { $minutes = [double]$m } } catch {}
+    $idx = [regex]::Matches((powercfg /q SCHEME_CURRENT SUB_VIDEO VIDEOIDLE | Out-String), '0x[0-9a-fA-F]+')
+    $off = if ($idx.Count -ge 2) { [Convert]::ToInt32($idx[$idx.Count - 2].Value, 16) / 60 } else { 0 }
+    if ($off -gt 0 -and $off -le $minutes) {
+        $new = [int]$minutes + 20
+        Write-Host "Your screen turns off after $off minutes, before the display would appear (after $minutes)." -ForegroundColor Yellow
+        if (Ask "Turn the screen off after $new minutes instead, so the display shows for 20 minutes?") {
+            powercfg /change monitor-timeout-ac $new
+            Write-Host 'Done.'
+        }
+    }
 } else {
 Step 'Power settings'
 Write-Host 'While plugged in: screen never turns off, computer never sleeps, closing the lid does nothing.'
