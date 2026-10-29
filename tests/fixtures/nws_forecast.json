@@ -1,0 +1,104 @@
+{
+ "properties": {
+  "periods": [
+   {
+    "name": "This Afternoon",
+    "startTime": "2026-10-29T15:00:00-04:00",
+    "isDaytime": true,
+    "shortForecast": "Sunny",
+    "detailedForecast": "Sunny. High near 70, with temperatures falling to around 68 in the afternoon. Southwest wind around 9 mph."
+   },
+   {
+    "name": "Tonight",
+    "startTime": "2026-10-29T18:00:00-04:00",
+    "isDaytime": false,
+    "shortForecast": "Mostly Clear",
+    "detailedForecast": "Mostly clear, with a low around 55. Southwest wind around 6 mph."
+   },
+   {
+    "name": "Friday",
+    "startTime": "2026-10-30T06:00:00-04:00",
+    "isDaytime": true,
+    "shortForecast": "Sunny",
+    "detailedForecast": "Sunny. High near 69, with temperatures falling to around 62 in the afternoon. West wind 5 to 13 mph, with gusts as high as 29 mph."
+   },
+   {
+    "name": "Friday Night",
+    "startTime": "2026-10-30T18:00:00-04:00",
+    "isDaytime": false,
+    "shortForecast": "Mostly Clear",
+    "detailedForecast": "Mostly clear. Low around 45, with temperatures rising to around 47 overnight. Northwest wind 5 to 12 mph, with gusts as high as 28 mph."
+   },
+   {
+    "name": "Saturday",
+    "startTime": "2026-10-31T06:00:00-04:00",
+    "isDaytime": true,
+    "shortForecast": "Sunny",
+    "detailedForecast": "Sunny. High near 61, with temperatures falling to around 59 in the afternoon. North wind 3 to 7 mph."
+   },
+   {
+    "name": "Saturday Night",
+    "startTime": "2026-10-31T18:00:00-04:00",
+    "isDaytime": false,
+    "shortForecast": "Mostly Cloudy",
+    "detailedForecast": "Mostly cloudy, with a low around 41."
+   },
+   {
+    "name": "Sunday",
+    "startTime": "2026-11-01T06:00:00-05:00",
+    "isDaytime": true,
+    "shortForecast": "Partly Sunny",
+    "detailedForecast": "Partly sunny, with a high near 63."
+   },
+   {
+    "name": "Sunday Night",
+    "startTime": "2026-11-01T18:00:00-05:00",
+    "isDaytime": false,
+    "shortForecast": "Partly Cloudy",
+    "detailedForecast": "Partly cloudy, with a low around 45."
+   },
+   {
+    "name": "Monday",
+    "startTime": "2026-11-02T06:00:00-05:00",
+    "isDaytime": true,
+    "shortForecast": "Mostly Sunny",
+    "detailedForecast": "Mostly sunny, with a high near 68."
+   },
+   {
+    "name": "Monday Night",
+    "startTime": "2026-11-02T18:00:00-05:00",
+    "isDaytime": false,
+    "shortForecast": "Mostly Cloudy",
+    "detailedForecast": "Mostly cloudy, with a low around 50."
+   },
+   {
+    "name": "Tuesday",
+    "startTime": "2026-11-03T06:00:00-05:00",
+    "isDaytime": true,
+    "shortForecast": "Mostly Sunny",
+    "detailedForecast": "Mostly sunny, with a high near 69."
+   },
+   {
+    "name": "Tuesday Night",
+    "startTime": "2026-11-03T18:00:00-05:00",
+    "isDaytime": false,
+    "shortForecast": "Mostly Cloudy",
+    "detailedForecast": "Mostly cloudy, with a low around 52."
+   },
+   {
+    "name": "Wednesday",
+    "startTime": "2026-11-04T06:00:00-05:00",
+    "isDaytime": true,
+    "shortForecast": "Partly Sunny",
+    "detailedForecast": "Partly sunny, with a high near 68."
+   },
+   {
+    "name": "Wednesday Night",
+    "startTime": "2026-11-04T18:00:00-05:00",
+    "isDaytime": false,
+    "shortForecast": "Mostly Cloudy then Slight Chance Rain Showers",
+    "detailedForecast": "A slight chance of rain showers after 1am. Mostly cloudy, with a low around 55."
+   }
+  ]
+ }
+}

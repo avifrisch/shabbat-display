@@ -1239,6 +1239,100 @@ def game_route(query):
         return 503, json.dumps({"ok": False})
 
 
+RADAR_URL = "https://radar.weather.gov/ridge/standard/KOKX_loop.gif"  # Upton, NY
+AQI_WORDS = ((50, "Good"), (100, "Moderate"), (150, "Unhealthy for sensitive groups"),
+             (200, "Unhealthy"), (300, "Very unhealthy"))
+
+
+def aqi_word(aqi):
+    if aqi is None:
+        return ""
+    return next((w for top, w in AQI_WORDS if aqi <= top), "Hazardous")
+
+
+def pressure_trend(values):
+    """Over the last three hours of hourly pressure (hPa)."""
+    if len(values) < 4 or None in values[-4:]:
+        return "steady"
+    d = values[-1] - values[-4]
+    return "rising" if d >= 0.6 else "falling" if d <= -0.6 else "steady"
+
+
+def build_forecast(om, aq, nws, start=None):
+    c, h, d = om["current"], om["hourly"], om["daily"]
+    tz = timezone(timedelta(seconds=om.get("utc_offset_seconds", 0)))
+    start = start or now().astimezone(tz).strftime("%Y-%m-%dT%H:00")
+    i0 = next((i for i, t in enumerate(h["time"]) if t >= start), 0)
+    hours = [{"time": h["time"][i], "temp": round(h["temperature_2m"][i]),
+              "precip": h["precipitation_probability"][i] or 0, "amount_in": h["precipitation"][i] or 0,
+              "code": h["weather_code"][i], "is_day": bool(h["is_day"][i])}
+             for i in range(i0, min(i0 + 48, len(h["time"])))]
+    days = [{"date": d["time"][i], "hi": round(d["temperature_2m_max"][i]), "lo": round(d["temperature_2m_min"][i]),
+             "code": d["weather_code"][i], "precip": d["precipitation_probability_max"][i] or 0,
+             "amount_in": d["precipitation_sum"][i] or 0}
+            for i in range(1, min(8, len(d["time"])))]
+    aqi = ((aq or {}).get("current") or {}).get("us_aqi")
+    periods = [{"name": p["name"], "start": p["startTime"], "is_day": p["isDaytime"],
+                "short": p["shortForecast"], "text": p["detailedForecast"]}
+               for p in ((nws or {}).get("properties") or {}).get("periods", [])]
+    t0 = datetime.fromisoformat(start).replace(tzinfo=tz)
+    marks = []
+    for it in (store.get("calendar") or {}).get("items", []):
+        when = parse_dt(it.get("date")) if it.get("category") in ("candles", "havdalah") else None
+        if when and t0 <= when < t0 + timedelta(hours=48):
+            marks.append({"label": "Candles" if it["category"] == "candles" else "Havdalah",
+                          "time": when.isoformat(timespec="minutes")})
+    return {
+        "now": {"temp": round(c["temperature_2m"]), "feels": round(c["apparent_temperature"]),
+                "humidity": c["relative_humidity_2m"], "dew": round(c["dew_point_2m"]),
+                "aqi": aqi, "aqi_word": aqi_word(aqi), "code": c["weather_code"], "is_day": bool(c["is_day"]),
+                "wind_mph": round(c["wind_speed_10m"]), "wind_dir": compass(c["wind_direction_10m"]),
+                "gust_mph": round(c.get("wind_gusts_10m") or 0), "uv": round(c.get("uv_index") or 0),
+                "pressure_inhg": round(c["pressure_msl"] * 0.02953, 2),
+                "pressure_trend": pressure_trend(h["pressure_msl"][max(0, i0 - 3):i0 + 1])},
+        "hours": hours, "days": days, "periods": periods,
+        "alerts": store.get("alerts") or [], "marks": marks,
+    }
+
+
+def forecast_json():
+    def load():
+        om = get_json("https://api.open-meteo.com/v1/forecast?" + qs({
+            "latitude": CONFIG["lat"], "longitude": CONFIG["lon"],
+            "current": "temperature_2m,apparent_temperature,relative_humidity_2m,dew_point_2m,weather_code,"
+                       "wind_speed_10m,wind_direction_10m,wind_gusts_10m,uv_index,pressure_msl,is_day",
+            "hourly": "temperature_2m,precipitation_probability,precipitation,weather_code,is_day,pressure_msl",
+            "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum",
+            "temperature_unit": "fahrenheit", "wind_speed_unit": "mph", "precipitation_unit": "inch",
+            "timezone": "auto", "forecast_days": 8}))
+        try:
+            aq = get_json("https://air-quality-api.open-meteo.com/v1/air-quality?" + qs({
+                "latitude": CONFIG["lat"], "longitude": CONFIG["lon"], "current": "us_aqi"}))
+        except Exception as e:  # noqa: BLE001 - the panel leaves air quality out
+            log(f"air quality: {e}")
+            aq = None
+        global _nws_forecast_url
+        try:
+            if not _nws_forecast_url:
+                p = get_json(f"https://api.weather.gov/points/{CONFIG['lat']},{CONFIG['lon']}",
+                             accept="application/geo+json")
+                _nws_forecast_url = p["properties"]["forecast"]
+            nws = get_json(_nws_forecast_url, accept="application/geo+json")
+        except Exception as e:  # noqa: BLE001 - the panel leaves the written forecast out
+            log(f"nws forecast: {e}")
+            nws = None
+        return build_forecast(om, aq, nws)
+    return cached("forecast", 600, load)
+
+
+def radar_gif():
+    def load():
+        req = urllib.request.Request(RADAR_URL, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.read(15_000_000)
+    return cached("radar", 300, load)
+
+
 # ---------------------------------------------------------------- scheduler
 
 SOURCES = [
@@ -1318,6 +1412,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(*article_route(parsed.query), "application/json")
             elif path == "/api/game":
                 self._send(*game_route(parsed.query), "application/json")
+            elif path == "/api/forecast":
+                try:
+                    self._send(200, json.dumps(forecast_json()), "application/json")
+                except Exception as e:  # noqa: BLE001
+                    log(f"forecast: {e}")
+                    self._send(503, json.dumps({"ok": False}), "application/json")
+            elif path == "/api/radar":
+                try:
+                    self._send(200, radar_gif(), "image/gif")
+                except Exception as e:  # noqa: BLE001
+                    log(f"radar: {e}")
+                    self._send(503, "radar unavailable", "text/plain")
             elif path == "/health":
                 self._send(200, "ok", "text/plain")
             elif path.startswith("/fonts/") and ".." not in path:

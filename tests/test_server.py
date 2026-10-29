@@ -120,5 +120,54 @@ class GameTests(Isolated):
         self.assertEqual(code, 404)
 
 
+START = "2026-10-29T16:00"  # the current hour in the openmeteo.json fixture
+
+
+def build(aq=True, nws=True):
+    return server.build_forecast(json.loads(fixture("openmeteo.json")),
+                                 json.loads(fixture("airquality.json")) if aq else None,
+                                 json.loads(fixture("nws_forecast.json")) if nws else None,
+                                 start=START)
+
+
+class ForecastTests(Isolated):
+    def test_aqi_word(self):
+        self.assertEqual(server.aqi_word(32), "Good")
+        self.assertEqual(server.aqi_word(50), "Good")
+        self.assertEqual(server.aqi_word(51), "Moderate")
+        self.assertEqual(server.aqi_word(301), "Hazardous")
+        self.assertEqual(server.aqi_word(None), "")
+
+    def test_pressure_trend(self):
+        self.assertEqual(server.pressure_trend([1015.0, 1014.6, 1014.2, 1013.9]), "falling")
+        self.assertEqual(server.pressure_trend([1013.0, 1013.4, 1013.8, 1014.0]), "rising")
+        self.assertEqual(server.pressure_trend([1015.0, 1015.1, 1015.0, 1015.2]), "steady")
+        self.assertEqual(server.pressure_trend([1015.0]), "steady")
+
+    def test_build_forecast_shape(self):
+        f = build()
+        self.assertEqual(len(f["hours"]), 48)
+        self.assertEqual(f["hours"][0]["time"], START)
+        self.assertEqual(len(f["days"]), 7)
+        self.assertGreaterEqual(len(f["periods"]), 10)
+        self.assertEqual(f["now"]["aqi"], 69)
+        self.assertEqual(f["now"]["aqi_word"], "Moderate")
+        self.assertIn(f["now"]["pressure_trend"], ("rising", "falling", "steady"))
+        self.assertLess(abs(f["now"]["pressure_inhg"] - 30), 1.5)
+
+    def test_build_forecast_without_extras(self):
+        f = build(aq=False, nws=False)
+        self.assertIsNone(f["now"]["aqi"])
+        self.assertEqual(f["periods"], [])
+
+    def test_candles_marked_inside_48_hours(self):
+        server.store.data["calendar"] = {"items": [
+            {"category": "candles", "date": "2026-10-30T17:36:00-04:00", "title": "Candle lighting"},
+            {"category": "havdalah", "date": "2026-10-31T18:35:00-04:00", "title": "Havdalah"},
+            {"category": "candles", "date": "2026-11-06T16:29:00-05:00", "title": "Candle lighting"}]}
+        marks = build()["marks"]
+        self.assertEqual([m["label"] for m in marks], ["Candles"])
+
+
 if __name__ == "__main__":
     unittest.main()
