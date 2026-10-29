@@ -47,7 +47,7 @@ Chrome is used if it's installed; otherwise Edge, which comes with Windows.
 
 ## As a screen saver on a work PC
 
-On a PC you sit at, the display can come up as a screen saver instead of running full time. It appears after 10 minutes without mouse or keyboard input, and any mouse move or key press closes it.
+On a PC you sit at, the display can come up as a screen saver instead of running full time. It appears after 10 minutes without mouse or keyboard input, on every monitor, and any mouse move or key press closes it and locks the PC, so you sign back in as you would after a Windows screen saver.
 
 1. Copy this folder somewhere permanent and double-click `setup-windows.bat`, as above.
 2. At the first question, choose **2. Screen saver**. Setup leaves your power settings alone, offers to turn off the Windows screen saver so the two don't overlap, and turns the display's screen saver on each time you sign in.
@@ -58,6 +58,7 @@ On a PC you sit at, the display can come up as a screen saver instead of running
 - **When the screen turns off:** at the time set under Settings → System → Power → "Turn off my screen after".
 - **If the PC locks itself after a while** (Settings → Accounts → Sign-in options → "If you've been away"), the lock screen covers the display at that point.
 - **Changing the wait:** set `screensaver_minutes` in `settings.json`, then sign out and back in.
+- **Not locking:** set `"screensaver_lock": false` in `settings.json`, then sign out and back in.
 - **Starting and stopping it by hand:** `start-screensaver.bat` turns it on and `stop-display.bat` turns it off.
 
 ## On an iPad, as a second screen
@@ -135,7 +136,7 @@ Edit `settings.json` (Notepad on Windows, or `nano settings.json` on the Pi), th
   - **LPM:** the calendar feed link (`/calendar/feed/<token>.ics`). Entries tagged `CATEGORIES:deadline` or `court_date` get a Deadline or Court label.
   - **Outlook / Microsoft 365:** in Outlook on the web, go to Settings → Calendar → Shared calendars → Publish a calendar. Choose **Can view titles and locations**, click Publish, and copy the **ICS** link.
   - **Google:** Settings → your calendar → Integrate calendar → **Secret address in iCal format**.
-- **Screen saver:** `screensaver_minutes`, the minutes without mouse or keyboard input before the display appears (screen saver mode only; default 10).
+- **Screen saver:** `screensaver_minutes`, the minutes without mouse or keyboard input before the display appears (screen saver mode only; default 10). `screensaver_lock` (default `true`) locks Windows when input closes it.
 - **Other devices:** set `"bind": "0.0.0.0"` to view the dashboard from another device on your network, such as a tablet in another room, at `http://<computer-name-or-ip>:8765`.
 - **Team:** `team_id`, `team_abbr`, `division_id`, `division_name`, `league_id` (not in the example file; defaults are the Yankees and the AL East).
 

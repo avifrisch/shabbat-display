@@ -107,13 +107,13 @@ def start_server():
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def browser_running():
-    """Whether a browser is using our profile. Chrome relaunches itself under a new process,
+def browser_running(profile=PROFILE):
+    """Whether a browser is using the profile. Chrome relaunches itself under a new process,
     so the process we started is no guide; the profile's lock is."""
     if WINDOWS:
         # Held open while the browser runs, so it can't be deleted; gone or deletable means stopped.
         try:
-            os.remove(os.path.join(PROFILE, "lockfile"))
+            os.remove(os.path.join(profile, "lockfile"))
         except FileNotFoundError:
             return False
         except OSError:
@@ -129,9 +129,9 @@ def browser_running():
         return False
 
 
-def mark_clean_exit():
+def mark_clean_exit(profile=PROFILE):
     """After a power cut the browser would offer to restore pages; tell it the last exit was clean."""
-    prefs = os.path.join(PROFILE, "Default", "Preferences")
+    prefs = os.path.join(profile, "Default", "Preferences")
     try:
         with open(prefs, encoding="utf-8") as f:
             data = json.load(f)
@@ -152,15 +152,17 @@ def mark_clean_exit():
                 pass
 
 
-def start_browser(path):
-    log(f"starting browser {path}")
-    mark_clean_exit()
+def start_browser(path, profile=PROFILE, position=None):
+    log(f"starting browser {path}" + (f" at {position[0]},{position[1]}" if position else ""))
+    mark_clean_exit(profile)
     # ?saver=1: the page skips its wake lock, so the power plan can still turn the screen off.
-    args = [path, "--kiosk", URL + ("?saver=1" if SAVER else ""), f"--user-data-dir={PROFILE}", "--no-first-run",
+    args = [path, "--kiosk", URL + ("?saver=1" if SAVER else ""), f"--user-data-dir={profile}", "--no-first-run",
             "--noerrdialogs", "--disable-session-crashed-bubble", "--disable-infobars",
             "--disable-features=Translate,TranslateUI", "--autoplay-policy=no-user-gesture-required",
             "--overscroll-history-navigation=0", "--disable-pinch",
             "--check-for-update-interval=31536000"]  # no "browser is out of date" bubble
+    if position:  # kiosk goes full screen on whichever monitor the window starts on
+        args.append(f"--window-position={position[0]},{position[1]}")
     if "msedge" in path.lower():
         args.append("--edge-kiosk-type=fullscreen")
     if not WINDOWS:
@@ -220,9 +222,39 @@ def screen_busy():
     return BUSY_STATES.get(state.value, "")
 
 
+def monitors():
+    """A point just inside the top-left corner of each monitor, the primary one first."""
+    import ctypes
+    from ctypes import wintypes
+    found = []
+    proc = ctypes.WINFUNCTYPE(ctypes.c_int, wintypes.HMONITOR, wintypes.HDC, ctypes.POINTER(wintypes.RECT),
+                              wintypes.LPARAM)
+
+    def each(_mon, _dc, rect, _data):
+        r = rect.contents
+        found.append((r.left == 0 and r.top == 0, r.left + 50, r.top + 50))
+        return 1
+
+    try:
+        ctypes.windll.user32.EnumDisplayMonitors(None, None, proc(each), 0)
+    except (OSError, AttributeError):
+        pass
+    return [(x, y) for _, x, y in sorted(found, reverse=True)] or [None]
+
+
+def saver_profiles(count):
+    """One profile per monitor: a second window in the same profile would open on the first window's monitor."""
+    return [PROFILE] + [f"{PROFILE}-{i}" for i in range(2, count + 1)]
+
+
+def lock_screen():
+    import ctypes
+    ctypes.windll.user32.LockWorkStation()
+
+
 def browser_pids():
-    """Main browser processes using our profile. Chrome relaunches itself at startup,
-    so the process start_browser() returns is usually gone by now."""
+    """Main browser processes using our profiles (browser-profile-saver, -2, ... all match).
+    Chrome relaunches itself at startup, so the process start_browser() returns is usually gone by now."""
     prof = PROFILE.replace("'", "''")
     cmd = ("Get-CimInstance Win32_Process -Filter \"Name='chrome.exe' or Name='msedge.exe'\" | "
            f"Where-Object {{ $_.CommandLine -like '*{prof}*' -and $_.CommandLine -notlike '*--type=*' }} | "
@@ -235,15 +267,15 @@ def browser_pids():
     return [int(x) for x in out.split() if x.isdigit()]
 
 
-def stop_browser(pids):
-    """Close the screen-saver browser at once. A polite close takes seconds, and
+def stop_browser(pids, profiles):
+    """Close the screen-saver browsers at once. A polite close takes seconds, and
     mark_clean_exit() keeps the forced one from causing a restore-pages bubble next time."""
     for _ in range(2):
         for pid in pids or browser_pids():
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], creationflags=NO_WINDOW,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(20):
-            if not browser_running():
+            if not any(browser_running(p) for p in profiles):
                 return
             time.sleep(0.1)
         pids = None  # look again, in case it had relaunched under a new process
@@ -266,7 +298,8 @@ def saver_loop(browser_path, server):
     if off and off <= wait:
         log(f"warning: the power plan turns the screen off after {off / 60:g} minutes, before the screen saver"
             " opens. Raise 'Turn off my screen after' in Settings > System > Power, or run setup again.")
-    showing, pids, noted = False, [], ""
+    lock = setting("screensaver_lock", True)
+    showing, pids, noted, profiles = False, [], "", [PROFILE]
     while True:
         if not showing:
             time.sleep(2)
@@ -277,21 +310,30 @@ def saver_loop(browser_path, server):
                     log(f"not opening: {busy}")
                 noted = busy
             if idle >= wait and not busy:
-                log("opening")
-                start_browser(browser_path)
-                showing, pids, shown_at = True, [], last_input()
-                for _ in range(50):  # wait for the relaunched browser, then remember its process
-                    if last_input() != shown_at or browser_running():
+                screens = monitors()  # looked up each time, in case a monitor was plugged in or out
+                profiles = saver_profiles(len(screens))
+                log(f"opening on {len(screens)} screen{'s' if len(screens) > 1 else ''}")
+                shown_at = last_input()
+                for profile, position in zip(profiles, screens):
+                    start_browser(browser_path, profile, position if len(screens) > 1 else None)
+                showing, pids = True, []
+                for _ in range(50):  # wait for the relaunched browsers, then remember their processes
+                    if last_input() != shown_at or all(browser_running(p) for p in profiles):
                         break
                     time.sleep(0.1)
         else:
             time.sleep(0.2)
             if not pids and last_input() == shown_at:
                 pids = browser_pids()
-            if last_input() != shown_at or not browser_running():
-                stop_browser(pids)
+            if last_input() != shown_at or not any(browser_running(p) for p in profiles):
+                stop_browser(pids, profiles)
                 showing = False
-                log("closed: input" if last_input() != shown_at else "closed: browser exited")
+                if last_input() != shown_at:
+                    log("closed: input" + ("; locking" if lock else ""))
+                    if lock:
+                        lock_screen()
+                else:
+                    log("closed: browser exited")
         if server is not None and server.poll() is not None:
             log(f"server exited with code {server.returncode}; restarting")
             server = start_server()

@@ -6,4 +6,5 @@ settings.json
 launcher.lock
 browser-profile/
 browser-profile-saver/
+browser-profile-saver-*/
 __pycache__/

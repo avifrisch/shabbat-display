@@ -55,7 +55,7 @@ if ($Here -like "$env:TEMP*" -or $Here -like '*\Downloads\*') {
 Step 'How will this PC show the display?'
 Write-Host ' 1. Full time: a spare PC or laptop that shows the display all day and through Shabbat.'
 Write-Host ' 2. Screen saver: a PC you work at. The display appears after some minutes without'
-Write-Host '    mouse or keyboard input, and any input closes it.'
+Write-Host '    mouse or keyboard input, and any input closes it and locks the PC.'
 $saver = (Read-Host 'Enter 1 or 2 [1]') -eq '2'
 $launchArgs = if ($saver) { "`"$Here\launcher.pyw`" --screensaver" } else { "`"$Here\launcher.pyw`"" }
 

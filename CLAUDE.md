@@ -32,7 +32,8 @@ Owner preferences:
   - Keeps the screen awake with `SetThreadExecutionState` on Windows and `xset` on X11. Under Wayland it relies on `setup-pi.sh` turning blanking off with `raspi-config`.
   - `--screensaver` (Windows only; `start-screensaver.bat`, or option 2 in `setup-windows.ps1`):
     - The server runs all the time. The browser opens after `screensaver_minutes` of no input (`GetLastInputInfo`), using its own `browser-profile-saver/`, mutex and `screensaver.log`.
-    - Any input (the last-input tick changing) force-closes it within about a second.
+    - It opens one kiosk window per monitor (`monitors()`, `EnumDisplayMonitors`), each with its own profile (`browser-profile-saver`, `-2`, ...) and `--window-position`, because a second window in one profile opens on the first window's monitor.
+    - Any input (the last-input tick changing) force-closes it within about a second, then locks Windows (`LockWorkStation`) unless `screensaver_lock` is false.
     - Skipped while `SHQueryUserNotificationState` reports locked, a full-screen app, D3D full screen or presentation mode. This is Windows' own test, so a maximized window doesn't count. An earlier window-rect check wrongly treated maximized windows as full screen when the taskbar auto-hides or on a second monitor.
     - The reason it was skipped is logged once to `screensaver.log`. At startup it warns if the power plan's screen-off time (`powercfg VIDEOIDLE`, plugged in) comes before `screensaver_minutes`. Setup offers to move it to that many minutes plus 20.
     - Doesn't keep the screen awake. The page gets `?saver=1`, so it skips its wake lock and the power plan still turns the screen off.
