@@ -170,14 +170,71 @@ h3{margin:0;font-weight:600}
 /* ---------- interaction ---------- */
 /* Panels open over the scene; nothing looks tappable until someone touches the screen. */
 .scene-wrap{touch-action:pan-y}
+.scene{pointer-events:none}.scene.show{pointer-events:auto}  /* the faded-out layer must not catch taps */
 .stage,.side{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}  /* drags swipe or scroll, not select */
 .panel{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;background:#111D30;border:1px solid var(--line);border-radius:1rem;overflow:hidden}
 .panel[hidden]{display:none}
-.panel-body{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:2rem 2.4rem 1.2rem}
+.panel-body{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:2rem 2.4rem 1.2rem;
+  scrollbar-width:thin;scrollbar-color:rgba(238,231,215,.2) transparent}
 .panel-count{flex:none;padding:.7rem 2.4rem .9rem;border-top:1px solid var(--line);font-size:.98rem;color:var(--faint)}
 .panel-x{position:absolute;top:.9rem;right:.9rem;z-index:1;width:3.2rem;height:3.2rem;border-radius:50%;display:grid;place-items:center;
   font-size:1.35rem;color:var(--muted);background:rgba(238,231,215,.08)}
 .panel-msg{font-size:1.3rem;color:var(--muted);padding:1rem 0}
+.read{max-width:62rem;padding-right:3rem}
+.read-src{font-size:.95rem;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.read-h{font-family:var(--serif);font-size:2.6rem;line-height:1.14;font-weight:500;margin:.5rem 0 1.3rem}
+.read p{font-family:var(--serif);font-size:1.55rem;line-height:1.5;margin:0 0 1rem;color:#E4DDCC}
+.read p.read-note{font-family:var(--sans);font-size:1.15rem;color:var(--warn);margin-top:1.4rem}
+.box-head{display:flex;gap:1.6rem;align-items:center;font-size:1.15rem;color:var(--muted);margin-bottom:1rem;padding-right:4rem}
+.box-st{display:flex;align-items:center;gap:.8rem;color:var(--text);font-weight:600}
+.box-count{font-weight:500;color:var(--muted)}
+.box-line,.box-t{border-collapse:collapse;font-variant-numeric:tabular-nums}
+.box-line{font-size:1.35rem;margin-bottom:.9rem}
+.box-line th,.box-line td{padding:.25rem .7rem;text-align:center;border-bottom:1px solid var(--line)}
+.box-line th{font-size:.95rem;font-weight:500;color:var(--faint)}
+.box-line td:first-child{text-align:left;padding-left:0;font-weight:600;min-width:9rem}
+.box-line .rhe{font-weight:700;border-left:1px solid var(--line)}
+.box-line tr.me td,.box-t th.me,.box-pre .me{color:var(--gold)}
+.box-notes{font-size:1.08rem;line-height:1.5;margin-bottom:1.1rem}
+.box-notes span{color:var(--faint);font-weight:600;margin-right:.2rem}
+.box-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:2.4rem}
+.box-t{width:100%;font-size:1.12rem;margin-bottom:.9rem}
+.box-t th{font-size:.92rem;font-weight:500;color:var(--faint);text-align:right;padding:0 .35rem .3rem;border-bottom:1px solid var(--line)}
+.box-t th:first-child{text-align:left;font-size:1.05rem;font-weight:600;color:var(--text)}
+.box-t td{text-align:right;padding:.2rem .35rem;border-bottom:1px solid rgba(238,231,215,.05)}
+.box-t td:first-child{text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:13rem}
+.box-t td.sub{padding-left:1rem}
+.box-t small{color:var(--faint);font-size:.85rem}
+.box-sub{font-size:1rem;color:var(--faint);margin:.6rem 0}
+.box-pre{display:flex;gap:1.5rem;align-items:baseline;font-size:1.4rem;padding:.6rem 0;border-top:1px solid var(--line)}
+.box-pre span{min-width:10rem;color:var(--muted)}
+.fc{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);column-gap:2.2rem}
+.fc-h{font-size:.95rem;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin:0 0 .5rem}
+.fc-h small{font-weight:400;letter-spacing:0;text-transform:none;color:var(--faint);margin-left:.5rem}
+.fc-left .fc-h:not(:first-child){margin-top:1.2rem}
+.fc-facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.55rem 1rem;font-size:1.2rem}
+.fc-facts span{display:block;font-size:.88rem;color:var(--faint)}
+.fc-graph{width:100%;height:auto;display:block;overflow:visible}
+.fc-graph .temp{fill:none;stroke:var(--gold);stroke-width:2;vector-effect:non-scaling-stroke}
+.fc-graph .bar{fill:var(--sky);opacity:.55}
+.fc-graph .ax{stroke:var(--line);vector-effect:non-scaling-stroke}
+.fc-graph .mark{stroke:var(--gold);stroke-dasharray:3 3;opacity:.6;vector-effect:non-scaling-stroke}
+.fc-graph text{font-family:var(--sans);font-size:11px;fill:var(--faint);text-anchor:middle}
+.fc-graph .day{fill:var(--muted);font-weight:600}
+.fc-graph .tl{fill:var(--text);font-size:13px}
+.fc-graph .amt{fill:var(--sky)}
+.fc-graph .mlab{fill:var(--gold);text-anchor:start}
+.fc-days .day{grid-template-columns:3.9rem 2.2rem 3.1rem 2.6rem 1fr 2.6rem 3.4rem;height:2.6rem}
+.fc-days .amt{font-size:.95rem;color:var(--sky);text-align:right}
+.fc-words{display:none;font-family:var(--serif);font-size:1.2rem;line-height:1.42;padding:.2rem 0 .7rem 3.9rem;color:#E4DDCC}
+.fc-words p{margin:0 0 .4rem}.fc-words b{font-family:var(--sans);font-size:.98rem;color:var(--muted);margin-right:.3rem}
+.fc-day.open .fc-words{display:block}
+.fc-radar{position:relative;border-radius:.6rem;overflow:hidden;background:#0A1320}
+.fc-radar img{display:block;width:100%;height:auto}
+.fc-here{position:absolute;width:.9rem;height:.9rem;margin:-.45rem 0 0 -.45rem;border-radius:50%;background:var(--gold);box-shadow:0 0 0 .3rem rgba(229,186,94,.35)}
+.fc-radar-off{position:relative;padding-top:91.67%;font-size:1.15rem;color:var(--faint)}  /* 600x550, as the radar image */
+.fc-radar-off span{position:absolute;inset:0;display:grid;place-items:center}
+.fc-alert{margin:0 3.5rem 1rem 0;padding:.65rem 1rem;border-radius:.6rem;background:rgba(233,161,59,.13);color:#F3C784;font-size:1.15rem;line-height:1.4}
 body.touchable [data-tap],body.touchable [data-scene],body.touchable [data-toggle],body.touchable .panel-x{cursor:pointer}
 body.touchable [data-tap]:active,body.touchable [data-scene]:active,body.touchable [data-toggle]:active{opacity:.6}
 
@@ -871,6 +928,164 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "ArrowLeft") goScene(-1);
   else if (e.key === "Escape") closePanel();
 });
+
+// panel data comes from the server, or from makeDemo() when previewing without one
+async function panelData(url, demoKey) {
+  if (DEMO) return (S.demo_panels || {})[demoKey];
+  const r = await fetch(url, {cache: "no-store"});
+  if (!r.ok && r.status !== 404) throw new Error(r.status);
+  return r.json();
+}
+
+// ------------------------------------------------------------------ reading panel
+PANELS.article = {
+  load: (a) => panelData("/api/article?url=" + encodeURIComponent(a.link), "article"),
+  render(j, a) {
+    const it = ((D(a.key) || {}).items || []).find((x) => x.link === a.link) || {};
+    const title = j.title || it.title || "";
+    const when = j.time || it.time;
+    const head = `<div class="read-src">${esc(j.source || "")}${when ? " · " + esc(rel(when)) : ""}</div><h2 class="read-h">${esc(title)}</h2>`;
+    if (!j.ok) {
+      const sum = j.summary || it.summary;
+      return `<div class="read">${head}${sum ? `<p>${esc(sum)}</p>` : ""}<p class="read-note">The full article couldn't be loaded.</p></div>`;
+    }
+    const note = j.truncated ? `<p class="read-note">The rest of this article is for subscribers. To read it in full, refresh "nyt_cookie" in settings.json (see README).</p>` : "";
+    return `<div class="read">${head}${j.paragraphs.map((p) => `<p>${esc(p)}</p>`).join("")}${note}</div>`;
+  },
+};
+
+// ------------------------------------------------------------------ box score panel
+const num = (v) => v ?? "";
+function boxStatus(b) {
+  if (b.state === "Live") {
+    const mid = /Middle|End/.test(b.inning_state || "");
+    const outs = [0,1,2].map((i) => `<i class="${i < (b.outs || 0) ? "on" : ""}"></i>`).join("");
+    return `<span class="livedot"></span>${esc(b.inning_state || "")} ${ordinal(b.inning)}${mid ? "" : `<span class="outs">${outs}</span>${diamond(b.bases || [])}
+      <span class="box-count">${num(b.balls)}-${num(b.strikes)}</span>`}`;
+  }
+  if (b.state === "Final") return `Final${b.innings.length !== 9 ? ` (${b.innings.length})` : ""}`;
+  if (b.state === "Off") return esc(b.detail);
+  const d = pd(b.start);
+  return d ? `${dayLabel(d)} ${hmap(d)}` : esc(b.detail);
+}
+function boxTeam(t) {
+  const bat = t.batters.map((p) => `<tr><td class="${p.sub ? "sub" : ""}">${esc(p.name)} <small>${esc(p.pos)}</small></td>
+    <td>${num(p.ab)}</td><td>${num(p.r)}</td><td>${num(p.h)}</td><td>${num(p.rbi)}</td><td>${num(p.bb)}</td><td>${num(p.k)}</td><td>${esc(p.avg || "")}</td></tr>`).join("");
+  const pit = t.pitchers.map((p) => `<tr><td>${esc(p.name)}${p.note ? ` <small>${esc(p.note)}</small>` : ""}</td>
+    <td>${esc(p.ip || "")}</td><td>${num(p.h)}</td><td>${num(p.er)}</td><td>${num(p.bb)}</td><td>${num(p.k)}</td><td>${esc(p.era || "")}</td></tr>`).join("");
+  return `<div><table class="box-t"><tr><th class="${t.is_team ? "me" : ""}">${esc(t.name)}</th><th>AB</th><th>R</th><th>H</th><th>RBI</th><th>BB</th><th>K</th><th>AVG</th></tr>${bat}</table>
+    <table class="box-t"><tr><th>Pitching</th><th>IP</th><th>H</th><th>ER</th><th>BB</th><th>K</th><th>ERA</th></tr>${pit}</table></div>`;
+}
+PANELS.game = {
+  load: (a) => panelData("/api/game?id=" + encodeURIComponent(a.id), "game"),
+  refreshMs: 30000,
+  shouldRefresh: (b) => !!(b && b.state === "Live"),
+  render(b) {
+    if (!b || !b.away) return `<div class="panel-msg">This game couldn't be found.</div>`;
+    const head = `<div class="box-head"><span class="box-st">${boxStatus(b)}</span>${b.venue ? `<span>${esc(b.venue)}</span>` : ""}</div>`;
+    if (b.state === "Preview" || (!b.away.batters.length && !b.home.batters.length)) {
+      const pr = (t) => `<div class="box-pre"><span class="${t.is_team ? "me" : ""}">${esc(t.name)}</span><b>${esc(t.probable || "Starter not announced")}</b></div>`;
+      return `${head}<div class="box-sub">Probable pitchers</div>${pr(b.away)}${pr(b.home)}`;
+    }
+    const n = Math.max(9, b.innings.length);
+    const cells = (side) => Array.from({length: n}, (_, i) => {
+      const inn = b.innings[i];
+      const v = inn ? inn[side] : null;
+      return `<td>${v ?? (b.state === "Final" && side === "home" && i === b.innings.length - 1 ? "x" : "")}</td>`;
+    }).join("");
+    const row = (t, side) => `<tr class="${t.is_team ? "me" : ""}"><td>${esc(t.name)}</td>${cells(side)}<td class="rhe">${num(t.r)}</td><td>${num(t.h)}</td><td>${num(t.e)}</td></tr>`;
+    const line = `<table class="box-line"><tr><th></th>${Array.from({length: n}, (_, i) => `<th>${i + 1}</th>`).join("")}<th>R</th><th>H</th><th>E</th></tr>
+      ${row(b.away, "away")}${row(b.home, "home")}</table>`;
+    const dec = b.decisions || {};
+    const notes = [dec.w && `<span>W</span> ${esc(dec.w)}`, dec.l && `<span>L</span> ${esc(dec.l)}`, dec.s && `<span>S</span> ${esc(dec.s)}`,
+      b.homers.length && `<span>HR</span> ${esc(b.homers.join(", "))}`].filter(Boolean).join(" · ");
+    return `${head}${line}${notes ? `<div class="box-notes">${notes}</div>` : ""}<div class="box-cols">${boxTeam(b.away)}${boxTeam(b.home)}</div>`;
+  },
+};
+
+// ------------------------------------------------------------------ forecast panel
+// Teaneck's spot on the NWS Upton, NY (KOKX) radar image, as a share of its width and height
+const RADAR_X_PCT = 21.5, RADAR_Y_PCT = 51;
+function forecastGraph(hours, marks) {
+  const W = 480, top = 16, bot = 88, barTop = 96, barBot = 120;
+  if (!hours.length) return "";
+  const temps = hours.map((h) => h.temp);
+  const lo = Math.min(...temps), hi = Math.max(...temps), span = Math.max(hi - lo, 1);
+  const t0 = pd(hours[0].time).getTime(), step = W / hours.length;
+  const X = (i) => step * (i + .5);
+  const Y = (t) => bot - (t - lo) / span * (bot - top);
+  // temperature: a curve through the midpoints between hours
+  let path = `M${X(0).toFixed(1)},${Y(temps[0]).toFixed(1)}`;
+  for (let i = 1; i < temps.length; i++) {
+    const mx = (X(i - 1) + X(i)) / 2, my = (Y(temps[i - 1]) + Y(temps[i])) / 2;
+    path += ` Q${X(i - 1).toFixed(1)},${Y(temps[i - 1]).toFixed(1)} ${mx.toFixed(1)},${my.toFixed(1)}`;
+  }
+  path += ` T${X(temps.length - 1).toFixed(1)},${Y(temps[temps.length - 1]).toFixed(1)}`;
+  let svg = `<svg class="fc-graph" viewBox="0 0 ${W} 140">`;
+  svg += `<line x1="0" y1="${barBot}" x2="${W}" y2="${barBot}" class="ax"/>`;
+  hours.forEach((h, i) => {
+    if (h.precip > 0) { const ht = h.precip / 100 * (barBot - barTop); svg += `<rect x="${(X(i) - step * .4).toFixed(1)}" y="${(barBot - ht).toFixed(1)}" width="${(step * .8).toFixed(1)}" height="${ht.toFixed(1)}" class="bar"/>`; }
+    const d = pd(h.time);
+    if (d.getHours() % 6 === 0) {
+      const lab = d.getHours() === 0 ? d.toLocaleDateString("en-US", {weekday: "short"}) : (d.getHours() % 12 || 12) + (d.getHours() < 12 ? "a" : "p");
+      svg += `<line x1="${X(i).toFixed(1)}" y1="${barBot}" x2="${X(i).toFixed(1)}" y2="${barBot + 3}" class="ax"/><text x="${X(i).toFixed(1)}" y="134" class="lab${d.getHours() === 0 ? " day" : ""}">${lab}</text>`;
+    }
+  });
+  // rain amount over the wettest hour of each rainy stretch
+  let run = null;
+  const flush = () => { if (run && run.total >= .05) svg += `<text x="${X(run.peak).toFixed(1)}" y="${barTop - 3}" class="amt">${run.total.toFixed(2)}″</text>`; run = null; };
+  hours.forEach((h, i) => {
+    if (h.precip >= 30 || h.amount_in > 0) {
+      run = run || {total: 0, peak: i};
+      run.total += h.amount_in || 0;
+      if (h.precip > hours[run.peak].precip) run.peak = i;
+    } else flush();
+  });
+  flush();
+  (marks || []).forEach((m) => {
+    const x = (pd(m.time).getTime() - t0) / 3600000 * step + step / 2;
+    if (x >= 0 && x <= W) svg += `<line x1="${x.toFixed(1)}" y1="6" x2="${x.toFixed(1)}" y2="${barBot}" class="mark"/><text x="${(x + 3).toFixed(1)}" y="12" class="mlab">${esc(m.label)} ${hm(pd(m.time))}</text>`;
+  });
+  svg += `<path d="${path}" class="temp"/>`;
+  const iHi = temps.indexOf(hi), iLo = temps.indexOf(lo);
+  svg += `<text x="${X(iHi).toFixed(1)}" y="${(Y(hi) - 5).toFixed(1)}" class="tl">${hi}°</text><text x="${X(iLo).toFixed(1)}" y="${(Y(lo) + 13).toFixed(1)}" class="tl">${lo}°</text>`;
+  return svg + "</svg>";
+}
+PANELS.forecast = {
+  load: () => panelData("/api/forecast", "forecast"),
+  refreshMs: 600000,
+  render(f) {
+    if (!f || !f.now) return `<div class="panel-msg">The forecast couldn't be loaded right now.</div>`;
+    const n = f.now;
+    const arrow = {rising: "↑", falling: "↓", steady: "→"}[n.pressure_trend] || "";
+    const fact = (k, v) => v === "" || v == null ? "" : `<div><span>${k}</span>${v}</div>`;
+    const facts = [fact("Feels like", n.feels + "°"), fact("Humidity", n.humidity + "%"), fact("Dew point", n.dew + "°"),
+      fact("Air quality", n.aqi == null ? "" : `${n.aqi} ${esc(n.aqi_word)}`), fact("Wind", `${esc(n.wind_dir)} ${n.wind_mph} mph`),
+      fact("Gusts", n.gust_mph + " mph"), fact("UV index", n.uv), fact("Pressure", `${n.pressure_inhg.toFixed(2)}″ ${arrow}`)].join("");
+    const alerts = (f.alerts || []).map((a) => `<div class="fc-alert">${esc(a.headline || a.event)}</div>`).join("");
+    const days = f.days || [];
+    const lo = Math.min(...days.map((d) => d.lo)), hi = Math.max(...days.map((d) => d.hi)), span = Math.max(hi - lo, 1);
+    const daysHtml = days.map((d) => {
+      const dt = pd(d.date);
+      const words = (f.periods || []).filter((p) => (p.start || "").slice(0, 10) === d.date)
+        .map((p) => `<p><b>${esc(p.name)}</b> ${esc(p.text)}</p>`).join("");
+      return `<div class="fc-day"${words ? " data-toggle" : ""}><div class="day"><span class="n">${dt.toLocaleDateString("en-US", {weekday: "short"})}</span>${wxIcon(d.code)}
+        <span class="p">${d.precip >= 20 ? d.precip + "%" : ""}</span><span class="lo">${d.lo}°</span>
+        <span class="range"><i style="left:${(d.lo - lo) / span * 100}%;right:${(hi - d.hi) / span * 100}%"></i></span><span class="hi">${d.hi}°</span>
+        <span class="amt">${d.amount_in >= .05 ? d.amount_in.toFixed(2) + "″" : ""}</span></div>${words ? `<div class="fc-words">${words}</div>` : ""}</div>`;
+    }).join("");
+    const radar = DEMO ? `<div class="fc-radar-off"><span>Radar shows here with the server running.</span></div>`
+      : `<img src="/api/radar?t=${Math.floor(Date.now() / 600000)}" alt="Radar" onerror="this.parentNode.innerHTML='<div class=&quot;fc-radar-off&quot;><span>Radar unavailable</span></div>'">
+         <i class="fc-here" style="left:${RADAR_X_PCT}%;top:${RADAR_Y_PCT}%"></i>`;
+    return `${alerts}<div class="fc">
+      <div class="fc-left">
+        <div class="fc-h">Right now in ${esc(CFG().location_name || "")}</div><div class="fc-facts">${facts}</div>
+        <div class="fc-h">Next 48 hours</div>${forecastGraph(f.hours || [], f.marks)}
+        <div class="fc-h">7 days <small>tap a day for the Weather Service forecast</small></div><div class="fc-days">${daysHtml}</div>
+      </div>
+      <div class="fc-right"><div class="fc-h">Radar</div><div class="fc-radar">${radar}</div></div></div>`;
+  },
+};
 
 // ------------------------------------------------------------------ misc
 function renderDim() {
