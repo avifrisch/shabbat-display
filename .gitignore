@@ -8,3 +8,5 @@ browser-profile/
 browser-profile-saver/
 browser-profile-saver-*/
 __pycache__/
+.superpowers/
+.playwright-mcp/
