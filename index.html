@@ -39,7 +39,7 @@ html{font-size:min(calc(100vw / 120), calc(100vh / 67.5));height:100%;background
 body{margin:0;height:100%;display:grid;place-items:center;color:var(--text);font-family:var(--sans);
   font-variant-numeric:tabular-nums lining-nums;-webkit-font-smoothing:antialiased;cursor:none;
   background:radial-gradient(110% 95% at 8% 0%, var(--tint) 0%, var(--bg) 62%);transition:background 60s linear}
-.canvas{width:120rem;height:67.5rem;padding:2.3rem 2.6rem 2.1rem;display:grid;grid-template-columns:36.5rem minmax(0,1fr);
+.canvas{width:120rem;height:100%;padding:2.3rem 2.6rem 2.1rem;display:grid;grid-template-columns:36.5rem minmax(0,1fr);
   grid-template-rows:minmax(0,1fr) 12.6rem;column-gap:3.2rem;row-gap:1.6rem;position:relative;transition:transform 4s ease}
 h3{margin:0;font-weight:600}
 
@@ -169,6 +169,16 @@ h3{margin:0;font-weight:600}
 
 /* ---------- interaction ---------- */
 /* Panels open over the scene; nothing looks tappable until someone touches the screen. */
+/* On screens taller than 16:9 (an iPad, a 16:10 laptop) the canvas takes the full height: the scene area
+   grows and the left column spreads out. A 16:9 screen is unchanged (the canvas is exactly 67.5rem). */
+@media (max-aspect-ratio:17/10){.side{justify-content:space-between}}
+/* On a touch screen (the iPad) panels cover the whole screen, a size larger */
+body.fullpanel .panel{position:fixed;inset:0;z-index:20;border:0;border-radius:0}
+body.fullpanel .panel-body{padding:2.4rem 7rem 1.6rem}
+body.fullpanel .panel-body>*{zoom:1.3}
+body.fullpanel .read{margin:0 auto}
+body.fullpanel .panel-x{top:1.4rem;right:1.6rem;width:4.2rem;height:4.2rem;font-size:1.7rem}
+body.fullpanel .panel-count{padding:.9rem 7rem 1.1rem;font-size:1.15rem}
 .scene-wrap,.stage-head{touch-action:pan-y}  /* horizontal drags are ours (swipes), vertical ones scroll */
 /* iPadOS before 16 ignores overscroll-behavior; a fixed body keeps a panel's scroll from bouncing the whole page */
 body{position:fixed;inset:0}
@@ -836,6 +846,8 @@ const interactive = () => !document.body.classList.contains("holy") && Q.get("sa
 // kind -> {load(arg) -> Promise<data>, render(data, arg) -> html, refreshMs?, shouldRefresh?(data)}
 const PANELS = {};
 let panelOpen = null, panelTimer = null, panelSeq = 0, lastInput = 0, down = null, lastXY = null;
+// a touch screen gets full-screen panels (?fullpanel=1 to preview that with a mouse)
+if ((window.matchMedia && matchMedia("(pointer: coarse)").matches) || Q.get("fullpanel") === "1") document.body.classList.add("fullpanel");
 
 function touched(mouse) {
   if (!interactive()) return false;

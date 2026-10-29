@@ -96,6 +96,7 @@ An iPad can't run the display itself, but it can show the one running on your PC
 **What to know:**
 
 - **Fixed address:** give the computer a fixed IP address in your router (a "DHCP reservation"), so the address doesn't change.
+- **Size:** hold it in landscape. The display stretches to fill the iPad's screen, and panels you tap open full screen in larger type.
 - **Who can see it:** anyone on your home Wi-Fi can open the page, agenda included.
 - **If the computer restarts,** the iPad shows an error until someone reloads the page.
 - **The battery:** an old iPad left plugged in all the time can develop a swollen battery. Check it now and then.

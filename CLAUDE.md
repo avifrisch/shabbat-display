@@ -20,7 +20,8 @@ Owner preferences:
   - `python server.py --setting KEY` prints one resolved setting (used by `setup-pi.sh` for `tzid`).
 - `index.html`: single page with no build step, all CSS and JS inline.
   - Polls `/api/state` every 20 seconds.
-  - Designed on a fixed 120×67.5 rem canvas (16:9), scaled by setting the root font-size from the viewport.
+  - Designed on a 120×67.5 rem canvas (16:9), scaled by setting the root font-size from the viewport. On screens taller than 16:9 (the iPad, 16:10 laptops) the canvas takes the full height (`height:100%`): the scene area grows and `.side` spreads out (`max-aspect-ratio:17/10`). A 16:9 screen is unchanged.
+  - On a touch screen (`pointer: coarse`, or `?fullpanel=1`) `body.fullpanel` makes panels cover the whole screen at `zoom:1.3`.
   - Fixed regions: a left column (clock, dates, weather, hourly, 5-day) and a bottom band (Shabbat/Yom Tov box and the zmanim "sky bar").
   - The stage rotates between scenes `agenda`, `yankees`, `mlb`, `news` and `israel`. During a live Yankees game the Yankees scene repeats every other turn and a live score chip appears on the other scenes.
   - `agenda` (today plus the next non-Shabbat day) and the "Next" line under the clock show only when `agenda_ics` is set and not in `body.holy` (`agendaOn()`). If Shabbat starts while the agenda is up, `renderAll()` advances off it immediately.
