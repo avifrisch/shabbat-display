@@ -28,6 +28,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # --------------------------------------------------------------------------
@@ -64,6 +65,10 @@ CONFIG = {
     # Weekday agenda: the private ICS link of each calendar to show (the LPM
     # calendar feed, or any other ICS link). Hidden on Shabbat and Yom Tov.
     "agenda_ics": [],
+
+    # NYT subscription sign-in for the reading panel: the NYT-S cookie value
+    # (or a whole Cookie header) copied from a signed-in browser. Secret.
+    "nyt_cookie": "",
 
     # Server
     "bind": "127.0.0.1",         # use "0.0.0.0" to view from other devices on your network
@@ -993,6 +998,144 @@ def fetch_agenda():
     return {"configured": True, "items": unique[:80], "errors": errors}
 
 
+# ---------------------------------------------------------------- on demand
+# Fetched only when someone opens a panel on the display, and kept briefly.
+
+_cache = {}
+_cache_lock = threading.Lock()
+
+
+def cached(key, ttl, fn):
+    with _cache_lock:
+        hit = _cache.get(key)
+        if hit and time.time() - hit[0] < ttl:
+            return hit[1]
+    value = fn()  # an exception is not cached
+    with _cache_lock:
+        _cache[key] = (time.time(), value)
+    return value
+
+
+def http_get_with(url, headers, timeout=15, limit=3_000_000):
+    req = urllib.request.Request(url, headers={"User-Agent": UA, **headers})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        raw = r.read(limit)
+        charset = r.headers.get_content_charset() or "utf-8"
+    return raw.decode(charset, "replace")
+
+
+ARTICLE_FEEDS = ("nyt", "cnn", "toi", "yankees_news", "mlb_news")
+ARTICLE_SOURCES = {"nyt": "New York Times", "cnn": "CNN", "toi": "Times of Israel",
+                   "yankees_news": "Yankees news", "mlb_news": "MLB news"}
+ARTICLE_FAILED = "The full article couldn't be loaded."
+
+
+def feed_item_for(url):
+    """The feed item linking to url. Only these are fetched, so the server can't be
+    used to fetch arbitrary pages by anyone on the network."""
+    for key in ARTICLE_FEEDS:
+        for it in (store.get(key) or {}).get("items", []):
+            if it.get("link") and it["link"] == url:
+                return it
+    return None
+
+
+def is_nyt(url):
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    return host == "nytimes.com" or host.endswith(".nytimes.com")
+
+
+def article_headers(url):
+    headers = {"Accept": "text/html"}
+    cookie = (CONFIG.get("nyt_cookie") or "").strip()
+    if cookie and is_nyt(url):
+        headers["Cookie"] = cookie if "=" in cookie else "NYT-S=" + cookie
+    return headers
+
+
+class _Paragraphs(HTMLParser):
+    SKIP = {"script", "style", "nav", "footer", "aside", "figure", "noscript"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.skip = 0
+        self.article = 0     # depth inside <article> or the NYT's <section name="articleBody">
+        self.section = []    # whether each open <section> is the NYT article body
+        self.buf = None
+        self.inside, self.outside = [], []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.SKIP:
+            self.skip += 1
+        elif tag == "article":
+            self.article += 1
+        elif tag == "section":
+            body = dict(attrs).get("name") == "articleBody"
+            self.section.append(body)
+            self.article += body
+        elif tag == "p" and not self.skip:
+            self.buf = []
+
+    def handle_endtag(self, tag):
+        if tag in self.SKIP:
+            self.skip = max(0, self.skip - 1)
+        elif tag == "article":
+            self.article = max(0, self.article - 1)
+        elif tag == "section" and self.section:
+            self.article = max(0, self.article - self.section.pop())
+        elif tag == "p" and self.buf is not None:
+            text = re.sub(r"\s+", " ", "".join(self.buf)).strip()
+            (self.inside if self.article else self.outside).append(text)
+            self.buf = None
+
+    def handle_data(self, data):
+        if self.buf is not None and not self.skip:
+            self.buf.append(data)
+
+
+def extract_article(page):
+    p = _Paragraphs()
+    try:
+        p.feed(page)
+        p.close()
+    except Exception:  # noqa: BLE001 - keep whatever was parsed
+        pass
+    seen, out = set(), []
+    for text in p.inside or p.outside:
+        if len(text) >= 40 and text not in seen:
+            seen.add(text)
+            out.append(text)
+    return out
+
+
+def article_json(url):
+    item = feed_item_for(url)
+    if item is None:
+        raise LookupError(url)
+
+    def load():
+        base = {"title": item.get("title"), "source": ARTICLE_SOURCES.get(item.get("source"), ""),
+                "time": item.get("time")}
+        try:
+            paras = extract_article(http_get_with(url, article_headers(url)))
+        except Exception:  # noqa: BLE001 - the panel shows the summary instead
+            log(f"article: {urllib.parse.urlparse(url).hostname} failed")
+            paras = []
+        if not paras:
+            return {**base, "ok": False, "summary": item.get("summary") or "", "message": ARTICLE_FAILED}
+        return {**base, "ok": True, "paragraphs": paras, "truncated": is_nyt(url) and len(paras) < 5}
+
+    return cached("article:" + url, 600, load)
+
+
+def article_route(query):
+    url = (urllib.parse.parse_qs(query).get("url") or [""])[0]
+    try:
+        return 200, json.dumps(article_json(url))
+    except LookupError:
+        return 404, json.dumps({"ok": False, "message": "not found"})
+
+
 # ---------------------------------------------------------------- scheduler
 
 SOURCES = [
@@ -1060,13 +1203,16 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b)
 
     def do_GET(self):
-        path = urllib.parse.urlparse(self.path).path
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
         try:
             if path in ("/", "/index.html"):
                 with open(PAGE_FILE, "rb") as f:
                     self._send(200, f.read(), "text/html; charset=utf-8")
             elif path == "/api/state":
                 self._send(200, state_json(), "application/json")
+            elif path == "/api/article":
+                self._send(*article_route(parsed.query), "application/json")
             elif path == "/health":
                 self._send(200, "ok", "text/plain")
             elif path.startswith("/fonts/") and ".." not in path:
