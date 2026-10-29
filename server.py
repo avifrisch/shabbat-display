@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 import traceback
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -1136,6 +1137,108 @@ def article_route(query):
         return 404, json.dumps({"ok": False, "message": "not found"})
 
 
+def _decision(note):
+    """'(W, 14-8)' -> ('W', '14-8'); '' -> ('', '')."""
+    m = re.match(r"\((\w+),\s*([^)]*)\)", note or "")
+    return (m.group(1), m.group(2)) if m else ("", "")
+
+
+def norm_boxscore(feed):
+    gd, ld = feed.get("gameData", {}), feed.get("liveData", {})
+    if not gd.get("status"):
+        raise LookupError("no such game")
+    st, ls = gd.get("status", {}), ld.get("linescore", {})
+    detail = st.get("detailedState", "")
+    state = "Off" if detail in ("Postponed", "Cancelled", "Suspended") else st.get("abstractGameState")
+    names = {k: v.get("boxscoreName") for k, v in gd.get("players", {}).items()}
+    box = ld.get("boxscore", {}).get("teams", {})
+    decisions = {}
+
+    def name(p):
+        return names.get(f"ID{p['person']['id']}") or p["person"].get("fullName", "")
+
+    def side(which):
+        gt, bt = gd.get("teams", {}).get(which, {}), box.get(which, {})
+        players = bt.get("players", {})
+        batters = sorted((p for p in players.values() if p.get("battingOrder")
+                          and p["person"]["id"] in bt.get("batters", [])),
+                         key=lambda p: int(p["battingOrder"]))
+        pitchers = []
+        for pid in bt.get("pitchers", []):
+            p = players.get(f"ID{pid}")
+            if not p:
+                continue
+            s = p["stats"].get("pitching", {})
+            letter, rec = _decision(s.get("note"))
+            if letter in ("W", "L", "S"):
+                decisions[letter.lower()] = f"{name(p)} ({rec})"
+            pitchers.append({"name": name(p), "note": letter, "ip": s.get("inningsPitched"), "h": s.get("hits"),
+                             "er": s.get("earnedRuns"), "bb": s.get("baseOnBalls"), "k": s.get("strikeOuts"),
+                             "era": p["seasonStats"].get("pitching", {}).get("era")})
+        line = ls.get("teams", {}).get(which, {})
+        return {
+            "abbr": gt.get("abbreviation"), "name": gt.get("teamName") or gt.get("name"),
+            "r": line.get("runs"), "h": line.get("hits"), "e": line.get("errors"),
+            "is_team": gt.get("id") == CONFIG["team_id"],
+            "probable": (gd.get("probablePitchers", {}).get(which) or {}).get("fullName"),
+            "batters": [{"name": name(p), "pos": p["position"]["abbreviation"].upper(),
+                         "sub": not str(p["battingOrder"]).endswith("00"),
+                         **{k: p["stats"].get("batting", {}).get(src) for k, src in
+                            (("ab", "atBats"), ("r", "runs"), ("h", "hits"), ("rbi", "rbi"),
+                             ("bb", "baseOnBalls"), ("k", "strikeOuts"))},
+                         "avg": p["seasonStats"].get("batting", {}).get("avg")} for p in batters],
+            "pitchers": pitchers,
+        }
+
+    away, home = side("away"), side("home")
+    homers = []
+    for play in ld.get("plays", {}).get("allPlays", []):
+        if play["result"].get("eventType") == "home_run":
+            b = play["matchup"]["batter"]
+            n = re.search(r"\((\d+)\)", play["result"].get("description", ""))
+            homers.append(f"{names.get(f'ID{b['id']}') or b.get('fullName')} ({n.group(1) if n else '?'})")
+    off = ls.get("offense", {})
+    return {
+        "id": feed.get("gamePk"), "state": state, "detail": detail,
+        "start": gd.get("datetime", {}).get("dateTime"), "venue": gd.get("venue", {}).get("name"),
+        "inning": ls.get("currentInning"), "inning_state": ls.get("inningState"),
+        "outs": ls.get("outs"), "balls": ls.get("balls"), "strikes": ls.get("strikes"),
+        "bases": [bool(off.get("first")), bool(off.get("second")), bool(off.get("third"))],
+        "innings": [{"num": i.get("num"), "away": i.get("away", {}).get("runs"), "home": i.get("home", {}).get("runs")}
+                    for i in ls.get("innings", [])],
+        "decisions": {k: decisions.get(k) for k in ("w", "l", "s")},
+        "homers": homers, "away": away, "home": home,
+    }
+
+
+def game_json(pk):
+    with _cache_lock:
+        hit = _cache.get(f"game:{pk}")
+    live = not hit or hit[1].get("state") == "Live"
+    return cached(f"game:{pk}", 25 if live else 600,
+                  lambda: norm_boxscore(get_json(f"https://statsapi.mlb.com/api/v1.1/game/{pk}/feed/live")))
+
+
+def game_id_from_query(query):
+    v = (urllib.parse.parse_qs(query).get("id") or [""])[0]
+    return int(v) if v.isdigit() and len(v) < 12 else None
+
+
+def game_route(query):
+    pk = game_id_from_query(query)
+    if pk is None:
+        return 404, json.dumps({"ok": False, "message": "not found"})
+    try:
+        return 200, json.dumps(game_json(pk))
+    except LookupError:
+        return 404, json.dumps({"ok": False, "message": "not found"})
+    except urllib.error.HTTPError as e:
+        return (404 if e.code == 404 else 503), json.dumps({"ok": False})
+    except Exception as e:  # noqa: BLE001
+        log(f"game {pk}: {e}")
+        return 503, json.dumps({"ok": False})
+
+
 # ---------------------------------------------------------------- scheduler
 
 SOURCES = [
@@ -1213,6 +1316,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, state_json(), "application/json")
             elif path == "/api/article":
                 self._send(*article_route(parsed.query), "application/json")
+            elif path == "/api/game":
+                self._send(*game_route(parsed.query), "application/json")
             elif path == "/health":
                 self._send(200, "ok", "text/plain")
             elif path.startswith("/fonts/") and ".." not in path:

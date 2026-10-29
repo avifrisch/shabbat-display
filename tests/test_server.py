@@ -85,5 +85,40 @@ class ArticleTests(Isolated):
         self.assertFalse(json.loads(body)["ok"])
 
 
+class GameTests(Isolated):
+    def test_final_box(self):
+        b = server.norm_boxscore(json.loads(fixture("game_final.json")))
+        self.assertEqual(b["state"], "Final")
+        self.assertGreaterEqual(len(b["innings"]), 9)
+        self.assertEqual(sum(i["away"] or 0 for i in b["innings"]), b["away"]["r"])
+        self.assertGreaterEqual(len(b["away"]["batters"]), 9)
+        self.assertTrue(any(p["note"] == "W" for p in b["away"]["pitchers"] + b["home"]["pitchers"]))
+        self.assertTrue(b["away"]["is_team"] or b["home"]["is_team"])
+
+    def test_final_box_summary(self):
+        b = server.norm_boxscore(json.loads(fixture("game_final.json")))
+        self.assertEqual(b["decisions"]["l"], "Fried (1-1)")
+        self.assertEqual(len(b["homers"]), 2)
+        self.assertRegex(b["homers"][0], r"^\S.* \(\d+\)$")
+        self.assertEqual(b["away"]["batters"][0]["pos"], b["away"]["batters"][0]["pos"].upper())
+
+    def test_preview_game_has_probables(self):
+        b = server.norm_boxscore(json.loads(fixture("game_preview.json")))
+        self.assertEqual(b["state"], "Preview")
+        self.assertEqual(b["away"]["batters"], [])
+        self.assertIn("probable", b["home"])
+
+    def test_game_route_rejects_non_numeric(self):
+        self.assertIsNone(server.game_id_from_query("id=12ab"))
+        self.assertIsNone(server.game_id_from_query(""))
+        self.assertEqual(server.game_id_from_query("id=778899"), 778899)
+
+    def test_unknown_game_is_404(self):
+        # statsapi answers 200 with no gameData for an id that doesn't exist
+        with mock.patch.object(server, "get_json", return_value={"gamePk": 1, "liveData": {}}):
+            code, _ = server.game_route("id=1")
+        self.assertEqual(code, 404)
+
+
 if __name__ == "__main__":
     unittest.main()
