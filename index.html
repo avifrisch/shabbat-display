@@ -167,6 +167,20 @@ h3{margin:0;font-weight:600}
 .stand tr.me td{background:repeating-linear-gradient(90deg,rgba(238,231,215,.045) 0 1px,transparent 1px 1.1rem);color:var(--text)}
 .stand tr.me td.nm{color:var(--text)}
 
+/* ---------- interaction ---------- */
+/* Panels open over the scene; nothing looks tappable until someone touches the screen. */
+.scene-wrap{touch-action:pan-y}
+.stage,.side{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}  /* drags swipe or scroll, not select */
+.panel{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;background:#111D30;border:1px solid var(--line);border-radius:1rem;overflow:hidden}
+.panel[hidden]{display:none}
+.panel-body{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:2rem 2.4rem 1.2rem}
+.panel-count{flex:none;padding:.7rem 2.4rem .9rem;border-top:1px solid var(--line);font-size:.98rem;color:var(--faint)}
+.panel-x{position:absolute;top:.9rem;right:.9rem;z-index:1;width:3.2rem;height:3.2rem;border-radius:50%;display:grid;place-items:center;
+  font-size:1.35rem;color:var(--muted);background:rgba(238,231,215,.08)}
+.panel-msg{font-size:1.3rem;color:var(--muted);padding:1rem 0}
+body.touchable [data-tap],body.touchable [data-scene],body.touchable [data-toggle],body.touchable .panel-x{cursor:pointer}
+body.touchable [data-tap]:active,body.touchable [data-scene]:active,body.touchable [data-toggle]:active{opacity:.6}
+
 /* ---------- zmanim band ---------- */
 .band{grid-column:1 / -1;display:grid;grid-template-columns:36.5rem minmax(0,1fr);column-gap:3.2rem;border-top:1px solid var(--line);padding-top:1.3rem}
 .shab{display:flex;flex-direction:column;justify-content:flex-start}
@@ -236,14 +250,14 @@ body.holy .shab .en{color:var(--gold)}
       <div class="agenda-next" id="agnext" hidden></div>
       <div class="offline" id="offline" hidden></div>
     </div>
-    <div class="now" id="wxnow"></div>
-    <div class="nws" id="nws"></div>
-    <div class="hourly" id="hourly"></div>
-    <div class="days" id="days"></div>
+    <div class="now" id="wxnow" data-tap="forecast"></div>
+    <div class="nws" id="nws" data-tap="forecast"></div>
+    <div class="hourly" id="hourly" data-tap="forecast"></div>
+    <div class="days" id="days" data-tap="forecast"></div>
   </aside>
 
   <main class="stage">
-    <div class="alert" id="alert"></div>
+    <div class="alert" id="alert" data-tap="forecast"></div>
     <div class="stage-head">
       <div class="stage-title" id="stitle"></div>
       <div class="head-right">
@@ -254,6 +268,8 @@ body.holy .shab .en{color:var(--gold)}
     <div class="scene-wrap">
       <section class="scene" id="layerA"></section>
       <section class="scene" id="layerB"></section>
+      <div class="panel" id="panel" hidden><div class="panel-body" id="pbody"></div><div class="panel-count" id="pcount"></div>
+        <div class="panel-x" role="button" aria-label="Close">✕</div></div>
     </div>
   </main>
 
@@ -559,6 +575,8 @@ function gameStatusHTML(g) {
   const d = pd(g.start);
   return `<span class="st">${d ? `${dayLabel(d)} ${hmap(d)}` : esc(g.detail)}</span>`;
 }
+// attributes that make a game open the box score
+const tapGame = (g) => g.id ? ` data-tap="game" data-id="${Number(g.id)}"` : "";
 function gameCard(g, opts = {}) {
   const fin = g.state === "Final";
   const row = (s, other) => {
@@ -577,7 +595,7 @@ function gameCard(g, opts = {}) {
   if (g.series_status && post && !opts.noSeriesStatus) foot.push(`<b>${esc(g.series_status)}</b>`);
   if (g.venue) foot.push(`<span>${esc(g.venue)}</span>`);
   const hasHE = g.away.hits != null;
-  return `<div class="gc"><div class="gc-head"><span>${esc(head)}</span>${gameStatusHTML(g)}</div>
+  return `<div class="gc"${tapGame(g)}><div class="gc-head"><span>${esc(head)}</span>${gameStatusHTML(g)}</div>
     ${g.state !== "Preview" ? `<div class="gc-legend"><span></span><span></span><span>R</span><span>${hasHE ? "H" : ""}</span><span>${hasHE ? "E" : ""}</span></div>` : ""}
     ${row(g.away, g.home)}${row(g.home, g.away)}
     ${foot.length ? `<div class="gc-foot">${foot.join("")}</div>` : ""}</div>`;
@@ -586,7 +604,7 @@ function miniGame(g) {
   const fin = g.state === "Final";
   const rw = (s, o) => `<div class="rw${fin && s.score < o.score ? " lose" : ""}"><span>${esc(s.abbr)}</span><span>${g.state === "Preview" ? "" : (s.score ?? "")}</span></div>`;
   const st = g.state === "Live" ? `<span class="livedot"></span>${esc(inningText(g))}` : g.state === "Final" ? "Final" : esc(hmap(pd(g.start)));
-  return `<div class="mini"><div class="st">${st}</div>${rw(g.away, g.home)}${rw(g.home, g.away)}</div>`;
+  return `<div class="mini"${tapGame(g)}><div class="st">${st}</div>${rw(g.away, g.home)}${rw(g.home, g.away)}</div>`;
 }
 
 // ------------------------------------------------------------------ lists
@@ -594,13 +612,15 @@ function emptyMsg(key) {
   const m = S && S.meta && S.meta[key];
   return `<div class="empty">${m && m.ok === false ? "This feed isn't responding. The server keeps retrying." : "Waiting for headlines."}</div>`;
 }
+// attributes that make a headline open the reading panel
+const tapArticle = (key, it) => it.link ? ` data-tap="article" data-key="${key}" data-link="${esc(it.link)}"` : "";
 function headlines(key, n, leadMode) {
   const f = D(key); const items = (f && f.items) || [];
   if (!items.length) return emptyMsg(key);
   return items.slice(0, n).map((it, i) => {
     const lead = leadMode && i === 0;
     const when = it.time ? rel(it.time) : "";
-    return `<div class="hl${lead ? " lead" + (leadMode === "mega" ? " mega" : "") : ""}"><div class="t">${esc(it.title)}</div>
+    return `<div class="hl${lead ? " lead" + (leadMode === "mega" ? " mega" : "") : ""}"${tapArticle(key, it)}><div class="t">${esc(it.title)}</div>
       ${lead && it.summary ? `<div class="s">${esc(it.summary)}</div>` : ""}${when ? `<div class="w">${when}</div>` : ""}</div>`;
   }).join("");
 }
@@ -651,7 +671,7 @@ function sceneMLB() {
   if (games.length === 1) {
     // one big game (usually the World Series): moves beside it, news underneath in two columns
     const f = D("mlb_news"); const items = (f && f.items) || [];
-    const li = (arr) => arr.map((it) => `<div class="hl"><div class="t">${esc(it.title)}</div><div class="w">${rel(it.time)}</div></div>`).join("");
+    const li = (arr) => arr.map((it) => `<div class="hl"${tapArticle("mlb_news", it)}><div class="t">${esc(it.title)}</div><div class="w">${rel(it.time)}</div></div>`).join("");
     return `<div class="grid2" style="grid-template-columns:minmax(0,1.35fr) minmax(0,1fr)"><div>${label}${gameCard(games[0])}</div>
         ${col("Transactions", "transactions", txList(league, 3))}</div>
       <div class="col" style="flex:1"><div class="col-h"><h3>MLB news</h3>${ageHTML("mlb_news")}</div>
@@ -672,10 +692,10 @@ function sceneNews() {
 function sceneIsrael() {
   const f = D("toi"); const items = (f && f.items) || [];
   if (!items.length) return col("The Times of Israel", "toi", emptyMsg("toi"));
-  const lead = `<div class="hl lead mega"><div class="t">${esc(items[0].title)}</div>${items[0].summary ? `<div class="s">${esc(items[0].summary)}</div>` : ""}<div class="w">${rel(items[0].time)}</div></div>`;
+  const lead = `<div class="hl lead mega"${tapArticle("toi", items[0])}><div class="t">${esc(items[0].title)}</div>${items[0].summary ? `<div class="s">${esc(items[0].summary)}</div>` : ""}<div class="w">${rel(items[0].time)}</div></div>`;
   const rest = items.slice(1, 9);
   const half = Math.ceil(rest.length / 2);
-  const li = (arr) => arr.map((it) => `<div class="hl"><div class="t">${esc(it.title)}</div><div class="w">${rel(it.time)}</div></div>`).join("");
+  const li = (arr) => arr.map((it) => `<div class="hl"${tapArticle("toi", it)}><div class="t">${esc(it.title)}</div><div class="w">${rel(it.time)}</div></div>`).join("");
   return `<div class="col" style="flex:none"><div class="col-h"><h3>The Times of Israel</h3>${ageHTML("toi")}</div>${lead}</div>
     <div class="grid2" style="flex:1"><div class="col">${li(rest.slice(0, half))}</div><div class="col">${li(rest.slice(half))}</div></div>`;
 }
@@ -720,7 +740,7 @@ function showScene(name, fade = true) {
   else $(front).classList.add("show");
   $("stitle").textContent = SCENES[name].title();
   const tabs = [...new Set(order)];
-  $("scenes").innerHTML = tabs.map((s) => `<span class="${s === name ? "on" : ""}">${SCENES[s].tab}<i id="${s === name ? "prog" : ""}"></i></span>`).join("");
+  $("scenes").innerHTML = tabs.map((s) => `<span class="${s === name ? "on" : ""}" data-scene="${s}">${SCENES[s].tab}<i id="${s === name ? "prog" : ""}"></i></span>`).join("");
   renderChip();
 }
 function renderChip() {
@@ -728,11 +748,14 @@ function renderChip() {
   if (t && t.live && current !== "yankees") {
     const g = t.live;
     chip.className = "chip on";
+    if (g.id) { chip.dataset.tap = "game"; chip.dataset.id = g.id; }
     chip.innerHTML = `<span class="dot"></span>${esc(g.away.abbr)} ${g.away.score ?? 0}&nbsp; ${esc(g.home.abbr)} ${g.home.score ?? 0}&nbsp; <span style="font-weight:450">${esc(inningText(g))}</span>`;
-  } else chip.className = "chip";
+  } else { chip.className = "chip"; delete chip.dataset.tap; delete chip.dataset.id; }
 }
 function tick() {
   if (!S) return;
+  if (lastInput && (!interactive() || Date.now() - lastInput >= idleMs())) endInteraction();
+  if (lastInput) { sceneStart = Date.now(); panelCountdown(); }  // rotation waits while someone is using it
   const el = Date.now() - sceneStart;
   const p = $("prog");
   if (p) p.style.width = Math.min(100, el / duration(current) * 100) + "%";
@@ -742,6 +765,112 @@ function advance() {
   order = buildOrder(); idx = (idx + 1) % order.length; sceneStart = Date.now();
   showScene(order[idx], true);
 }
+
+// ------------------------------------------------------------------ interaction
+// Tap or click a headline, the weather or a game to open a panel over the scene; swipe,
+// drag or the arrow keys change scenes. Two minutes after the last input everything goes
+// back to the normal rotation. Off on Shabbat and Yom Tov, and as a screen saver.
+const IDLE_MS = 120000;
+const idleMs = () => (Q.get("debug") === "1" && window.IDLE_MS_OVERRIDE) || IDLE_MS;
+const interactive = () => !document.body.classList.contains("holy") && Q.get("saver") !== "1";
+// kind -> {load(arg) -> Promise<data>, render(data, arg) -> html, refreshMs?, shouldRefresh?(data)}
+const PANELS = {};
+let panelOpen = null, panelTimer = null, panelSeq = 0, lastInput = 0, down = null;
+
+function touched(mouse) {
+  if (!interactive()) return false;
+  lastInput = Date.now();
+  document.body.classList.add("touchable");
+  if (mouse) document.body.style.cursor = "default";
+  return true;
+}
+function endInteraction() {
+  closePanel();
+  lastInput = 0; sceneStart = Date.now();
+  document.body.classList.remove("touchable");
+  document.body.style.cursor = "";
+}
+function panelCountdown() {
+  if (!panelOpen) return;
+  const s = Math.max(0, Math.ceil((idleMs() - (Date.now() - lastInput)) / 1000));
+  $("pcount").textContent = `Back to the display in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+async function loadPanel(seq) {
+  const P = PANELS[panelOpen.kind], body = $("pbody");
+  try {
+    const data = await P.load(panelOpen.arg);
+    if (seq !== panelSeq) return;  // closed or replaced while loading
+    const top = body.scrollTop;
+    body.innerHTML = P.render(data, panelOpen.arg);
+    body.scrollTop = top;
+    panelOpen.data = data;
+  } catch (e) {
+    if (seq === panelSeq && !panelOpen.data) body.innerHTML = `<div class="panel-msg">This couldn't be loaded right now.</div>`;
+  }
+}
+function openPanel(kind, arg) {
+  const P = PANELS[kind]; if (!P) return;
+  closePanel();
+  panelOpen = {kind, arg};
+  const seq = ++panelSeq;
+  $("pbody").innerHTML = `<div class="panel-msg">Loading…</div>`;
+  $("pbody").scrollTop = 0;
+  $("panel").hidden = false;
+  panelCountdown();
+  loadPanel(seq);
+  if (P.refreshMs) panelTimer = setInterval(() => {
+    if (panelOpen && (!P.shouldRefresh || P.shouldRefresh(panelOpen.data))) loadPanel(seq);
+  }, P.refreshMs);
+}
+function closePanel() {
+  clearInterval(panelTimer); panelTimer = null;
+  panelSeq++; panelOpen = null;
+  $("panel").hidden = true; $("pbody").innerHTML = "";
+}
+function goScene(to) {
+  closePanel();
+  order = buildOrder();
+  const tabs = [...new Set(order)];
+  if (!tabs.length) return;
+  const name = typeof to === "string" ? to : tabs[(tabs.indexOf(current) + to + tabs.length) % tabs.length];
+  if (!SCENES[name] || !tabs.includes(name)) return;
+  idx = order.indexOf(name); sceneStart = Date.now();
+  if (name !== current) showScene(name, true);
+}
+function tap(el) {
+  if (el.closest(".panel-x")) return closePanel();
+  const sc = el.closest("[data-scene]"); if (sc) return goScene(sc.dataset.scene);
+  const tg = el.closest("[data-toggle]"); if (tg) return tg.classList.toggle("open");
+  const t = el.closest("[data-tap]"); if (t) openPanel(t.dataset.tap, Object.assign({}, t.dataset));
+}
+document.addEventListener("pointerdown", (e) => {
+  down = null;
+  if (!touched(e.pointerType === "mouse")) return;
+  down = {x: e.clientX, y: e.clientY, t: Date.now(), target: e.target, mouse: e.pointerType === "mouse",
+          stage: !!e.target.closest(".scene-wrap, .stage-head"), top: $("pbody").scrollTop};
+});
+document.addEventListener("pointermove", (e) => {
+  if (!down) { if (e.pointerType === "mouse") touched(true); return; }
+  // a touch scrolls the panel natively; a mouse drag scrolls it here
+  if (down.mouse && panelOpen && (e.buttons & 1) && down.target.closest("#panel")) {
+    $("pbody").scrollTop = down.top - (e.clientY - down.y);
+  }
+});
+document.addEventListener("pointerup", (e) => {
+  const d = down; down = null;
+  if (!d || !interactive()) return;
+  const dx = e.clientX - d.x, dy = e.clientY - d.y;
+  if (Math.hypot(dx, dy) < 10 && Date.now() - d.t < 500) return tap(d.target);
+  if (d.stage && Math.abs(dx) >= 80 && Math.abs(dx) > 1.5 * Math.abs(dy)) goScene(dx < 0 ? 1 : -1);
+});
+document.addEventListener("pointercancel", () => { down = null; });
+document.addEventListener("wheel", () => touched(true), {passive: true});
+document.addEventListener("keydown", (e) => {
+  if (!touched(false)) return;
+  if (e.key === "ArrowRight") goScene(1);
+  else if (e.key === "ArrowLeft") goScene(-1);
+  else if (e.key === "Escape") closePanel();
+});
 
 // ------------------------------------------------------------------ misc
 function renderDim() {
