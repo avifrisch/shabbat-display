@@ -6,6 +6,10 @@ both running: if either one closes or crashes, it is started again.
 
     Windows:  double-click start-display.bat
     Pi/Linux: ./start-display.sh   (setup-pi.sh makes it start at login)
+
+With --screensaver (Windows only; start-screensaver.bat) it acts as a screen saver
+instead: the server stays running in the background, the browser opens after
+screensaver_minutes without mouse or keyboard input, and any input closes it.
 """
 import json
 import os
@@ -16,8 +20,9 @@ import time
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PROFILE = os.path.join(HERE, "browser-profile")
-LOG_FILE = os.path.join(HERE, "launcher.log")
+SAVER = "--screensaver" in sys.argv
+PROFILE = os.path.join(HERE, "browser-profile-saver" if SAVER else "browser-profile")
+LOG_FILE = os.path.join(HERE, "screensaver.log" if SAVER else "launcher.log")
 WINDOWS = os.name == "nt"
 NO_WINDOW = 0x08000000 if WINDOWS else 0
 
@@ -33,15 +38,15 @@ LINUX_BROWSERS = ["chromium", "chromium-browser", "google-chrome", "google-chrom
                   "microsoft-edge"]
 
 
-def port():
+def setting(key, default):
     try:
         with open(os.path.join(HERE, "settings.json"), encoding="utf-8-sig") as f:
-            return int(json.load(f).get("port", 8765))
+            return type(default)(json.load(f).get(key, default))
     except (OSError, ValueError, TypeError, AttributeError):
-        return 8765
+        return default
 
 
-URL = f"http://localhost:{port()}/"
+URL = f"http://localhost:{setting('port', 8765)}/"
 
 
 def log(msg):
@@ -149,7 +154,8 @@ def mark_clean_exit():
 def start_browser(path):
     log(f"starting browser {path}")
     mark_clean_exit()
-    args = [path, "--kiosk", URL, f"--user-data-dir={PROFILE}", "--no-first-run",
+    # ?saver=1: the page skips its wake lock, so the power plan can still turn the screen off.
+    args = [path, "--kiosk", URL + ("?saver=1" if SAVER else ""), f"--user-data-dir={PROFILE}", "--no-first-run",
             "--noerrdialogs", "--disable-session-crashed-bubble", "--disable-infobars",
             "--disable-features=Translate,TranslateUI", "--autoplay-policy=no-user-gesture-required",
             "--overscroll-history-navigation=0", "--disable-pinch",
@@ -166,7 +172,7 @@ def single_instance():
     if WINDOWS:
         import ctypes
         k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        handle = k32.CreateMutexW(None, False, "ShabbatDisplayLauncher")
+        handle = k32.CreateMutexW(None, False, "ShabbatDisplaySaver" if SAVER else "ShabbatDisplayLauncher")
         return None if ctypes.get_last_error() == 183 else handle  # ERROR_ALREADY_EXISTS
     import fcntl
     f = open(os.path.join(HERE, "launcher.lock"), "w")
@@ -178,7 +184,113 @@ def single_instance():
     return f
 
 
+def last_input():
+    """Tick count (ms) of the last mouse or keyboard input anywhere in this session."""
+    import ctypes
+
+    class LASTINPUTINFO(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+    info = LASTINPUTINFO(ctypes.sizeof(LASTINPUTINFO), 0)
+    ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info))
+    return info.dwTime
+
+
+def idle_seconds():
+    import ctypes
+    return ((ctypes.windll.kernel32.GetTickCount() - last_input()) & 0xFFFFFFFF) / 1000
+
+
+def screen_busy():
+    """True when the session is locked or a full-screen window (a slideshow, a video call,
+    a game) is in front: times a screen saver shouldn't appear."""
+    import ctypes
+    import ctypes.wintypes as wt
+    u32 = ctypes.windll.user32
+    u32.GetForegroundWindow.restype = wt.HWND
+    u32.MonitorFromWindow.restype = wt.HANDLE
+    u32.MonitorFromWindow.argtypes = [wt.HWND, wt.DWORD]
+    hwnd = u32.GetForegroundWindow()
+    if not hwnd:  # nothing in front: locked, or the secure desktop is up
+        return True
+    cls = ctypes.create_unicode_buffer(64)
+    u32.GetClassNameW(hwnd, cls, 64)
+    if cls.value in ("Progman", "WorkerW", "Shell_TrayWnd"):  # the desktop itself
+        return False
+
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wt.DWORD), ("rcMonitor", wt.RECT), ("rcWork", wt.RECT), ("dwFlags", wt.DWORD)]
+
+    win = wt.RECT()
+    u32.GetWindowRect(hwnd, ctypes.byref(win))
+    mi = MONITORINFO()
+    mi.cbSize = ctypes.sizeof(MONITORINFO)
+    u32.GetMonitorInfoW(u32.MonitorFromWindow(hwnd, 2), ctypes.byref(mi))  # MONITOR_DEFAULTTONEAREST
+    m = mi.rcMonitor
+    return win.left <= m.left and win.top <= m.top and win.right >= m.right and win.bottom >= m.bottom
+
+
+def browser_pids():
+    """Main browser processes using our profile. Chrome relaunches itself at startup,
+    so the process start_browser() returns is usually gone by now."""
+    prof = PROFILE.replace("'", "''")
+    cmd = ("Get-CimInstance Win32_Process -Filter \"Name='chrome.exe' or Name='msedge.exe'\" | "
+           f"Where-Object {{ $_.CommandLine -like '*{prof}*' -and $_.CommandLine -notlike '*--type=*' }} | "
+           "ForEach-Object { $_.ProcessId }")
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True,
+                             timeout=30, creationflags=NO_WINDOW).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [int(x) for x in out.split() if x.isdigit()]
+
+
+def stop_browser(pids):
+    """Close the screen-saver browser at once. A polite close takes seconds, and
+    mark_clean_exit() keeps the forced one from causing a restore-pages bubble next time."""
+    for _ in range(2):
+        for pid in pids or browser_pids():
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], creationflags=NO_WINDOW,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for _ in range(20):
+            if not browser_running():
+                return
+            time.sleep(0.1)
+        pids = None  # look again, in case it had relaunched under a new process
+
+
+def saver_loop(browser_path, server):
+    wait = max(0.25, setting("screensaver_minutes", 10.0)) * 60
+    log(f"screen saver on: opens after {wait / 60:g} minutes idle")
+    showing, pids = False, []
+    while True:
+        if not showing:
+            time.sleep(2)
+            if idle_seconds() >= wait and not screen_busy():
+                start_browser(browser_path)
+                showing, pids, shown_at = True, [], last_input()
+                for _ in range(50):  # wait for the relaunched browser, then remember its process
+                    if last_input() != shown_at or browser_running():
+                        break
+                    time.sleep(0.1)
+        else:
+            time.sleep(0.2)
+            if not pids and last_input() == shown_at:
+                pids = browser_pids()
+            if last_input() != shown_at or not browser_running():
+                stop_browser(pids)
+                showing = False
+        if server is not None and server.poll() is not None:
+            log(f"server exited with code {server.returncode}; restarting")
+            server = start_server()
+        elif server is None and not server_up():
+            server = start_server()
+
+
 def main():
+    if SAVER and not WINDOWS:
+        print("Screen saver mode is for Windows. On the Pi, run the display full time.", file=sys.stderr)
+        return
     lock = single_instance()  # noqa: F841 - must stay referenced while running
     if lock is None:
         log("launcher already running; this copy exits")
@@ -193,6 +305,9 @@ def main():
         if server_up():
             break
         time.sleep(1)
+    if SAVER:
+        saver_loop(browser_path, server)
+        return
     keep_awake()
     if not browser_running():
         start_browser(browser_path)

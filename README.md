@@ -45,6 +45,21 @@ If a source fails, the screen keeps showing the last good data, notes how old it
 
 Chrome is used if it's installed; otherwise Edge, which comes with Windows.
 
+## As a screen saver on a work PC
+
+On a PC you sit at, the display can come up as a screen saver instead of running full time. It appears after 10 minutes without mouse or keyboard input, and any mouse move or key press closes it.
+
+1. Copy this folder somewhere permanent and double-click `setup-windows.bat`, as above.
+2. At the first question, choose **2. Screen saver**. Setup leaves your power settings alone, offers to turn off the Windows screen saver so the two don't overlap, and turns the display's screen saver on each time you sign in.
+
+**What to know:**
+
+- **When it doesn't appear:** while a full-screen window is in front (a slideshow, a video call, a full-screen video) or while the PC is locked.
+- **When the screen turns off:** at the time set under Settings → System → Power → "Turn off my screen after".
+- **If the PC locks itself after a while** (Settings → Accounts → Sign-in options → "If you've been away"), the lock screen covers the display at that point.
+- **Changing the wait:** set `screensaver_minutes` in `settings.json`, then sign out and back in.
+- **Starting and stopping it by hand:** `start-screensaver.bat` turns it on and `stop-display.bat` turns it off.
+
 ## Setup on a Raspberry Pi
 
 **What you need:** a Raspberry Pi 4 (2 GB or more) or Pi 5, its official power supply, a microSD card of 16 GB or more, and an HDMI cable for the monitor or TV.
@@ -104,6 +119,7 @@ Edit `settings.json` (Notepad on Windows, or `nano settings.json` on the Pi), th
   - **LPM:** the calendar feed link (`/calendar/feed/<token>.ics`). Entries tagged `CATEGORIES:deadline` or `court_date` get a Deadline or Court label.
   - **Outlook / Microsoft 365:** in Outlook on the web, go to Settings → Calendar → Shared calendars → Publish a calendar. Choose **Can view titles and locations**, click Publish, and copy the **ICS** link.
   - **Google:** Settings → your calendar → Integrate calendar → **Secret address in iCal format**.
+- **Screen saver:** `screensaver_minutes`, the minutes without mouse or keyboard input before the display appears (screen saver mode only; default 10).
 - **Other devices:** set `"bind": "0.0.0.0"` to view the dashboard from another device on your network, such as a tablet in another room, at `http://<computer-name-or-ip>:8765`.
 - **Team:** `team_id`, `team_abbr`, `division_id`, `division_name`, `league_id` (not in the example file; defaults are the Yankees and the AL East).
 
@@ -122,6 +138,7 @@ With the server running, you can add these to the address:
 |---|---|
 | `setup-windows.bat`, `setup-pi.sh` | One-time setup. Safe to run again. |
 | `start-display.*`, `stop-display.*` | Start or stop the display (`.bat` on Windows, `.sh` on the Pi). |
+| `start-screensaver.bat` | Turns on screen saver mode (Windows). `stop-display.bat` turns it off. |
 | `check-feeds.*` | Tests every data source once. |
 | `settings.example.json` | Template for `settings.json`, your settings. |
 | `server.py` | Data server. Uses only the Python standard library; nothing to install. |
@@ -129,4 +146,4 @@ With the server running, you can add these to the address:
 | `launcher.pyw` | Keeps the server and the full-screen browser running, on Windows and Linux. |
 | `setup-windows.ps1` | The Windows setup steps; `setup-windows.bat` runs it. |
 | `fonts/` | Archivo, Newsreader and Frank Ruhl Libre, bundled so the page looks right offline. All are under the SIL Open Font License. |
-| `settings.json`, `cache.json`, `*.log`, `browser-profile/` | Created when it runs. All but `settings.json` are safe to delete. |
+| `settings.json`, `cache.json`, `*.log`, `browser-profile*/` | Created when it runs. All but `settings.json` are safe to delete. |

@@ -30,6 +30,12 @@ Owner preferences:
   - Single instance (a named mutex on Windows, `flock` on `launcher.lock` on Linux).
   - Before each browser start it marks the profile as cleanly exited, and on Linux removes stale `Singleton*` locks, so a power cut never leaves a restore-pages bubble or a refused profile.
   - Keeps the screen awake with `SetThreadExecutionState` on Windows and `xset` on X11. Under Wayland it relies on `setup-pi.sh` turning blanking off with `raspi-config`.
+  - `--screensaver` (Windows only; `start-screensaver.bat`, or option 2 in `setup-windows.ps1`):
+    - The server runs all the time. The browser opens after `screensaver_minutes` of no input (`GetLastInputInfo`), using its own `browser-profile-saver/`, mutex and `screensaver.log`.
+    - Any input (the last-input tick changing) force-closes it within about a second.
+    - Skipped while the PC is locked (no foreground window) or a full-screen window is in front.
+    - Doesn't keep the screen awake. The page gets `?saver=1`, so it skips its wake lock and the power plan still turns the screen off.
+    - Chrome relaunches itself at startup, so the real main process is found by profile path (`browser_pids()`, a PowerShell CIM query) after the window is up.
 - Windows: `setup-windows.bat` runs `setup-windows.ps1` (finds real Python while skipping the WindowsApps Store stub, or installs it with winget, then powercfg settings and a Startup-folder shortcut to `pythonw launcher.pyw`). `start-display.bat`, `stop-display.bat`, `check-feeds.bat`.
 - Pi/Linux: `setup-pi.sh` (Chromium, time zone, `raspi-config` autologin and blanking, an XDG autostart entry in `~/.config/autostart`). `start-display.sh`, `stop-display.sh`, `check-feeds.sh`. `.gitattributes` keeps `*.sh` LF.
 - `fonts/`: Archivo (UI), Newsreader (headlines) and Frank Ruhl Libre (Hebrew), all OFL and bundled so the page works offline.

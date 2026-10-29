@@ -770,11 +770,12 @@ setInterval(async () => {
   try { const r = await fetch("/health", {cache: "no-store"}); if (r.ok) location.reload(); } catch (e) {}
 }, 6 * 3600000);
 
-// keep the screen on (backup to the launcher; works in Chrome and Edge on localhost)
+// keep the screen on (backup to the launcher; works in Chrome and Edge on localhost).
+// Not as a screen saver (?saver=1), where the power plan should still turn the screen off.
 let wakeLock = null;
 async function holdScreen() {
   try {
-    if ("wakeLock" in navigator && (!wakeLock || wakeLock.released) && document.visibilityState === "visible") {
+    if (Q.get("saver") !== "1" && "wakeLock" in navigator && (!wakeLock || wakeLock.released) && document.visibilityState === "visible") {
       wakeLock = await navigator.wakeLock.request("screen");
     }
   } catch (e) {}

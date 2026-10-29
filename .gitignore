@@ -5,4 +5,5 @@ settings.json
 *.log.old
 launcher.lock
 browser-profile/
+browser-profile-saver/
 __pycache__/

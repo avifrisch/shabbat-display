@@ -7,6 +7,8 @@
 #   4. Sets the screen and computer to never sleep while plugged in, and lid close to do nothing.
 #   5. Makes the display start when you sign in.
 #   6. Starts it.
+#
+# Or, on a PC you work at, sets the display up as a screen saver instead (no power changes).
 
 $ErrorActionPreference = 'Continue'
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -48,6 +50,14 @@ if ($Here -like "$env:TEMP*" -or $Here -like '*\Downloads\*') {
     Write-Host 'and run setup again from there, so the startup shortcut keeps working.' -ForegroundColor Yellow
     if (-not (Ask 'Continue from here anyway?')) { exit 1 }
 }
+
+# ------------------------------------------------------------------ Mode
+Step 'How will this PC show the display?'
+Write-Host ' 1. Full time: a spare PC or laptop that shows the display all day and through Shabbat.'
+Write-Host ' 2. Screen saver: a PC you work at. The display appears after some minutes without'
+Write-Host '    mouse or keyboard input, and any input closes it.'
+$saver = (Read-Host 'Enter 1 or 2 [1]') -eq '2'
+$launchArgs = if ($saver) { "`"$Here\launcher.pyw`" --screensaver" } else { "`"$Here\launcher.pyw`"" }
 
 # ------------------------------------------------------------------ Python
 Step 'Python'
@@ -105,6 +115,16 @@ foreach ($site in 'https://lite.cnn.com/', 'https://api.open-meteo.com/', 'https
 Write-Host 'One or two failures are usually a slow connection. The display retries on its own.'
 
 # ------------------------------------------------------------------ Power
+if ($saver) {
+    Step 'Windows screen saver'
+    Write-Host 'The display takes the place of the Windows screen saver; your power settings stay as they are,'
+    Write-Host 'so the screen still turns off when your power plan says.'
+    Write-Host 'To change how long before it appears, set "screensaver_minutes" in settings.json (default 10).'
+    if (Ask 'Turn off the Windows screen saver so the two do not overlap?') {
+        Set-ItemProperty 'HKCU:\Control Panel\Desktop' -Name ScreenSaveActive -Value '0'
+        Write-Host 'Done.'
+    }
+} else {
 Step 'Power settings'
 Write-Host 'While plugged in: screen never turns off, computer never sleeps, closing the lid does nothing.'
 if (Ask 'Apply these?') {
@@ -116,16 +136,19 @@ if (Ask 'Apply these?') {
     Set-ItemProperty 'HKCU:\Control Panel\Desktop' -Name ScreenSaveActive -Value '0'
     Write-Host 'Done.'
 }
+}
 
 # ------------------------------------------------------------------ Startup
 Step 'Start automatically'
 $startup = [Environment]::GetFolderPath('Startup')
-$lnkPath = Join-Path $startup 'Shabbat Display.lnk'
-if (Ask 'Start the display every time you sign in?') {
+$lnkPath = Join-Path $startup $(if ($saver) { 'Shabbat Display Screen Saver.lnk' } else { 'Shabbat Display.lnk' })
+$otherLnk = Join-Path $startup $(if ($saver) { 'Shabbat Display.lnk' } else { 'Shabbat Display Screen Saver.lnk' })
+if (Ask $(if ($saver) { 'Turn on the screen saver every time you sign in?' } else { 'Start the display every time you sign in?' })) {
+    Remove-Item $otherLnk -ErrorAction SilentlyContinue  # one mode or the other
     $shell = New-Object -ComObject WScript.Shell
     $lnk = $shell.CreateShortcut($lnkPath)
     $lnk.TargetPath = $pythonw
-    $lnk.Arguments = "`"$Here\launcher.pyw`""
+    $lnk.Arguments = $launchArgs
     $lnk.WorkingDirectory = $Here
     $lnk.Description = 'Shabbat Display'
     $lnk.Save()
@@ -133,15 +156,18 @@ if (Ask 'Start the display every time you sign in?') {
 }
 
 # ------------------------------------------------------------------ Manual steps
+if (-not $saver) {
 Step 'Do these by hand (see README.md for details)'
 Write-Host ' - Windows Update: set active hours to cover Shabbat, or pause updates before Shabbat.'
 Write-Host ' - Notifications: turn on Do Not Disturb.'
 Write-Host ' - Power failures: run netplwiz and untick "Users must enter a user name and password";'
 Write-Host '   turn on "power on after AC loss" in the BIOS if it has one.'
+}
 
 Step 'Start'
-if (Ask 'Start the display now? (Alt+F4 closes the browser; it reopens within a minute)') {
-    Start-Process -FilePath $pythonw -ArgumentList "`"$Here\launcher.pyw`"" -WorkingDirectory $Here
+$startQ = if ($saver) { 'Turn on the screen saver now?' } else { 'Start the display now? (Alt+F4 closes the browser; it reopens within a minute)' }
+if (Ask $startQ) {
+    Start-Process -FilePath $pythonw -ArgumentList $launchArgs -WorkingDirectory $Here
 }
 Write-Host ''
 Write-Host 'Setup finished.' -ForegroundColor Green

@@ -19,6 +19,9 @@
   "_agenda_help": "Paste your calendar's private ICS link between the quotes, e.g. [\"https://<lpm-host>/calendar/feed/<token>.ics\"]. Add more links separated by commas. Leave [] to turn the agenda off.",
   "agenda_ics": [],
 
+  "_screensaver_help": "Screen saver mode only (start-screensaver.bat): minutes without mouse or keyboard input before the display appears.",
+  "screensaver_minutes": 10,
+
   "bind": "127.0.0.1",
   "port": 8765
 }
