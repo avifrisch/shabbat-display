@@ -1,6 +1,6 @@
 # Shabbat Display
 
-A full-screen dashboard for a spare Windows PC or laptop, or a Raspberry Pi on a wall monitor. It updates itself on fixed timers and needs no one to touch it, from candle lighting through havdalah.
+A full-screen dashboard for a spare Windows PC or laptop, or a Raspberry Pi on a wall monitor. It updates itself on fixed timers and needs no one to touch it, from candle lighting through havdalah. On weekdays you can also tap it (on an iPad) or click it (with a mouse) to read more; see [Tapping and swiping](#tapping-and-swiping).
 
 **What it shows**
 
@@ -15,6 +15,28 @@ A full-screen dashboard for a spare Windows PC or laptop, or a Raspberry Pi on a
 - **During a live Yankees game:** the Yankees screen comes up every other turn, and a live score chip stays in the corner of the other screens.
 - **Overnight:** the screen dims, 11 pm to 6:30 am by default.
 
+## Tapping and swiping
+
+On the iPad, tap. On the PC, click with the mouse (the pointer appears when you move it).
+
+- **A headline** opens the article as text in a reading panel.
+- **The weather** (the current conditions, the hourly row or the 5-day list) opens a detailed forecast: conditions right now with air quality, a 48-hour graph of temperature and rain, the radar loop, and 7 days. Tap a day for the Weather Service's written forecast.
+- **A game** (or the live score chip) opens the line score and box score for both teams. During a live game it updates every 30 seconds.
+- **Swipe left or right** to change screens. With a mouse, drag, or use the left and right arrow keys. Tap a screen name at the top right to jump to it.
+- **Close a panel** with ✕ (or Escape).
+- **Two minutes after the last touch,** any open panel closes, the pointer hides, and the normal rotation resumes.
+- **On Shabbat and Yom Tov,** from candle lighting until havdalah, tapping and swiping do nothing, and an open panel closes when Shabbat begins.
+
+**Articles:** CNN and MLB.com articles open in full. The New York Times and the Times of Israel sometimes block requests that don't come from a browser; then the panel shows the article's summary and says the full article couldn't be loaded.
+
+**Reading full NYT articles with your subscription:**
+
+1. In Chrome or Edge on any computer, sign in at nytimes.com.
+2. Press F12, open **Application** → **Cookies** → `https://www.nytimes.com`, and find the cookie named `NYT-S`.
+3. Copy its **Value** into `settings.json` as `"nyt_cookie": "<value>"`, then restart the display.
+
+It lasts for months. When it runs out, an NYT article shows only its first paragraphs, with a note saying so; repeat the steps. The cookie is a password to your NYT account: it stays in `settings.json`, is sent only to nytimes.com, and is never logged or shown on the page.
+
 ## Data sources (all free, no accounts)
 
 | What | Where it comes from | Refresh |
@@ -28,6 +50,7 @@ A full-screen dashboard for a spare Windows PC or laptop, or a Raspberry Pi on a
 | CNN | lite.cnn.com, with a Google News backup (CNN no longer updates its RSS feeds) | 10 min |
 | Times of Israel | Times of Israel RSS, with a Google News backup | 10 min |
 | Agenda | The LPM calendar feed, or any calendar's private ICS link | 10 min |
+| Article text, box scores, detailed forecast, radar | The news sites, MLB Stats API, Open-Meteo (forecast and air quality), National Weather Service (forecast and Upton, NY radar) | Only when a panel is open |
 
 If a source fails, the screen keeps showing the last good data, notes how old it is, and the server keeps retrying. Everything is also saved to `cache.json`, so a restart comes back with data right away.
 
@@ -137,6 +160,7 @@ Edit `settings.json` (Notepad on Windows, or `nano settings.json` on the Pi), th
   - **Outlook / Microsoft 365:** in Outlook on the web, go to Settings → Calendar → Shared calendars → Publish a calendar. Choose **Can view titles and locations**, click Publish, and copy the **ICS** link.
   - **Google:** Settings → your calendar → Integrate calendar → **Secret address in iCal format**.
 - **Screen saver:** `screensaver_minutes`, the minutes without mouse or keyboard input before the display appears (screen saver mode only; default 10). `screensaver_lock` (default `true`) locks Windows when input closes it.
+- **NYT subscription:** `nyt_cookie`, for full NYT articles in the reading panel. See [Tapping and swiping](#tapping-and-swiping). Secret, like the agenda links.
 - **Other devices:** set `"bind": "0.0.0.0"` to view the dashboard from another device on your network, such as a tablet in another room, at `http://<computer-name-or-ip>:8765`.
 - **Team:** `team_id`, `team_abbr`, `division_id`, `division_name`, `league_id` (not in the example file; defaults are the Yankees and the AL East).
 
@@ -148,6 +172,9 @@ With the server running, you can add these to the address:
 
 - `?at=2026-10-30T15:10`: pretend it's a given time. Use this to see the Friday countdown or Shabbat mode before Shabbat.
 - `?scene=yankees&hold=1`: show one screen without rotating. The others are `agenda`, `mlb`, `news` and `israel`.
+- `?debug=1`: lets you shorten the 2-minute return for testing, by typing `IDLE_MS_OVERRIDE = 5000` in the browser console.
+
+The server's on-demand code has automated tests (standard library only): `python -m unittest discover -s tests`.
 
 ## Files
 

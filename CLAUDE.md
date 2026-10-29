@@ -1,6 +1,6 @@
 # Shabbat Display
 
-Echo Show replacement for Avi's home: a full-screen, hands-off information display that runs on a spare Windows PC/laptop or a Raspberry Pi and updates itself on timers through Shabbat. Nobody interacts with it, so there is no touch, mic, camera or motion input, and the display changes only on a schedule.
+Echo Show replacement for Avi's home: a full-screen, hands-off information display that runs on a spare Windows PC/laptop or a Raspberry Pi and updates itself on timers through Shabbat. Left alone it changes only on a schedule. On weekdays Avi can tap it (iPad) or click it (mouse) to open detail panels and swipe between scenes; it returns to rotation 2 minutes after the last input, and all interaction is off in `body.holy` and in screen-saver mode. No mic, camera or motion input. Design: `docs/superpowers/specs/2026-10-29-interactive-display-design.md`.
 
 Owner preferences:
 - Builds and runs locally on his Windows PC. Setup must stay easy on both Windows and Raspberry Pi OS: one setup script per platform, no manual config files to hand-edit before first run.
@@ -13,6 +13,8 @@ Owner preferences:
   - One background thread per data source, each on its own refresh interval (the `SOURCES` table).
   - Keeps the last good result per source in memory and in `cache.json`. Failures keep the old data, are recorded in `meta`, and retry with backoff.
   - Serves `index.html` at `/`, all data at `/api/state`, and `/health` and `/fonts/*`.
+  - On-demand endpoints for the panels, each behind `cached(key, ttl, fn)` (in memory): `/api/article?url=` (only URLs that are a `link` in one of the `ARTICLE_FEEDS`, else 404; text from `<p>`s via `extract_article()`; on failure the feed summary), `/api/game?id=` (statsapi v1.1 live feed → `norm_boxscore()`; 25 s cache while live, 10 min otherwise), `/api/forecast` (Open-Meteo + air quality + all NWS periods + calendar candle/havdalah marks → `build_forecast()`), `/api/radar` (NWS KOKX loop GIF, 5 min).
+  - `nyt_cookie` (secret, like `agenda_ics`): sent only to nytimes.com hosts by `article_headers()`. nytimes.com and timesofisrael.com answer 403 to non-browser article requests at times; that is bot protection and is not worked around.
   - `python server.py --check` fetches every source once and prints OK/FAIL.
   - Defaults live in the `CONFIG` dict at the top of the file (location, candle-lighting minutes, havdalah method, team, dimming, rotation, bind address). `settings.json` (gitignored, created by setup from `settings.example.json`) overrides them at startup in `load_settings()`; dict values such as `rotation_seconds` merge.
   - `python server.py --setting KEY` prints one resolved setting (used by `setup-pi.sh` for `tzid`).
@@ -24,7 +26,8 @@ Owner preferences:
   - `agenda` (today plus the next non-Shabbat day) and the "Next" line under the clock show only when `agenda_ics` is set and not in `body.holy` (`agendaOn()`). If Shabbat starts while the agenda is up, `renderAll()` advances off it immediately.
   - Shabbat/Yom Tov mode (`body.holy`) runs from the last candle-lighting item until havdalah, based on Hebcal calendar items.
   - Overnight dimming uses a black overlay. A small pixel shift every 10 minutes guards against burn-in. The page reloads every 6 hours if `/health` answers. It requests a Screen Wake Lock.
-  - Opened as a file with no server, it renders built-in demo data (`makeDemo()`) for layout work.
+  - Opened as a file with no server, it renders built-in demo data (`makeDemo()`, including `demo_panels`) for layout work.
+  - Interaction: elements carry `data-tap="article|game|forecast"` (plus `data-key`/`data-link` or `data-id`), scene tabs `data-scene`, forecast day rows `data-toggle`. Pointer Events on `document`: a tap is under 10 px / 500 ms; a swipe starts in `.scene-wrap`/`.stage-head` and is ≥ 80 px, mostly horizontal. `PANELS[kind] = {load, render, refreshMs?, shouldRefresh?}` render into `#panel` inside `.scene-wrap` (the scenes repaint underneath and never touch it). `lastInput` pauses rotation; `tick()` ends the interaction after `idleMs()` (2 min; `?debug=1` + `IDLE_MS_OVERRIDE`) or when `interactive()` turns false. The pointer is hidden (`cursor:none`) until the mouse moves. Hidden scene layers have `pointer-events:none`.
 - `launcher.pyw`: supervisor for Windows and Linux.
   - Starts the server and Chrome, Edge or Chromium in `--kiosk` mode with its own profile in `browser-profile/`, and restarts either one if it exits. Reads `port` from `settings.json`.
   - Single instance (a named mutex on Windows, `flock` on `launcher.lock` on Linux).
@@ -64,6 +67,7 @@ Owner preferences:
 ## Testing
 
 - `python server.py --check`: tests every source.
+- `python -m unittest discover -s tests`: stdlib unit tests for the on-demand endpoints (`tests/test_server.py`, fixtures in `tests/fixtures/`; the article fixtures are made-up pages with real page structure, not saved copies). On Avi's PC `python` in PowerShell is the Store stub; use `C:\msys64\mingw64\bin\python.exe`.
 - URL parameters:
   - `?at=2026-10-30T15:10`: fakes the clock. Note this affects only the client side, since the server still fetches for the real "now".
   - `?scene=mlb&hold=1`: pins one scene and stops the rotation.

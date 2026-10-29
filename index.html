@@ -1048,7 +1048,7 @@ function forecastGraph(hours, marks) {
   });
   svg += `<path d="${path}" class="temp"/>`;
   const iHi = temps.indexOf(hi), iLo = temps.indexOf(lo);
-  svg += `<text x="${X(iHi).toFixed(1)}" y="${(Y(hi) - 5).toFixed(1)}" class="tl">${hi}°</text><text x="${X(iLo).toFixed(1)}" y="${(Y(lo) + 13).toFixed(1)}" class="tl">${lo}°</text>`;
+  svg += `<text x="${X(iHi).toFixed(1)}" y="${(Y(hi) - 5).toFixed(1)}" class="tl">${hi}°</text><text x="${X(iLo).toFixed(1)}" y="${(Y(lo) - 5).toFixed(1)}" class="tl">${lo}°</text>`;
   return svg + "</svg>";
 }
 PANELS.forecast = {
@@ -1180,12 +1180,41 @@ function makeDemo() {
     "Breaking down the World Series pitching matchups","Front offices brace for a busy hot stove"];
   const yn = ["Yankees offseason preview: rotation and bullpen questions","Five storylines to watch in the Bronx this winter",
     "Yankees prospects to watch in the Arizona Fall League","The Yankees' 2026 season by the numbers"];
-  const feed = (arr, mins, sum) => ({items: arr.map((t, i) => ({title: t, time: new Date(+n - (mins + i*37) * 60000).toISOString(),
-    summary: i === 0 ? sum : ""}))});
+  const feed = (arr, mins, sum, src) => ({items: arr.map((t, i) => ({title: t, time: new Date(+n - (mins + i*37) * 60000).toISOString(),
+    summary: i === 0 ? sum : "", link: `https://example.com/${src}/${i}`, source: src}))});
+  // what the panels show when previewing without the server
+  const bat = (rows) => rows.map(([name, pos, ab, r, h, rbi, bb, k, avg, sub]) => ({name, pos, ab, r, h, rbi, bb, k, avg, sub: !!sub}));
+  const pit = (rows) => rows.map(([name, note, ip, h, er, bb, k, era]) => ({name, note, ip, h, er, bb, k, era}));
+  const demo_panels = {
+    article: {ok: true, source: "Preview", truncated: false, paragraphs: [
+      "This is preview text. With the server running, tapping a headline shows the article itself, fetched from the news site and laid out for reading.",
+      "Articles open in this panel over the scene, so the clock, the weather and the zmanim stay in view. The panel scrolls when the article is long.",
+      "Two minutes after the last touch, the panel closes by itself and the display goes back to its normal rotation."]},
+    game: {id: 1, state: "Final", detail: "Final", venue: "Yankee Stadium", start: "2026-10-08T00:08:00Z",
+      innings: [[0,0],[0,0],[1,1],[1,1],[0,0],[2,1],[0,0],[0,0],[0,0]].map(([a, h], i) => ({num: i + 1, away: a, home: h})),
+      decisions: {w: "Seymour (1-0)", l: "Fried (1-1)", s: "Baker (3)"}, homers: ["Vilade (1)", "Mesa Jr. (1)"],
+      away: {abbr: "TB", name: "Rays", r: 4, h: 7, e: 1, is_team: false,
+        batters: bat([["Díaz","DH",4,0,1,0,0,2,".250"],["Aranda","1B",3,0,1,1,0,0,".333"],["Caminero","3B",4,1,1,0,0,1,".300"],["Mesa Jr.","LF",4,1,1,2,0,0,".200"],
+          ["Vilade","RF",2,1,1,1,0,0,".500"],["Mullins","CF",2,0,0,0,0,0,".000",1],["Hicks","C",4,0,0,0,0,2,".100"],["DeLuca","RF",3,1,1,0,0,0,".200"],["Walls","SS",3,0,1,0,0,0,".100"]]),
+        pitchers: pit([["Martinez","",3.2,5,2,1,3,"4.91"],["Seymour","W",1.1,1,0,0,2,"2.08"],["Jax","H",2.0,1,1,1,4,"4.50"],["Baker","S",1.0,0,0,0,1,"1.80"]])},
+      home: {abbr: "NYY", name: "Yankees", r: 3, h: 7, e: 0, is_team: true,
+        batters: bat([["Grisham","CF",5,0,0,0,0,3,".133"],["Rice","DH",4,0,1,1,0,2,".421"],["Judge","RF",4,1,2,1,0,1,".318"],["Bellinger","LF",4,0,0,0,0,0,".190"],
+          ["Goldschmidt","1B",3,0,1,0,0,1,".250"],["Lombard Jr.","SS",3,1,2,0,1,0,".333"],["Wells","C",3,0,0,0,0,1,".333"],["Volpe","3B",4,1,2,1,0,2,".429"],["Chisholm Jr.","2B",3,0,0,0,0,0,".182"]]),
+        pitchers: pit([["Fried","L",5.2,7,4,0,7,"3.86"],["Weaver","",2.1,0,0,0,3,"2.89"],["Williams","",1.0,0,0,0,1,"2.65"]])}},
+    forecast: {
+      now: {temp: 58, feels: 57, humidity: 61, dew: 44, aqi: 32, aqi_word: "Good", wind_mph: 9, wind_dir: "NW", gust_mph: 17, uv: 3, pressure_inhg: 30.12, pressure_trend: "falling"},
+      hours: Array.from({length: 48}, (_, i) => { const d = pd(hourIso(i)); const t = Math.round(52 + 8 * Math.sin((d.getHours() - 9) / 24 * 2 * Math.PI) - i / 12);
+        const rain = i >= 28 && i <= 36; return {time: hourIso(i), temp: t, precip: rain ? 40 + (i - 28) * 5 : 5, amount_in: rain ? .05 : 0, code: rain ? 61 : 2, is_day: d.getHours() >= 7 && d.getHours() < 18}; }),
+      days: [[63,47,1,0,0],[66,50,2,10,0],[59,48,61,70,.42],[55,41,3,20,0],[57,42,0,0,0],[60,45,2,10,0],[58,44,3,30,.05]]
+        .map((d, i) => ({date: ymd(i+1), hi: d[0], lo: d[1], code: d[2], precip: d[3], amount_in: d[4]})),
+      periods: [1, 2, 3].map((i) => ({name: DOW[(n.getDay() + i) % 7], start: ymd(i) + "T06:00:00-04:00", is_day: true, short: "Partly sunny",
+        text: "Partly sunny, with a high near 60. Northwest wind 5 to 10 mph. This is preview text; the Weather Service's forecast shows here with the server running."})),
+      alerts: [], marks: [{label: "Candles", time: at(17,35, fridayOff)}]},
+  };
   return {
     config: {location_name: "Teaneck", team_abbr: "NYY", division_name: "AL East", zmanim_labels: "hebrew",
       dim_start: "23:00", dim_end: "06:30", dim_level: .55, rotation_seconds: {agenda: 25, yankees: 30, mlb: 30, news: 30, israel: 25}},
-    meta,
+    meta, demo_panels,
     data: {
       weather: {current: {temp: isDay ? 58 : 53, feels: isDay ? 57 : 50, code: 2, is_day: isDay, wind_mph: 9, wind_dir: "NW", humidity: 61},
         today: {hi: 61, lo: 46}, hourly: temps.map((t, i) => { const hh = pd(hourIso(i+1)).getHours();
@@ -1206,12 +1235,12 @@ function makeDemo() {
         {category: "havdalah", title: "Havdalah", date: at(17,25, fridayOff + 8)},
       ]},
       team: {live: null, next: null, season_over: true,
-        last: {state: "Final", detail: "Final", start: "2026-10-08T00:08:00Z", game_type: "D", series: "AL Division Series", series_game: 3,
+        last: {id: 1, state: "Final", detail: "Final", start: "2026-10-08T00:08:00Z", game_type: "D", series: "AL Division Series", series_game: 3,
           series_status: "TB wins 3-0", venue: "Yankee Stadium", inning: 9,
           away: {abbr: "TB", name: "Rays", score: 4, hits: null, errors: null}, home: {abbr: "NYY", name: "Yankees", score: 3, hits: null, errors: null}}},
       standings: {season: 2026, teams: [["TB",98,64,"-","L1"],["NYY",93,68,"4.5","W1"],["BOS",87,75,"11.0","L1"],["BAL",79,82,"18.5","L1"],["TOR",79,83,"19.0","W1"]]
         .map((r, i) => ({abbr: r[0], w: r[1], l: r[2], gb: r[3], streak: r[4], rank: i+1, is_team: r[0] === "NYY"}))},
-      scoreboard: {label: "Today", games: [{state: "Live", detail: "In Progress", start: at(20,7), inning: 6, inning_ordinal: "6th", inning_state: "Top",
+      scoreboard: {label: "Today", games: [{id: 1, state: "Live", detail: "In Progress", start: at(20,7), inning: 6, inning_ordinal: "6th", inning_state: "Top",
         outs: 0, bases: [false,false,false], game_type: "W", series: "World Series", series_game: 5, series_status: "MIL leads 3-1", venue: "Tropicana Field",
         away: {abbr: "MIL", name: "Brewers", score: 2, hits: 5, errors: 1}, home: {abbr: "TB", name: "Rays", score: 0, hits: 2, errors: 0}}]},
       transactions: {
@@ -1222,9 +1251,9 @@ function makeDemo() {
           {date: "2026-10-08", text: "Activated C J.C. Escarra."},
           {date: "2026-10-01", text: "Sent RHP Alexander Cornielle outright to FCL Yankees."}],
         league: [{date: "2026-10-27", text: "Houston Astros released LF Nelson Velázquez."}]},
-      yankees_news: feed(yn, 95), mlb_news: feed(mlbn, 18),
-      nyt: feed(nyt, 22, "Officials say the proposal would add parkland and flood protection along two miles of shoreline, with construction starting next year."),
-      agenda, cnn: feed(cnn, 9), toi: feed(toi, 14, "The new segment adds stops in several neighborhoods and is expected to carry tens of thousands of riders a day."),
+      yankees_news: feed(yn, 95, "", "yankees_news"), mlb_news: feed(mlbn, 18, "", "mlb_news"),
+      nyt: feed(nyt, 22, "Officials say the proposal would add parkland and flood protection along two miles of shoreline, with construction starting next year.", "nyt"),
+      agenda, cnn: feed(cnn, 9, "", "cnn"), toi: feed(toi, 14, "The new segment adds stops in several neighborhoods and is expected to carry tens of thousands of riders a day.", "toi"),
     },
   };
 }
