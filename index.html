@@ -46,6 +46,8 @@ h3{margin:0;font-weight:600}
 .gdate{font-size:1.5rem;font-weight:460}
 .hdate{font-family:var(--heb);font-size:1.75rem;color:var(--gold);direction:rtl;white-space:nowrap}
 .offline{margin-top:.5rem;font-size:1rem;color:var(--warn)}
+.agenda-next{margin-top:.7rem;font-size:1.22rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.agenda-next b{color:var(--text);font-weight:560;margin:0 .3rem}
 .now{display:grid;grid-template-columns:5.2rem auto 1fr;column-gap:1.15rem;align-items:center}
 .now svg{width:5.2rem;height:5.2rem;color:var(--sky)}
 .now .temp{font-size:5.9rem;font-weight:300;font-stretch:88%;line-height:.85;letter-spacing:-.02em}
@@ -109,6 +111,18 @@ h3{margin:0;font-weight:600}
 .tx{border-top:1px solid var(--line);padding:.58rem 0;font-size:1.22rem;line-height:1.32;display:grid;grid-template-columns:4.4rem 1fr;column-gap:.8rem}
 .tx .d{font-size:.95rem;color:var(--faint);padding-top:.2rem}
 .tx .x{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+
+/* agenda */
+.ev{border-top:1px solid var(--line);padding:.72rem 0 .76rem;display:grid;grid-template-columns:7.6rem minmax(0,1fr);column-gap:1.1rem;align-items:baseline}
+.ev .tm{font-size:1.32rem;font-weight:560;white-space:nowrap}
+.ev .tm small{display:block;font-size:.95rem;color:var(--faint);font-weight:400;margin-top:.2rem}
+.ev .tt{font-family:var(--serif);font-size:1.62rem;line-height:1.22;font-weight:450;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ev .lc{font-size:1.05rem;color:var(--muted);margin-top:.22rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ev.allday .tm{font-size:.95rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.ev.past .tm,.ev.past .tt,.ev.past .lc,.ev.past .tm small{color:var(--faint)}
+.ev.now .tm,.ev.now .tm small,.ev.next .tm{color:var(--sky)}
+.ev.deadline .tm,.ev .tag,.agenda-next .dl{color:var(--warn)}
+.ev .tag{font-family:var(--sans);font-size:.9rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin-right:.6rem;vertical-align:.12em}
 
 /* games */
 .gc{background:var(--panel);border:1px solid var(--line);border-radius:1rem;padding:1.35rem 1.6rem 1.25rem;min-width:0}
@@ -213,6 +227,7 @@ body.holy .shab .en{color:var(--gold)}
     <div>
       <div class="clock"><span class="t" id="clk">--:--</span><span class="ap" id="clkap"></span></div>
       <div class="dates"><span class="gdate" id="gdate"></span><span class="hdate" id="hdate"></span></div>
+      <div class="agenda-next" id="agnext" hidden></div>
       <div class="offline" id="offline" hidden></div>
     </div>
     <div class="now" id="wxnow"></div>
@@ -464,6 +479,60 @@ function renderShabbat() {
     ${nextHavAfter ? `<div><span>Havdalah</span><b>${fmtDay(nextHavAfter.d)}</b></div>` : ""}</div>${count || up}`;
 }
 
+// ------------------------------------------------------------------ agenda
+// Weekdays only: hidden from candle lighting until havdalah.
+function agendaOn() {
+  const a = D("agenda"), h = holyState();
+  return !!(a && a.configured) && !(h && h.inHoly);
+}
+function agendaDay(day) {
+  const d0 = new Date(day.getFullYear(), day.getMonth(), day.getDate()), d1 = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
+  const a = D("agenda");
+  return ((a && a.items) || []).map((e) => ({...e, s: pd(e.start), e: pd(e.end)}))
+    .filter((e) => e.s && e.e && e.s < d1 && (e.e > d0 || e.s >= d0))
+    .sort((x, y) => (y.all_day - x.all_day) || ((y.kind === "deadline") - (x.kind === "deadline")) || (x.s - y.s));
+}
+// LPM entry types that get a label
+const EV_TAG = {deadline: "Deadline", court_date: "Court"};
+function nextAgendaDay() {
+  // the day after today, skipping Shabbat
+  const n = NOW(); const d = new Date(n.getFullYear(), n.getMonth(), n.getDate() + 1);
+  if (d.getDay() === 6) d.setDate(d.getDate() + 1);
+  return d;
+}
+function evRow(e, n, isNext) {
+  const tag = EV_TAG[e.kind];
+  const body = (t) => `<div><div class="tt">${t ? `<span class="tag">${t}</span>` : ""}${esc(e.title)}</div>${e.location ? `<div class="lc">${esc(e.location)}</div>` : ""}</div>`;
+  if (e.all_day) return `<div class="ev allday${e.kind === "deadline" ? " deadline" : ""}"><span class="tm">${tag || "All day"}</span>${body(e.kind === "deadline" ? "" : tag)}</div>`;
+  const now = n && e.s <= n && n < e.e, past = n && e.e <= n && e.s <= n;
+  const sub = now ? `Now, until ${hmap(e.e)}` : +e.e > +e.s && sameDay(e.s, e.e) ? `to ${hmap(e.e)}` : "";
+  return `<div class="ev${now ? " now" : past ? " past" : isNext ? " next" : ""}"><span class="tm">${hmap(e.s)}${sub ? `<small>${sub}</small>` : ""}</span>${body(tag)}</div>`;
+}
+function sceneAgenda() {
+  const n = NOW(), nd = nextAgendaDay();
+  const all = agendaDay(n);
+  // keep the last two finished events so the rest of the day fits
+  const past = all.filter((e) => !e.all_day && e.e <= n);
+  const today = all.filter((e) => e.all_day || e.e > n || past.slice(-2).includes(e));
+  const next = today.find((e) => !e.all_day && e.s > n);
+  const list = (evs, isToday) => evs.length ? evs.map((e) => evRow(e, isToday ? n : null, e === next)).join("")
+    : `<div class="empty">${isToday ? (past.length ? "Nothing else on the calendar today." : "Nothing on the calendar today.") : "Nothing scheduled."}</div>`;
+  const tom = new Date(n.getFullYear(), n.getMonth(), n.getDate() + 1);
+  const label = (sameDay(nd, tom) ? "Tomorrow" : DOW[nd.getDay()]) + ", " + short(nd);
+  return `<div class="grid2" style="flex:1;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr)">${col("Today", "agenda", list(today, true))}${col(label, null, list(agendaDay(nd), false))}</div>`;
+}
+function renderAgendaNext() {
+  const box = $("agnext");
+  const n = NOW();
+  const evs = agendaOn() ? agendaDay(n) : [];
+  const nx = evs.find((e) => !e.all_day && e.s > n);
+  const dl = evs.filter((e) => e.kind === "deadline").length;
+  if (!nx && !dl) { box.hidden = true; return; }
+  box.hidden = false;
+  const dlTxt = dl ? `<span class="dl">${dl} deadline${dl > 1 ? "s" : ""} today</span>` : "";
+  box.innerHTML = nx ? `${dlTxt ? dlTxt + " · " : ""}Next ${hmap(nx.s)}<b>${esc(nx.title)}</b>` : dlTxt;
+}
+
 // ------------------------------------------------------------------ games
 function diamond(b) {
   const sq = (x, y, on) => `<rect x="${x-5}" y="${y-5}" width="10" height="10" transform="rotate(45 ${x} ${y})" fill="${on ? "#EEE7D7" : "none"}" stroke="#9CA8B8" stroke-width="1.4"/>`;
@@ -537,6 +606,7 @@ const col = (title, key, body) => `<div class="col"><div class="col-h"><h3>${esc
 
 // ------------------------------------------------------------------ scenes
 const SCENES = {
+  agenda: {title: () => "Agenda", tab: "Agenda", render: sceneAgenda},
   yankees: {title: () => "Yankees", tab: "Yankees", render: sceneTeam},
   mlb: {title: () => {
           const sb = D("scoreboard"); const ws = sb && sb.games.some((g) => g.game_type === "W");
@@ -610,9 +680,10 @@ const HOLD = Q.get("hold") === "1";
 
 function buildOrder() {
   const has = (k) => { const f = D(k); return !!(f && f.items && f.items.length); };
-  const ok = {yankees: true, mlb: true, news: has("nyt") || has("cnn"), israel: has("toi")};
+  const ok = {agenda: agendaOn(), yankees: true, mlb: true, news: has("nyt") || has("cnn"), israel: has("toi")};
   const t = D("team");
-  const seq = t && t.live ? ["yankees", "mlb", "yankees", "news", "yankees", "israel"] : ["yankees", "mlb", "news", "israel"];
+  const seq = t && t.live ? ["yankees", "mlb", "yankees", "agenda", "yankees", "news", "yankees", "israel"]
+                          : ["agenda", "yankees", "mlb", "news", "israel"];
   return seq.filter((s) => ok[s] || s === Q.get("scene"));
 }
 function duration(name) {
@@ -624,7 +695,7 @@ function fitColumns(layer) {
   layer.querySelectorAll(".col").forEach((c) => {
     const limit = c.getBoundingClientRect().bottom + 1;
     const cut = new Set();
-    c.querySelectorAll(".hl, .tx").forEach((el) => {
+    c.querySelectorAll(".hl, .tx, .ev").forEach((el) => {
       const p = el.parentElement;
       if (cut.has(p) || el.getBoundingClientRect().bottom > limit) { el.style.display = "none"; cut.add(p); }
     });
@@ -659,10 +730,11 @@ function tick() {
   const el = Date.now() - sceneStart;
   const p = $("prog");
   if (p) p.style.width = Math.min(100, el / duration(current) * 100) + "%";
-  if (!HOLD && el > duration(current)) {
-    order = buildOrder(); idx = (idx + 1) % order.length; sceneStart = Date.now();
-    showScene(order[idx], true);
-  }
+  if (!HOLD && el > duration(current)) advance();
+}
+function advance() {
+  order = buildOrder(); idx = (idx + 1) % order.length; sceneStart = Date.now();
+  showScene(order[idx], true);
 }
 
 // ------------------------------------------------------------------ misc
@@ -674,12 +746,14 @@ function renderDim() {
   $("dim").style.opacity = on ? (c.dim_level ?? .5) : 0;
 }
 function renderAll() {
-  renderClock(); renderSide(); renderShabbat(); renderSky(); renderDim();
+  renderClock(); renderSide(); renderShabbat(); renderSky(); renderDim(); renderAgendaNext();
   $("badge").textContent = DEMO ? "Preview data. Run server.py for live feeds." : "";
   if (!current) {
     order = buildOrder();
     const start = Q.get("scene"); idx = Math.max(0, order.indexOf(start));
     showScene(order[idx], false); sceneStart = Date.now();
+  } else if (current === "agenda" && !agendaOn() && !HOLD) {
+    advance();  // Shabbat started: move off the agenda right away
   } else {
     paint(front, current);
     $("stitle").textContent = SCENES[current].title(); renderChip();
@@ -711,7 +785,7 @@ holdScreen();
 
 setInterval(renderClock, 1000);
 setInterval(tick, 250);
-setInterval(() => { renderShabbat(); renderSky(); renderDim(); }, 30000);
+setInterval(() => { renderShabbat(); renderSky(); renderDim(); renderAgendaNext(); }, 30000);
 setInterval(poll, 20000);
 
 // ------------------------------------------------------------------ preview data
@@ -729,7 +803,18 @@ function makeDemo() {
   const isDay = n.getHours() >= 7 && n.getHours() < 18;
   const temps = [52,51,50,49,48,48,47,47];
   const updated = Date.now()/1000 - 240;
-  const meta = {}; ["weather","nws","standings","transactions","yankees_news","mlb_news","nyt","cnn","toi","team","scoreboard"].forEach((k) => meta[k] = {updated, ok: true});
+  const meta = {}; ["weather","nws","standings","transactions","yankees_news","mlb_news","nyt","cnn","toi","team","scoreboard","agenda"].forEach((k) => meta[k] = {updated, ok: true});
+  const nd = n.getDay() === 5 ? 2 : 1;
+  const ev = (title, location, off, h1, m1, h2, m2, kind = "meeting") => ({title, location, kind, all_day: false, start: at(h1, m1, off), end: at(h2, m2, off)});
+  const allDay = (title, off, kind) => ({title, location: "", kind, all_day: true, start: ymd(off), end: ymd(off + 1)});
+  const agenda = {configured: true, items: [
+    allDay("Smith - opposition to motion to dismiss", 0, "deadline"),
+    ev("Staff meeting", "", 0, 9, 0, 9, 30), ev("Call with opposing counsel", "Zoom", 0, 11, 0, 11, 30),
+    ev("Lunch with Dad", "Teaneck", 0, 13, 0, 14, 0, "event"), ev("Deposition prep", "Office, conference room B", 0, 15, 0, 16, 30),
+    ev("Pick up the kids", "", 0, 17, 15, 17, 30, "event"), ev("Parent-teacher conference", "", 0, 19, 30, 20, 15, "school"),
+    allDay("Jones - discovery responses due", nd, "deadline"), allDay("No school", nd, "school"),
+    ev("Jones - case management conference", "Bergen County Justice Center", nd, 9, 0, 10, 30, "court_date"),
+    ev("Team lunch", "", nd, 12, 30, 13, 30), ev("New client consultation", "Phone", nd, 16, 0, 16, 45, "consultation")]};
   const nyt = ["A city plan to reshape its waterfront heads to a final vote","Economists see hiring cooling as companies hold budgets steady",
     "Inside the effort to restore a century-old rail tunnel","Schools test later start times, and parents weigh in",
     "What a warm autumn means for fall foliage in the Northeast","A guide to the season's new museum exhibitions"];
@@ -748,7 +833,7 @@ function makeDemo() {
     summary: i === 0 ? sum : ""}))});
   return {
     config: {location_name: "Teaneck", team_abbr: "NYY", division_name: "AL East", zmanim_labels: "hebrew",
-      dim_start: "23:00", dim_end: "06:30", dim_level: .55, rotation_seconds: {yankees: 30, mlb: 30, news: 30, israel: 25}},
+      dim_start: "23:00", dim_end: "06:30", dim_level: .55, rotation_seconds: {agenda: 25, yankees: 30, mlb: 30, news: 30, israel: 25}},
     meta,
     data: {
       weather: {current: {temp: isDay ? 58 : 53, feels: isDay ? 57 : 50, code: 2, is_day: isDay, wind_mph: 9, wind_dir: "NW", humidity: 61},
@@ -788,7 +873,7 @@ function makeDemo() {
         league: [{date: "2026-10-27", text: "Houston Astros released LF Nelson Velázquez."}]},
       yankees_news: feed(yn, 95), mlb_news: feed(mlbn, 18),
       nyt: feed(nyt, 22, "Officials say the proposal would add parkland and flood protection along two miles of shoreline, with construction starting next year."),
-      cnn: feed(cnn, 9), toi: feed(toi, 14, "The new segment adds stops in several neighborhoods and is expected to carry tens of thousands of riders a day."),
+      agenda, cnn: feed(cnn, 9), toi: feed(toi, 14, "The new segment adds stops in several neighborhoods and is expected to carry tens of thousands of riders a day."),
     },
   };
 }

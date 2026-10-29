@@ -6,7 +6,8 @@ A full-screen dashboard for a spare Windows PC or laptop, or a Raspberry Pi on a
 
 - **Always on screen:** clock, English and Hebrew date, current weather, the next 8 hours, a 5-day forecast, and a zmanim bar for the day. The bar marks where the sun is right now and highlights the next zman. After tzeit it switches to tomorrow's times.
 - **Bottom left:** this week's Shabbat or Yom Tov, with candle lighting, havdalah, and a countdown on Friday afternoon. From candle lighting to havdalah the screen switches to a warm Shabbat theme.
-- **Rotating panel:** four screens that alternate:
+- **Rotating panel:** screens that alternate:
+  - **Agenda** (weekdays, once you add your calendar): today's events and the next day's, with deadlines and court dates labeled. A "Next" line under the clock shows the next event and how many deadlines are due today. Both disappear from candle lighting until havdalah.
   - **Yankees:** live or last game, AL East standings, roster moves, Yankees news.
   - **MLB:** today's scores, league transactions, MLB.com news.
   - **Headlines:** The New York Times and CNN.
@@ -26,6 +27,7 @@ A full-screen dashboard for a spare Windows PC or laptop, or a Raspberry Pi on a
 | NYT | NYT home page RSS | 10 min |
 | CNN | lite.cnn.com, with a Google News backup (CNN no longer updates its RSS feeds) | 10 min |
 | Times of Israel | Times of Israel RSS, with a Google News backup | 10 min |
+| Agenda | The LPM calendar feed, or any calendar's private ICS link | 10 min |
 
 If a source fails, the screen keeps showing the last good data, notes how old it is, and the server keeps retrying. Everything is also saved to `cache.json`, so a restart comes back with data right away.
 
@@ -98,6 +100,10 @@ Edit `settings.json` (Notepad on Windows, or `nano settings.json` on the Pi), th
 - **Zmanim labels:** `"hebrew"` or `"english"`.
 - **Dimming:** `dim_start`, `dim_end`, and `dim_level` (0 = no dimming, 0.8 = very dark).
 - **Rotation:** `rotation_seconds`, how long each screen stays up.
+- **Agenda:** `agenda_ics`, a list of private calendar links. Use more than one to merge calendars. The link is a secret, so keep it only in `settings.json`, which is never uploaded to GitHub.
+  - **LPM:** the calendar feed link (`/calendar/feed/<token>.ics`). Entries tagged `CATEGORIES:deadline` or `court_date` get a Deadline or Court label.
+  - **Outlook / Microsoft 365:** in Outlook on the web, go to Settings → Calendar → Shared calendars → Publish a calendar. Choose **Can view titles and locations**, click Publish, and copy the **ICS** link.
+  - **Google:** Settings → your calendar → Integrate calendar → **Secret address in iCal format**.
 - **Other devices:** set `"bind": "0.0.0.0"` to view the dashboard from another device on your network, such as a tablet in another room, at `http://<computer-name-or-ip>:8765`.
 - **Team:** `team_id`, `team_abbr`, `division_id`, `division_name`, `league_id` (not in the example file; defaults are the Yankees and the AL East).
 
@@ -108,7 +114,7 @@ Open `index.html` directly (without the server) to see the layout with preview d
 With the server running, you can add these to the address:
 
 - `?at=2026-10-30T15:10`: pretend it's a given time. Use this to see the Friday countdown or Shabbat mode before Shabbat.
-- `?scene=yankees&hold=1`: show one screen without rotating. The others are `mlb`, `news` and `israel`.
+- `?scene=yankees&hold=1`: show one screen without rotating. The others are `agenda`, `mlb`, `news` and `israel`.
 
 ## Files
 

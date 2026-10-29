@@ -20,7 +20,8 @@ Owner preferences:
   - Polls `/api/state` every 20 seconds.
   - Designed on a fixed 120×67.5 rem canvas (16:9), scaled by setting the root font-size from the viewport.
   - Fixed regions: a left column (clock, dates, weather, hourly, 5-day) and a bottom band (Shabbat/Yom Tov box and the zmanim "sky bar").
-  - The stage rotates between scenes `yankees`, `mlb`, `news` and `israel`. During a live Yankees game the Yankees scene repeats every other turn and a live score chip appears on the other scenes.
+  - The stage rotates between scenes `agenda`, `yankees`, `mlb`, `news` and `israel`. During a live Yankees game the Yankees scene repeats every other turn and a live score chip appears on the other scenes.
+  - `agenda` (today plus the next non-Shabbat day) and the "Next" line under the clock show only when `agenda_ics` is set and not in `body.holy` (`agendaOn()`). If Shabbat starts while the agenda is up, `renderAll()` advances off it immediately.
   - Shabbat/Yom Tov mode (`body.holy`) runs from the last candle-lighting item until havdalah, based on Hebcal calendar items.
   - Overnight dimming uses a black overlay. A small pixel shift every 10 minutes guards against burn-in. The page reloads every 6 hours if `/health` answers. It requests a Screen Wake Lock.
   - Opened as a file with no server, it renders built-in demo data (`makeDemo()`) for layout work.
@@ -46,6 +47,7 @@ Owner preferences:
 | yankees_news, mlb_news | MLB.com RSS | NBC New York Yankees feed as the backup. |
 | nyt | NYT HomePage RSS | |
 | cnn | lite.cnn.com HTML | CNN's RSS feeds stopped updating in 2023. The backup is a Google News RSS search of `site:cnn.com`. |
+| agenda | `agenda_ics` URLs in settings.json: the LPM calendar feed (Avi's practice management app; the feed is specified in `../lpm-calendar-feed.md`, outside the repo) or any ICS link | `CATEGORIES` becomes `kind`; `deadline` and `court_date` get labels, and deadlines are counted in the "Next" line. Own ICS parser: RRULE (daily/weekly/monthly/yearly, BYDAY ordinals, BYSETPOS, COUNT, UNTIL), EXDATE, RECURRENCE-ID overrides, CANCELLED. Time zones come from the file's VTIMEZONE because Windows Python has no tzdata; zoneinfo is the fallback (Pi), then local time. Window is today plus 4 days. URLs are secret: never logged, never sent to the page. |
 | toi | Times of Israel RSS | Cloudflare returned 403 to our cloud test machine. It may work from home. The backup is a Google News search of `site:timesofisrael.com`. |
 
 `parse_feed()` handles both RSS and Atom, with a regex fallback for malformed XML.

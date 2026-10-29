@@ -14,6 +14,7 @@ Standard library only - no pip installs needed.
 Runs on Windows, macOS and Linux (including Raspberry Pi OS).
 """
 
+import calendar as cal_mod
 import html
 import json
 import os
@@ -25,7 +26,7 @@ import traceback
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -58,7 +59,11 @@ CONFIG = {
     "dim_start": "23:00",        # screen dims between these times
     "dim_end": "06:30",
     "dim_level": 0.55,           # 0 = no dimming, 0.8 = very dark
-    "rotation_seconds": {"yankees": 30, "mlb": 30, "news": 30, "israel": 25},
+    "rotation_seconds": {"agenda": 25, "yankees": 30, "mlb": 30, "news": 30, "israel": 25},
+
+    # Weekday agenda: the private ICS link of each calendar to show (the LPM
+    # calendar feed, or any other ICS link). Hidden on Shabbat and Yom Tov.
+    "agenda_ics": [],
 
     # Server
     "bind": "127.0.0.1",         # use "0.0.0.0" to view from other devices on your network
@@ -658,6 +663,336 @@ def fetch_cnn():
     return {"items": items[:14], "from": CNN_BACKUP}
 
 
+# ---------------------------------------------------------------- agenda
+# Reads published calendars (ICS). Handles recurring events, moved and
+# cancelled occurrences, and the time zones Outlook embeds in the file, since
+# Python on Windows has no time zone database of its own.
+
+ICS_DAYS = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
+# Outlook uses Windows time zone names; zoneinfo (on the Pi) wants IANA names.
+WIN_TZ = {"Eastern Standard Time": "America/New_York", "Central Standard Time": "America/Chicago",
+          "Mountain Standard Time": "America/Denver", "Pacific Standard Time": "America/Los_Angeles",
+          "Israel Standard Time": "Asia/Jerusalem", "GMT Standard Time": "Europe/London", "UTC": "UTC"}
+
+
+def _ics_prop(line):
+    # 'DTSTART;TZID="Eastern Standard Time":20261029T090000' -> (name, params, value)
+    quoted = False
+    for i, c in enumerate(line):
+        if c == '"':
+            quoted = not quoted
+        elif c == ":" and not quoted:
+            break
+    else:
+        return None
+    parts = re.findall(r'(?:[^;"]|"[^"]*")+', line[:i])
+    if not parts:
+        return None
+    params = {}
+    for part in parts[1:]:
+        k, _, v = part.partition("=")
+        params[k.upper()] = v.strip('"')
+    return parts[0].upper(), params, line[i + 1:]
+
+
+def _ics_components(text):
+    """ICS text -> nested {"type", "props": [(name, params, value)], "children"}."""
+    lines = []
+    for line in re.split(r"\r\n|\n|\r", text):
+        if line[:1] in (" ", "\t") and lines:
+            lines[-1] += line[1:]
+        elif line.strip():
+            lines.append(line)
+    root = {"type": "ROOT", "props": [], "children": []}
+    stack = [root]
+    for line in lines:
+        p = _ics_prop(line)
+        if not p:
+            continue
+        if p[0] == "BEGIN":
+            comp = {"type": p[2].strip().upper(), "props": [], "children": []}
+            stack[-1]["children"].append(comp)
+            stack.append(comp)
+        elif p[0] == "END":
+            if len(stack) > 1:
+                stack.pop()
+        else:
+            stack[-1]["props"].append(p)
+    return root
+
+
+def _ics_get(comp, name, all_=False):
+    found = [p for p in comp["props"] if p[0] == name]
+    return found if all_ else (found[0] if found else None)
+
+
+def _ics_text(comp, name):
+    p = _ics_get(comp, name)
+    if not p:
+        return ""
+    return re.sub(r"\\([\\;,nN])", lambda m: " " if m.group(1) in "nN" else m.group(1), p[2]).strip()
+
+
+def _rrule(value):
+    return dict(part.split("=", 1) for part in value.upper().split(";") if "=" in part)
+
+
+def _naive(v):
+    """'20261029T090000' -> (naive datetime, False); '...Z' -> (naive, True); '20261029' -> (date, False)."""
+    m = re.fullmatch(r"(\d{8})(?:T(\d{6})(Z?))?", v.strip())
+    if not m:
+        return None, False
+    if not m.group(2):
+        return datetime.strptime(m.group(1), "%Y%m%d").date(), False
+    return datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S"), bool(m.group(3))
+
+
+def _month_days(y, m, rule, default_day):
+    """Days of month y-m picked by a rule's BYDAY (e.g. 2TU, -1FR), BYSETPOS or BYMONTHDAY."""
+    last = cal_mod.monthrange(y, m)[1]
+    if "BYDAY" in rule:
+        days = set()
+        for tok in rule["BYDAY"].split(","):
+            mt = re.fullmatch(r"([+-]?\d+)?([A-Z]{2})", tok.strip())
+            if not mt or mt.group(2) not in ICS_DAYS:
+                continue
+            wd = ICS_DAYS.index(mt.group(2))
+            hits = [d for d in range(1, last + 1) if date(y, m, d).weekday() == wd]
+            n = int(mt.group(1) or 0)
+            if n == 0:
+                days.update(hits)
+            elif abs(n) <= len(hits):
+                days.add(hits[n - 1] if n > 0 else hits[n])
+        days = sorted(days)
+        if "BYSETPOS" in rule:
+            picked = {days[p - 1] if p > 0 else days[p]
+                      for p in map(int, rule["BYSETPOS"].split(",")) if p and abs(p) <= len(days)}
+            days = sorted(picked)
+        return days
+    if "BYMONTHDAY" in rule:
+        days = []
+        for t in rule["BYMONTHDAY"].split(","):
+            d = int(t)
+            d = d if d > 0 else last + 1 + d
+            if 1 <= d <= last:
+                days.append(d)
+        return sorted(days)
+    return [default_day] if default_day <= last else []
+
+
+class IcsZone:
+    """A VTIMEZONE block: when each STANDARD/DAYLIGHT rule starts, and its UTC offset."""
+
+    def __init__(self, comp):
+        self.rules = []
+        for ch in comp["children"]:
+            st, to = _ics_get(ch, "DTSTART"), _ics_get(ch, "TZOFFSETTO")
+            if ch["type"] not in ("STANDARD", "DAYLIGHT") or not st or not to:
+                continue
+            start, _ = _naive(st[2])
+            m = re.fullmatch(r"([+-])(\d{2})(\d{2})", to[2].strip())
+            if not isinstance(start, datetime) or not m:
+                continue
+            off = timedelta(hours=int(m.group(2)), minutes=int(m.group(3))) * (-1 if m.group(1) == "-" else 1)
+            rr = _ics_get(ch, "RRULE")
+            self.rules.append((start, _rrule(rr[2]) if rr else None, off))
+
+    def offset_at(self, n):
+        best = None
+        for start, rule, off in self.rules:
+            onsets = [start]
+            if rule:
+                until = _naive(rule["UNTIL"])[0] if "UNTIL" in rule else None
+                months = [int(x) for x in rule.get("BYMONTH", str(start.month)).split(",")]
+                onsets = [datetime(y, mo, d, start.hour, start.minute)
+                          for y in (n.year - 1, n.year) for mo in months
+                          for d in _month_days(y, mo, rule, start.day)]
+                if isinstance(until, datetime):
+                    onsets = [o for o in onsets if o <= until]
+            for o in onsets:
+                if start <= o <= n and (best is None or o > best[0]):
+                    best = (o, off)
+        return best[1] if best else self.rules[0][2]
+
+
+def _zone_fn(tzid, zones):
+    """Function turning a naive wall-clock time in TZID into an aware local time."""
+    if tzid and tzid in zones and zones[tzid].rules:
+        z = zones[tzid]
+        return lambda n: n.replace(tzinfo=timezone(z.offset_at(n))).astimezone()
+    if tzid:
+        try:
+            from zoneinfo import ZoneInfo
+            zi = ZoneInfo(WIN_TZ.get(tzid, tzid))
+            return lambda n: n.replace(tzinfo=zi).astimezone()
+        except Exception:  # noqa: BLE001 - no tz database (Windows): treat as local time
+            pass
+    return lambda n: n.astimezone()
+
+
+def _when(prop, zones, value=None):
+    """(naive datetime or date, function to make it aware) for a DTSTART-like property."""
+    v, utc = _naive(value if value is not None else prop[2])
+    if utc:
+        return v, lambda n: n.replace(tzinfo=timezone.utc).astimezone()
+    return v, _zone_fn(prop[1].get("TZID"), zones)
+
+
+def _key(v, fn):
+    return fn(v).astimezone(timezone.utc).strftime("%Y%m%dT%H%M") if isinstance(v, datetime) else v.isoformat()
+
+
+def _duration(ev, start, fn, zones):
+    en = _ics_get(ev, "DTEND")
+    if en:
+        end, efn = _when(en, zones)
+        if isinstance(start, datetime) and isinstance(end, datetime):
+            return efn(end) - fn(start)
+        if end is not None and not isinstance(start, datetime) and not isinstance(end, datetime):
+            return end - start
+    du = _ics_get(ev, "DURATION")
+    m = du and re.fullmatch(r"\+?P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?", du[2].strip())
+    if m:
+        w, d, h, mi, s = (int(x or 0) for x in m.groups())
+        return timedelta(weeks=w, days=d, hours=h, minutes=mi, seconds=s)
+    return timedelta(0) if isinstance(start, datetime) else timedelta(days=1)
+
+
+def _occurrences(start, rule, limit, fn):
+    """Starts of a recurring event (same type as `start`), in order, through date `limit`."""
+    freq, step = rule.get("FREQ"), int(rule.get("INTERVAL") or 1)
+    count = int(rule["COUNT"]) if "COUNT" in rule else None
+    until, until_utc = _naive(rule["UNTIL"]) if "UNTIL" in rule else (None, False)
+    timed = isinstance(start, datetime)
+    sd = start.date() if timed else start
+    at = (lambda d: datetime.combine(d, start.time())) if timed else (lambda d: d)
+
+    def past_until(c):
+        if until is None:
+            return False
+        if timed and isinstance(until, datetime):
+            u = until.replace(tzinfo=timezone.utc) if until_utc else fn(until)
+            return fn(c) > u
+        cd = c.date() if timed else c
+        return cd > (until.date() if isinstance(until, datetime) else until)
+
+    wkst = ICS_DAYS.index(rule["WKST"]) if rule.get("WKST") in ICS_DAYS else 0
+    bydays = {ICS_DAYS.index(t[-2:]) for t in rule.get("BYDAY", "").split(",") if t[-2:] in ICS_DAYS}
+    months = [int(x) for x in rule["BYMONTH"].split(",")] if "BYMONTH" in rule else None
+    n = 0
+    for k in range(50000):
+        if freq == "DAILY":
+            ref = sd + timedelta(days=k * step)
+            cands = [ref] if (not bydays or ref.weekday() in bydays) and (not months or ref.month in months) else []
+        elif freq == "WEEKLY":
+            ref = sd - timedelta(days=(sd.weekday() - wkst) % 7) + timedelta(weeks=k * step)
+            cands = sorted(ref + timedelta(days=(wd - wkst) % 7) for wd in (bydays or {sd.weekday()}))
+        elif freq == "MONTHLY":
+            y, m = divmod(sd.month - 1 + k * step, 12)
+            ref = date(sd.year + y, m + 1, 1)
+            cands = [] if months and ref.month not in months else \
+                [date(ref.year, ref.month, d) for d in _month_days(ref.year, ref.month, rule, sd.day)]
+        elif freq == "YEARLY":
+            ref = date(sd.year + k * step, 1, 1)
+            cands = [date(ref.year, mo, d) for mo in (months or [sd.month])
+                     for d in _month_days(ref.year, mo, rule, sd.day)]
+        else:
+            yield start
+            return
+        if ref > limit:
+            return
+        for d in cands:
+            if d < sd:
+                continue
+            c = at(d)
+            if past_until(c) or (count is not None and n >= count):
+                return
+            n += 1
+            yield c
+
+
+def _ics_events(text, w0, w1, cal):
+    root = _ics_components(text)
+    vcal = next((c for c in root["children"] if c["type"] == "VCALENDAR"), root)
+    zones = {}
+    for c in vcal["children"]:
+        tz = c["type"] == "VTIMEZONE" and _ics_get(c, "TZID")
+        if tz:
+            zones[tz[2].strip()] = IcsZone(c)
+    events = [c for c in vcal["children"] if c["type"] == "VEVENT"]
+    # occurrences of a series that were moved or edited have their own VEVENT
+    moved = {}
+    for ev in events:
+        rid = _ics_get(ev, "RECURRENCE-ID")
+        if rid:
+            v, fn = _when(rid, zones)
+            if v is not None:
+                moved.setdefault(_ics_text(ev, "UID"), set()).add(_key(v, fn))
+    out = []
+    for ev in events:
+        st = _ics_get(ev, "DTSTART")
+        if not st or _ics_text(ev, "STATUS").upper() == "CANCELLED":
+            continue
+        start, fn = _when(st, zones)
+        if start is None:
+            continue
+        dur = _duration(ev, start, fn, zones)
+        rr = _ics_get(ev, "RRULE")
+        if rr and not _ics_get(ev, "RECURRENCE-ID"):
+            skip = set(moved.get(_ics_text(ev, "UID"), set()))
+            for ex in _ics_get(ev, "EXDATE", all_=True):
+                for val in ex[2].split(","):
+                    v, efn = _when(ex, zones, val)
+                    if v is not None:
+                        skip.add(_key(v, efn))
+            starts = (c for c in _occurrences(start, _rrule(rr[2]), w1.date() + timedelta(days=1), fn)
+                      if _key(c, fn) not in skip
+                      and not (isinstance(c, datetime) and c.date().isoformat() in skip))
+        else:
+            starts = [start]
+        title = _ics_text(ev, "SUMMARY") or "Busy"
+        loc = _ics_text(ev, "LOCATION")
+        # LPM puts its entry type (deadline, court_date, meeting...) in CATEGORIES
+        kind = _ics_text(ev, "CATEGORIES").split(",")[0].strip().lower().replace(" ", "_")
+        for c in starts:
+            if isinstance(c, datetime):
+                s = fn(c)
+                e = s + dur
+                if s < w1 and (e > w0 or s >= w0):
+                    out.append({"title": title, "location": loc, "all_day": False, "cal": cal, "kind": kind,
+                                "start": s.isoformat(timespec="seconds"), "end": e.isoformat(timespec="seconds")})
+            else:
+                e = c + max(dur, timedelta(days=1))
+                if c < w1.date() and e > w0.date():
+                    out.append({"title": title, "location": loc, "all_day": True, "cal": cal, "kind": kind,
+                                "start": c.isoformat(), "end": e.isoformat()})
+    return out
+
+
+def fetch_agenda():
+    urls = CONFIG["agenda_ics"]
+    urls = [u.strip() for u in ([urls] if isinstance(urls, str) else urls) if u and u.strip()]
+    if not urls:
+        return {"configured": False, "items": []}
+    w0 = now().replace(hour=0, minute=0, second=0, microsecond=0)
+    w1 = w0 + timedelta(days=4)
+    items, errors = [], []
+    for i, url in enumerate(urls):
+        try:
+            text = http_get(re.sub(r"^webcal://", "https://", url, flags=re.I), accept="text/calendar")
+            items += _ics_events(text, w0, w1, i)
+        except Exception as e:  # noqa: BLE001 - the link is private, so it isn't logged
+            errors.append(f"calendar {i + 1}: {e}")
+    if len(errors) == len(urls):
+        raise RuntimeError("; ".join(errors))
+    seen, unique = set(), []
+    for it in sorted(items, key=lambda x: (x["start"][:10], not x["all_day"], x["start"])):
+        if (it["title"], it["start"]) not in seen:
+            seen.add((it["title"], it["start"]))
+            unique.append(it)
+    return {"configured": True, "items": unique[:80], "errors": errors}
+
+
 # ---------------------------------------------------------------- scheduler
 
 SOURCES = [
@@ -677,6 +1012,7 @@ SOURCES = [
     ("nyt",           feed_fetcher("nyt"),          600),
     ("cnn",           fetch_cnn,                    600),
     ("toi",           feed_fetcher("toi"),          600),
+    ("agenda",        fetch_agenda,                 600),
 ]
 
 
