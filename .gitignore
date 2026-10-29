@@ -1,0 +1,6 @@
+cache.json
+cache.json.tmp
+*.log
+*.log.old
+browser-profile/
+__pycache__/

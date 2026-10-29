@@ -1,0 +1,763 @@
+#!/usr/bin/env python3
+"""
+Shabbat Display - local data server.
+
+Runs on the display computer. It fetches weather, zmanim, Yankees/MLB and news
+on fixed timers, keeps the last good copy of everything (also on disk), and
+serves the dashboard page at http://localhost:8765
+
+Standard library only - no pip installs needed.
+
+    python server.py            run the server
+    python server.py --check    fetch every source once and report what worked
+"""
+
+import html
+import json
+import os
+import re
+import sys
+import threading
+import time
+import traceback
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+# --------------------------------------------------------------------------
+# Settings - edit these
+# --------------------------------------------------------------------------
+CONFIG = {
+    "location_name": "Teaneck",
+    "lat": 40.8885,
+    "lon": -74.0160,
+    "zip": "07666",
+    "tzid": "America/New_York",
+
+    # Candle lighting minutes before sunset, and havdalah method for Hebcal:
+    #   "M=on"  -> tzeit at 8.5 degrees     "m=50" -> 50 minutes after sunset
+    "candle_minutes": 18,
+    "havdalah": "M=on",
+
+    # Team
+    "team_id": 147,          # Yankees
+    "team_abbr": "NYY",
+    "division_id": 201,      # AL East
+    "division_name": "AL East",
+    "league_id": 103,        # American League
+
+    # Display
+    "zmanim_labels": "hebrew",   # "hebrew" or "english"
+    "dim_start": "23:00",        # screen dims between these times
+    "dim_end": "06:30",
+    "dim_level": 0.55,           # 0 = no dimming, 0.8 = very dark
+    "rotation_seconds": {"yankees": 30, "mlb": 30, "news": 30, "israel": 25},
+
+    # Server
+    "bind": "127.0.0.1",         # use "0.0.0.0" to view from other devices on your network
+    "port": 8765,
+}
+
+FEEDS = {
+    "yankees_news": [
+        "https://www.mlb.com/yankees/feeds/news/rss.xml",
+        "https://www.nbcnewyork.com/tag/yankees/feed/",
+    ],
+    "mlb_news": ["https://www.mlb.com/feeds/news/rss.xml"],
+    "nyt": ["https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"],
+    "toi": [
+        "https://www.timesofisrael.com/feed/",
+        # backup if the site's bot protection refuses the request
+        "https://news.google.com/rss/search?q=site:timesofisrael.com+when:1d&hl=en-US&gl=US&ceid=US:en",
+    ],
+}
+# CNN stopped updating its RSS feeds, so CNN headlines come from its text-only
+# site, with a Google News search for cnn.com as the backup.
+CNN_LITE = "https://lite.cnn.com/"
+CNN_BACKUP = "https://news.google.com/rss/search?q=site:cnn.com+when:1d&hl=en-US&gl=US&ceid=US:en"
+
+# --------------------------------------------------------------------------
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+CACHE_FILE = os.path.join(HERE, "cache.json")
+LOG_FILE = os.path.join(HERE, "server.log")
+PAGE_FILE = os.path.join(HERE, "index.html")
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/130.0 Safari/537.36 ShabbatDisplay/1.0")
+MLB = "https://statsapi.mlb.com/api/v1"
+MLB_CLUBS = {108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121,
+             133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 158}
+
+_log_lock = threading.Lock()
+
+
+def log(msg):
+    line = f"{datetime.now():%Y-%m-%d %H:%M:%S}  {msg}"
+    print(line, flush=True)
+    with _log_lock:
+        try:
+            if os.path.exists(LOG_FILE) and os.path.getsize(LOG_FILE) > 1_000_000:
+                os.replace(LOG_FILE, LOG_FILE + ".old")
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except OSError:
+            pass
+
+
+# ---------------------------------------------------------------- helpers
+
+def http_get(url, accept="*/*", timeout=20):
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": accept})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        raw = r.read()
+        charset = r.headers.get_content_charset() or "utf-8"
+    return raw.decode(charset, "replace")
+
+
+def get_json(url, accept="application/json"):
+    return json.loads(http_get(url, accept=accept))
+
+
+def qs(params):
+    return urllib.parse.urlencode(params, safe=",:")
+
+
+def now():
+    return datetime.now().astimezone()
+
+
+def parse_dt(s):
+    if not s:
+        return None
+    try:
+        d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return d if d.tzinfo else d.astimezone()
+    except ValueError:
+        return None
+
+
+def baseball_day():
+    # A game that runs past midnight still belongs to the previous day.
+    return (now() - timedelta(hours=5)).date()
+
+
+def season_year():
+    d = now()
+    return d.year if d.month >= 3 else d.year - 1
+
+
+def clean_text(s, limit=None):
+    if not s:
+        return ""
+    s = re.sub(r"<[^>]+>", " ", s)
+    s = html.unescape(s)
+    s = re.sub(r"\s+", " ", s).strip()
+    if limit and len(s) > limit:
+        s = s[:limit].rsplit(" ", 1)[0].rstrip(",.;:") + "…"
+    return s
+
+
+def compass(deg):
+    if deg is None:
+        return ""
+    dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+    return dirs[int((deg % 360) / 45 + 0.5) % 8]
+
+
+# ---------------------------------------------------------------- store
+
+class Store:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.data = {}
+        self.meta = {}
+        self.load()
+
+    def set(self, key, value):
+        with self.lock:
+            self.data[key] = value
+            self.meta[key] = {"updated": time.time(), "ok": True, "error": None}
+        self.save()
+
+    def fail(self, key, err):
+        with self.lock:
+            m = dict(self.meta.get(key) or {"updated": None})
+            m.update(ok=False, error=str(err)[:200], failed_at=time.time())
+            self.meta[key] = m
+
+    def get(self, key, default=None):
+        with self.lock:
+            return self.data.get(key, default)
+
+    def snapshot(self):
+        with self.lock:
+            return {"data": dict(self.data), "meta": dict(self.meta)}
+
+    def save(self):
+        snap = self.snapshot()
+        tmp = CACHE_FILE + ".tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(snap, f)
+            os.replace(tmp, CACHE_FILE)
+        except OSError as e:
+            log(f"cache save failed: {e}")
+
+    def load(self):
+        try:
+            with open(CACHE_FILE, encoding="utf-8") as f:
+                snap = json.load(f)
+            self.data = snap.get("data", {})
+            self.meta = snap.get("meta", {})
+            log(f"loaded cached data for {len(self.data)} sources")
+        except (OSError, ValueError):
+            pass
+
+
+store = Store()
+
+# ---------------------------------------------------------------- weather
+
+def fetch_weather():
+    params = {
+        "latitude": CONFIG["lat"], "longitude": CONFIG["lon"],
+        "current": "temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,"
+                   "wind_speed_10m,wind_direction_10m,wind_gusts_10m,is_day",
+        "hourly": "temperature_2m,precipitation_probability,weather_code,is_day",
+        "daily": "weather_code,temperature_2m_max,temperature_2m_min,"
+                 "precipitation_probability_max,sunrise,sunset",
+        "temperature_unit": "fahrenheit", "wind_speed_unit": "mph",
+        "timezone": "auto", "forecast_days": 7,
+    }
+    j = get_json("https://api.open-meteo.com/v1/forecast?" + qs(params))
+    c, h, d = j["current"], j["hourly"], j["daily"]
+    hour_key = now().strftime("%Y-%m-%dT%H:00")
+    start = next((i for i, t in enumerate(h["time"]) if t >= hour_key), 0)
+    hourly = [{
+        "time": h["time"][i], "temp": round(h["temperature_2m"][i]),
+        "code": h["weather_code"][i], "precip": h["precipitation_probability"][i] or 0,
+        "is_day": bool(h["is_day"][i]),
+    } for i in range(start + 1, min(start + 9, len(h["time"])))]
+    daily = [{
+        "date": d["time"][i], "hi": round(d["temperature_2m_max"][i]),
+        "lo": round(d["temperature_2m_min"][i]), "code": d["weather_code"][i],
+        "precip": d["precipitation_probability_max"][i] or 0,
+    } for i in range(len(d["time"]))]
+    return {
+        "current": {
+            "temp": round(c["temperature_2m"]), "feels": round(c["apparent_temperature"]),
+            "humidity": c["relative_humidity_2m"], "code": c["weather_code"],
+            "is_day": bool(c["is_day"]), "wind_mph": round(c["wind_speed_10m"]),
+            "gust_mph": round(c.get("wind_gusts_10m") or 0),
+            "wind_dir": compass(c["wind_direction_10m"]),
+        },
+        "today": daily[0] if daily else None,
+        "daily": daily[1:6],
+        "hourly": hourly,
+        "sunrise": d["sunrise"][0], "sunset": d["sunset"][0],
+    }
+
+
+_nws_forecast_url = None
+
+
+def fetch_nws_forecast():
+    global _nws_forecast_url
+    if not _nws_forecast_url:
+        p = get_json(f"https://api.weather.gov/points/{CONFIG['lat']},{CONFIG['lon']}",
+                     accept="application/geo+json")
+        _nws_forecast_url = p["properties"]["forecast"]
+    j = get_json(_nws_forecast_url, accept="application/geo+json")
+    return [{"name": p["name"], "short": p["shortForecast"], "text": p["detailedForecast"]}
+            for p in j["properties"]["periods"][:4]]
+
+
+def fetch_alerts():
+    j = get_json(f"https://api.weather.gov/alerts/active?point={CONFIG['lat']},{CONFIG['lon']}",
+                 accept="application/geo+json")
+    out = []
+    for f in j.get("features", []):
+        p = f["properties"]
+        out.append({"event": p.get("event"), "headline": p.get("headline"),
+                    "severity": p.get("severity"), "ends": p.get("ends") or p.get("expires")})
+    return out
+
+
+# ---------------------------------------------------------------- jewish calendar
+
+ZMAN_KEYS = [
+    ("alot", "alotHaShachar"), ("sunrise", "sunrise"), ("shema_mga", "sofZmanShmaMGA"),
+    ("shema", "sofZmanShma"), ("tefilla", "sofZmanTfilla"), ("chatzot", "chatzot"),
+    ("mincha_gedola", "minchaGedola"), ("plag", "plagHaMincha"), ("sunset", "sunset"),
+    ("tzeit", "tzeit85deg"),
+]
+
+
+def _zmanim_for(day):
+    params = {"cfg": "json", "latitude": CONFIG["lat"], "longitude": CONFIG["lon"],
+              "tzid": CONFIG["tzid"], "date": day.isoformat()}
+    j = get_json("https://www.hebcal.com/zmanim?" + qs(params))
+    t = j["times"]
+    return {k: t.get(src) for k, src in ZMAN_KEYS}
+
+
+def fetch_zmanim():
+    today = now().date()
+    times = _zmanim_for(today)
+    tzeit = parse_dt(times.get("tzeit"))
+    if tzeit and now() > tzeit:
+        return {"date": (today + timedelta(days=1)).isoformat(), "is_tomorrow": True,
+                "times": _zmanim_for(today + timedelta(days=1)), "today": times}
+    return {"date": today.isoformat(), "is_tomorrow": False, "times": times, "today": times}
+
+
+def fetch_hebdate():
+    n = now()
+    z = store.get("zmanim") or {}
+    today_times = z.get("today") if z.get("date") in (n.date().isoformat(), (n.date() + timedelta(days=1)).isoformat()) else None
+    if not today_times:
+        today_times = _zmanim_for(n.date())
+    sunset = parse_dt(today_times.get("sunset"))
+    after = bool(sunset and n > sunset)
+    params = {"cfg": "json", "gy": n.year, "gm": n.month, "gd": n.day, "g2h": 1}
+    if after:
+        params["gs"] = "on"
+    j = get_json("https://www.hebcal.com/converter?" + qs(params))
+    return {"hebrew": j.get("hebrew"), "english": f"{j.get('hd')} {j.get('hm')} {j.get('hy')}",
+            "after_sunset": after, "for": n.date().isoformat()}
+
+
+def fetch_calendar():
+    n = now()
+    havdalah_key, havdalah_val = CONFIG["havdalah"].split("=")
+    params = {
+        "v": 1, "cfg": "json", "maj": "on", "min": "on", "mod": "on", "nx": "on",
+        "ss": "on", "mf": "on", "c": "on", "s": "on", "geo": "zip", "zip": CONFIG["zip"],
+        "b": CONFIG["candle_minutes"], havdalah_key: havdalah_val,
+        "start": (n.date() - timedelta(days=2)).isoformat(),
+        "end": (n.date() + timedelta(days=10)).isoformat(),
+    }
+    j = get_json("https://www.hebcal.com/hebcal?" + qs(params))
+    items = []
+    for it in j.get("items", []):
+        items.append({
+            "title": it.get("title"), "date": it.get("date"), "category": it.get("category"),
+            "hebrew": it.get("hebrew"), "yomtov": bool(it.get("yomtov")),
+            "subcat": it.get("subcat"),
+        })
+    return {"items": items}
+
+
+# ---------------------------------------------------------------- baseball
+
+def norm_game(g):
+    st = g.get("status", {})
+    ls = g.get("linescore", {}) or {}
+    off = ls.get("offense", {}) or {}
+    lt = ls.get("teams", {}) or {}
+
+    def side(which):
+        s = g["teams"][which]
+        t = s.get("team", {})
+        lr = s.get("leagueRecord") or {}
+        return {
+            "id": t.get("id"),
+            "abbr": t.get("abbreviation") or (t.get("teamName") or t.get("name", "?"))[:3].upper(),
+            "name": t.get("teamName") or t.get("name"),
+            "full": t.get("name"),
+            "score": s.get("score"),
+            "hits": (lt.get(which) or {}).get("hits"),
+            "errors": (lt.get(which) or {}).get("errors"),
+            "record": f"{lr['wins']}-{lr['losses']}" if "wins" in lr else None,
+            "probable": (s.get("probablePitcher") or {}).get("fullName"),
+            "winner": s.get("isWinner"),
+        }
+
+    ss = g.get("seriesStatus") or {}
+    detail = st.get("detailedState", "")
+    state = st.get("abstractGameState")
+    if detail in ("Postponed", "Cancelled", "Suspended"):
+        state = "Off"
+    return {
+        "id": g.get("gamePk"), "start": g.get("gameDate"), "day": g.get("officialDate"),
+        "state": state, "detail": detail,
+        "inning": ls.get("currentInning"), "inning_ordinal": ls.get("currentInningOrdinal"),
+        "inning_state": ls.get("inningState"), "half": ls.get("inningHalf"),
+        "outs": ls.get("outs"), "balls": ls.get("balls"), "strikes": ls.get("strikes"),
+        "bases": [bool(off.get("first")), bool(off.get("second")), bool(off.get("third"))],
+        "away": side("away"), "home": side("home"),
+        "game_type": g.get("gameType"), "series": g.get("seriesDescription"),
+        "series_game": g.get("seriesGameNumber"),
+        "series_status": ss.get("result") or ss.get("description"),
+        "venue": (g.get("venue") or {}).get("name"),
+    }
+
+
+def schedule(params):
+    params = dict(params, sportId=1, hydrate="linescore,team,probablePitcher,seriesStatus")
+    j = get_json(f"{MLB}/schedule?" + qs(params))
+    games = []
+    for d in j.get("dates", []):
+        games += [norm_game(g) for g in d.get("games", [])]
+    return games
+
+
+def fetch_team():
+    bd = baseball_day()
+    games = schedule({"teamId": CONFIG["team_id"],
+                      "startDate": (bd - timedelta(days=60)).isoformat(),
+                      "endDate": (bd + timedelta(days=21)).isoformat()})
+    n = now()
+    live = next((g for g in games if g["state"] == "Live"), None)
+    upcoming = [g for g in games if g["state"] == "Preview"
+                and (parse_dt(g["start"]) or n) > n - timedelta(hours=4)]
+    finals = [g for g in games if g["state"] == "Final"]
+    nxt = upcoming[0] if upcoming else None
+    last = finals[-1] if finals else None
+    season_over = bool(not live and not nxt and last
+                       and (n - (parse_dt(last["start"]) or n)) > timedelta(days=2))
+    return {"live": live, "next": nxt, "last": last, "season_over": season_over,
+            "recent": finals[-5:]}
+
+
+def team_poll_seconds():
+    t = store.get("team") or {}
+    if t.get("live"):
+        return 30
+    nxt = t.get("next")
+    if nxt:
+        start = parse_dt(nxt["start"])
+        if start and start - now() < timedelta(minutes=30):
+            return 30
+    return 180
+
+
+def fetch_standings():
+    j = get_json(f"{MLB}/standings?" + qs({
+        "leagueId": CONFIG["league_id"], "season": season_year(),
+        "standingsTypes": "regularSeason", "hydrate": "team"}))
+    for rec in j.get("records", []):
+        if (rec.get("division") or {}).get("id") != CONFIG["division_id"]:
+            continue
+        teams = []
+        for tr in rec.get("teamRecords", []):
+            t = tr["team"]
+            teams.append({
+                "abbr": t.get("abbreviation"), "name": t.get("teamName") or t.get("name"),
+                "w": tr.get("wins"), "l": tr.get("losses"), "gb": tr.get("gamesBack"),
+                "pct": tr.get("winningPercentage"),
+                "streak": (tr.get("streak") or {}).get("streakCode"),
+                "rank": tr.get("divisionRank"), "is_team": t.get("id") == CONFIG["team_id"],
+            })
+        teams.sort(key=lambda x: int(x["rank"] or 99))
+        return {"season": season_year(), "teams": teams}
+    raise ValueError("division not found in standings")
+
+
+def fetch_scoreboard():
+    bd = baseball_day()
+    games = schedule({"date": bd.isoformat()})
+    label = "Today"
+    if not games and 3 <= now().month <= 11:
+        games = schedule({"date": (bd - timedelta(days=1)).isoformat()})
+        label = "Yesterday" if games else label
+    order = {"Live": 0, "Preview": 1, "Final": 2, "Off": 3}
+    games.sort(key=lambda g: (order.get(g["state"], 4), g["start"] or ""))
+    return {"date": bd.isoformat(), "label": label, "games": games}
+
+
+def scoreboard_poll_seconds():
+    sb = store.get("scoreboard") or {}
+    return 45 if any(g["state"] == "Live" for g in sb.get("games", [])) else 180
+
+
+TEAM_SKIP_TEXT = ("roster status changed", "changed number")
+LEAGUE_KEEP = ("trade", "signed", "released", "designated", "claimed", "retired",
+               "suspen", "free agen", "purchased", "selected", "waiver")
+
+
+def _transactions(params):
+    j = get_json(f"{MLB}/transactions?" + qs(params))
+    return j.get("transactions", [])
+
+
+def fetch_transactions():
+    today = now().date()
+    team_name = None
+    team = []
+    for t in _transactions({"teamId": CONFIG["team_id"],
+                            "startDate": (today - timedelta(days=45)).isoformat(),
+                            "endDate": today.isoformat()}):
+        desc = t.get("description") or ""
+        if not desc or any(s in desc.lower() for s in TEAM_SKIP_TEXT) \
+                or (t.get("typeDesc") or "") == "Number Change":
+            continue
+        if not team_name:
+            for side in ("toTeam", "fromTeam"):
+                if (t.get(side) or {}).get("id") == CONFIG["team_id"]:
+                    team_name = t[side]["name"]
+        if team_name and desc.startswith(team_name + " "):
+            rest = desc[len(team_name) + 1:]
+            desc = rest[:1].upper() + rest[1:]
+        team.append({"id": t.get("id"), "date": t.get("date"), "type": t.get("typeDesc"),
+                     "text": desc})
+    league = []
+    for t in _transactions({"sportId": 1,
+                            "startDate": (today - timedelta(days=6)).isoformat(),
+                            "endDate": today.isoformat()}):
+        desc = t.get("description") or ""
+        kind = (t.get("typeDesc") or "").lower()
+        clubs = {(t.get("toTeam") or {}).get("id"), (t.get("fromTeam") or {}).get("id")}
+        if not desc or "minor league contract" in desc or not (clubs & MLB_CLUBS):
+            continue
+        if not any(k in kind for k in LEAGUE_KEEP):
+            continue
+        league.append({"id": t.get("id"), "date": t.get("date"), "type": t.get("typeDesc"),
+                       "text": desc})
+    key = lambda x: (x["date"] or "", x["id"] or 0)
+    team.sort(key=key, reverse=True)
+    league.sort(key=key, reverse=True)
+    return {"team": team[:10], "league": league[:10]}
+
+
+# ---------------------------------------------------------------- news
+
+def _child(el, *names):
+    for n in names:
+        for c in el:
+            tag = c.tag.split("}")[-1]
+            if tag == n:
+                return c
+    return None
+
+
+def _date_of(s):
+    if not s:
+        return None
+    try:
+        d = parsedate_to_datetime(s)
+        return d.astimezone().isoformat(timespec="seconds")
+    except (TypeError, ValueError):
+        d = parse_dt(s)
+        return d.isoformat(timespec="seconds") if d else None
+
+
+def _feed_regex(text, source):
+    # Fallback for feeds that aren't well-formed XML.
+    def grab(block, tag):
+        m = re.search(rf"<{tag}[^>]*>(.*?)</{tag}>", block, re.S | re.I)
+        if not m:
+            return ""
+        v = m.group(1)
+        c = re.search(r"<!\[CDATA\[(.*?)\]\]>", v, re.S)
+        return c.group(1) if c else v
+    out = []
+    for block in re.findall(r"<item[\s>].*?</item>", text, re.S | re.I):
+        t = clean_text(grab(block, "title"))
+        if t:
+            out.append({"title": t, "summary": clean_text(grab(block, "description"), 260),
+                        "time": _date_of(clean_text(grab(block, "pubDate"))),
+                        "link": clean_text(grab(block, "link")) or None, "source": source})
+    return out
+
+
+def parse_feed(text, source):
+    text = text.lstrip("﻿ \r\n\t")
+    try:
+        root = ET.fromstring(text.encode("utf-8"))
+    except ET.ParseError:
+        return _feed_regex(text, source)
+    entries = [e for e in root.iter() if e.tag.split("}")[-1] in ("item", "entry")]
+    out = []
+    for e in entries:
+        title = _child(e, "title")
+        t = clean_text(title.text if title is not None else "")
+        if not t:
+            continue
+        desc = _child(e, "description", "summary")
+        when = _child(e, "pubDate", "published", "updated", "date")
+        link = _child(e, "link")
+        href = (link.text or link.get("href")) if link is not None else None
+        out.append({"title": t, "summary": clean_text(desc.text if desc is not None else "", 260),
+                    "time": _date_of(when.text if when is not None else None),
+                    "link": href, "source": source})
+    return out
+
+
+def feed_fetcher(key):
+    def fetch():
+        errors = []
+        for url in FEEDS[key]:
+            try:
+                items = parse_feed(http_get(url, accept="application/rss+xml, application/xml, text/xml"), key)
+                if "news.google.com" in url:
+                    for it in items:
+                        it["title"] = re.sub(r"\s+-\s+[^-]+$", "", it["title"])
+                        it["summary"] = ""
+                if items:
+                    return {"items": items[:14], "from": url}
+                errors.append(f"{url}: empty")
+            except Exception as e:  # noqa: BLE001 - try the next url
+                errors.append(f"{url}: {e}")
+        raise RuntimeError("; ".join(errors))
+    return fetch
+
+
+def fetch_cnn():
+    try:
+        page = http_get(CNN_LITE, accept="text/html")
+        seen, items = set(), []
+        for href, inner in re.findall(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', page, re.S):
+            m = re.search(r"/(\d{4})/(\d{2})/(\d{2})/", href)
+            title = clean_text(inner)
+            if not m or len(title) < 20 or title in seen:
+                continue
+            seen.add(title)
+            day = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+            items.append({"title": title, "summary": "", "time": None, "day": day,
+                          "link": urllib.parse.urljoin("https://www.cnn.com", href.replace("lite.cnn.com", "www.cnn.com")),
+                          "source": "cnn"})
+        if len(items) >= 5:
+            return {"items": items[:14], "from": CNN_LITE}
+        raise ValueError("too few headlines on lite.cnn.com")
+    except Exception as e:  # noqa: BLE001 - fall back to the backup feed
+        log(f"cnn lite failed ({e}); using backup feed")
+    items = parse_feed(http_get(CNN_BACKUP), "cnn")
+    for it in items:
+        it["title"] = re.sub(r"\s+-\s+CNN.*$", "", it["title"])
+        it["summary"] = ""
+    return {"items": items[:14], "from": CNN_BACKUP}
+
+
+# ---------------------------------------------------------------- scheduler
+
+SOURCES = [
+    # key,            fetch function,               seconds between refreshes
+    ("weather",       fetch_weather,                600),
+    ("nws",           fetch_nws_forecast,           1800),
+    ("alerts",        fetch_alerts,                 300),
+    ("zmanim",        fetch_zmanim,                 600),
+    ("hebdate",       fetch_hebdate,                300),
+    ("calendar",      fetch_calendar,               3600),
+    ("team",          fetch_team,                   team_poll_seconds),
+    ("standings",     fetch_standings,              3600),
+    ("scoreboard",    fetch_scoreboard,             scoreboard_poll_seconds),
+    ("transactions",  fetch_transactions,           1800),
+    ("yankees_news",  feed_fetcher("yankees_news"), 900),
+    ("mlb_news",      feed_fetcher("mlb_news"),     900),
+    ("nyt",           feed_fetcher("nyt"),          600),
+    ("cnn",           fetch_cnn,                    600),
+    ("toi",           feed_fetcher("toi"),          600),
+]
+
+
+def run_source(key, fn, every):
+    retry = 60
+    while True:
+        try:
+            store.set(key, fn())
+            retry = 60
+            wait = every() if callable(every) else every
+        except Exception as e:  # noqa: BLE001 - keep last good data and retry
+            store.fail(key, e)
+            log(f"{key}: {e}")
+            interval = every() if callable(every) else every
+            wait = min(retry, interval)
+            retry = min(retry * 2, 900)
+        time.sleep(wait)
+
+
+def start_sources():
+    for i, (key, fn, every) in enumerate(SOURCES):
+        threading.Thread(target=run_source, args=(key, fn, every), daemon=True,
+                         name=f"src-{key}").start()
+        time.sleep(0.3)  # stagger startup requests
+
+
+def state_json():
+    snap = store.snapshot()
+    cfg = {k: CONFIG[k] for k in ("location_name", "team_abbr", "division_name", "zmanim_labels",
+                                  "dim_start", "dim_end", "dim_level", "rotation_seconds")}
+    return json.dumps({"now": now().isoformat(timespec="seconds"), "config": cfg,
+                       "data": snap["data"], "meta": snap["meta"]})
+
+
+# ---------------------------------------------------------------- http
+
+class Handler(BaseHTTPRequestHandler):
+    def _send(self, code, body, ctype):
+        b = body if isinstance(body, bytes) else body.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(b)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(b)
+
+    def do_GET(self):
+        path = urllib.parse.urlparse(self.path).path
+        try:
+            if path in ("/", "/index.html"):
+                with open(PAGE_FILE, "rb") as f:
+                    self._send(200, f.read(), "text/html; charset=utf-8")
+            elif path == "/api/state":
+                self._send(200, state_json(), "application/json")
+            elif path == "/health":
+                self._send(200, "ok", "text/plain")
+            elif path.startswith("/fonts/") and ".." not in path:
+                fp = os.path.join(HERE, path.lstrip("/").replace("/", os.sep))
+                with open(fp, "rb") as f:
+                    self._send(200, f.read(), "font/woff2")
+            else:
+                self._send(404, "not found", "text/plain")
+        except (OSError, ConnectionError):
+            try:
+                self._send(404, "not found", "text/plain")
+            except OSError:
+                pass
+
+    def log_message(self, *args):
+        pass
+
+
+def check():
+    ok = 0
+    for key, fn, _ in SOURCES:
+        t = time.time()
+        try:
+            val = fn()
+            store.set(key, val)
+            size = len(val.get("items", [])) if isinstance(val, dict) and "items" in val else ""
+            print(f"  OK    {key:<14} {time.time() - t:4.1f}s  {size}")
+            ok += 1
+        except Exception as e:  # noqa: BLE001
+            print(f"  FAIL  {key:<14} {e}")
+    print(f"\n{ok}/{len(SOURCES)} sources working.")
+
+
+def main():
+    if "--check" in sys.argv:
+        check()
+        return
+    try:
+        server = ThreadingHTTPServer((CONFIG["bind"], CONFIG["port"]), Handler)
+    except OSError as e:
+        log(f"can't open port {CONFIG['port']} ({e}). Is the display server already running?")
+        sys.exit(1)
+    log(f"starting on http://{CONFIG['bind']}:{CONFIG['port']}")
+    start_sources()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        log(traceback.format_exc())
+        raise

@@ -1,0 +1,799 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shabbat Display</title>
+<style>
+@font-face{font-family:"Archivo";src:url(fonts/archivo.woff2) format("woff2");font-weight:100 900;font-stretch:62% 125%;font-display:swap}
+@font-face{font-family:"Newsreader";src:url(fonts/newsreader.woff2) format("woff2");font-weight:200 800;font-display:swap}
+@font-face{font-family:"Frank Ruhl Libre";src:url(fonts/frankruhl-400.woff2) format("woff2");font-weight:400;font-display:swap}
+@font-face{font-family:"Frank Ruhl Libre";src:url(fonts/frankruhl-500.woff2) format("woff2");font-weight:500;font-display:swap}
+@font-face{font-family:"Frank Ruhl Libre";src:url(fonts/frankruhl-700.woff2) format("woff2");font-weight:700;font-display:swap}
+
+:root{
+  --bg:#0D1726;
+  --tint:#15253D;
+  --panel:rgba(238,231,215,.035);
+  --line:rgba(238,231,215,.11);
+  --text:#EEE7D7;
+  --muted:#9CA8B8;
+  --faint:#66748A;
+  --gold:#E5BA5E;
+  --gold-soft:rgba(229,186,94,.14);
+  --sky:#93BFEA;
+  --live:#F0705A;
+  --warn:#E9A13B;
+  --sans:"Archivo",system-ui,"Segoe UI",sans-serif;
+  --serif:"Newsreader",Georgia,"Times New Roman",serif;
+  --heb:"Frank Ruhl Libre","David","Times New Roman",serif;
+}
+*{box-sizing:border-box}
+html{font-size:min(calc(100vw / 120), calc(100vh / 67.5));height:100%;background:var(--bg);overflow:hidden}
+body{margin:0;height:100%;display:grid;place-items:center;color:var(--text);font-family:var(--sans);
+  font-variant-numeric:tabular-nums lining-nums;-webkit-font-smoothing:antialiased;cursor:none;
+  background:radial-gradient(110% 95% at 8% 0%, var(--tint) 0%, var(--bg) 62%);transition:background 60s linear}
+.canvas{width:120rem;height:67.5rem;padding:2.3rem 2.6rem 2.1rem;display:grid;grid-template-columns:36.5rem minmax(0,1fr);
+  grid-template-rows:minmax(0,1fr) 12.6rem;column-gap:3.2rem;row-gap:1.6rem;position:relative;transition:transform 4s ease}
+h3{margin:0;font-weight:600}
+
+/* ---------- side column ---------- */
+.side{display:flex;flex-direction:column;gap:1.55rem;min-height:0}
+.clock{display:flex;align-items:baseline;gap:.55rem;line-height:.86}
+.clock .t{font-size:7.4rem;font-weight:280;font-stretch:86%;letter-spacing:-.025em}
+.clock .ap{font-size:1.9rem;color:var(--muted);font-weight:400}
+.dates{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;margin-top:.9rem}
+.gdate{font-size:1.5rem;font-weight:460}
+.hdate{font-family:var(--heb);font-size:1.75rem;color:var(--gold);direction:rtl;white-space:nowrap}
+.offline{margin-top:.5rem;font-size:1rem;color:var(--warn)}
+.now{display:grid;grid-template-columns:5.2rem auto 1fr;column-gap:1.15rem;align-items:center}
+.now svg{width:5.2rem;height:5.2rem;color:var(--sky)}
+.now .temp{font-size:5.9rem;font-weight:300;font-stretch:88%;line-height:.85;letter-spacing:-.02em}
+.now .cond{font-size:1.45rem;font-weight:500;margin-bottom:.25rem}
+.now .meta{font-size:1.1rem;color:var(--muted);line-height:1.45}
+.nws{font-family:var(--serif);font-size:1.22rem;line-height:1.38;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.nws b{font-family:var(--sans);font-weight:600;font-size:1.05rem;color:var(--muted);margin-right:.4rem}
+.hourly{display:grid;grid-template-columns:repeat(8,1fr);border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:.85rem 0}
+.hourly div{display:flex;flex-direction:column;align-items:center;gap:.3rem}
+.hourly .h{font-size:.98rem;color:var(--muted)}
+.hourly svg{width:1.9rem;height:1.9rem;color:var(--sky)}
+.hourly .v{font-size:1.25rem;font-weight:500}
+.hourly .p{font-size:.85rem;color:var(--sky);min-height:1rem}
+.days{display:flex;flex-direction:column;gap:.15rem}
+.day{display:grid;grid-template-columns:3.9rem 2.2rem 3.1rem 2.6rem 1fr 2.6rem;align-items:center;column-gap:.7rem;height:2.8rem}
+.day .n{font-size:1.2rem;font-weight:500}
+.day svg{width:1.9rem;height:1.9rem;color:var(--sky)}
+.day .p{font-size:.95rem;color:var(--sky)}
+.day .lo{font-size:1.2rem;color:var(--muted);text-align:right}
+.day .hi{font-size:1.2rem;font-weight:500}
+.range{position:relative;height:.42rem;border-radius:1rem;background:rgba(238,231,215,.07)}
+.range i{position:absolute;top:0;bottom:0;border-radius:1rem;background:linear-gradient(90deg,#7FAEDD,#E7C27A)}
+
+/* ---------- stage ---------- */
+.stage{display:flex;flex-direction:column;min-height:0;min-width:0}
+.alert{display:none;align-items:center;gap:.8rem;margin-bottom:1rem;padding:.65rem 1rem;border-radius:.6rem;
+  background:rgba(233,161,59,.13);color:#F3C784;font-size:1.15rem;font-weight:500}
+.alert.on{display:flex}
+.alert.severe{background:rgba(240,112,90,.16);color:#F7A898}
+.stage-head{display:flex;align-items:flex-end;justify-content:space-between;gap:2rem;padding-bottom:.95rem;border-bottom:1px solid var(--line);margin-bottom:1.45rem}
+.stage-title{font-size:2.15rem;font-weight:620;font-stretch:90%;letter-spacing:-.005em;line-height:1}
+.head-right{display:flex;align-items:center;gap:2rem}
+.chip{display:none;align-items:center;gap:.6rem;font-size:1.1rem;font-weight:600;padding:.3rem .8rem;border-radius:2rem;background:rgba(240,112,90,.13)}
+.chip.on{display:flex}
+.chip .dot,.livedot{width:.6rem;height:.6rem;border-radius:50%;background:var(--live);box-shadow:0 0 .6rem var(--live)}
+.scenes{display:flex;gap:1.5rem;font-size:1.02rem;color:var(--faint)}
+.scenes span{position:relative;padding-bottom:.5rem}
+.scenes span.on{color:var(--text)}
+.scenes span i{position:absolute;left:0;bottom:0;height:2px;width:0;background:var(--text)}
+.scene-wrap{position:relative;flex:1;min-height:0}
+.scene{position:absolute;inset:0;opacity:0;transition:opacity .9s ease;display:flex;flex-direction:column;gap:1.6rem;min-height:0}
+.scene.show{opacity:1}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:2.6rem;min-height:0}
+.col{min-width:0;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.col-h{display:flex;justify-content:space-between;align-items:baseline;font-size:1.12rem;color:var(--muted);margin-bottom:.55rem}
+.col-h h3{font-size:1.12rem;color:var(--muted)}
+.age{font-size:.95rem;color:var(--faint);font-weight:400}
+.age.stale{color:var(--warn)}
+.empty{font-size:1.2rem;color:var(--faint);padding:.8rem 0;border-top:1px solid var(--line)}
+
+/* headlines */
+.hl{border-top:1px solid var(--line);padding:.62rem 0 .66rem}
+.hl .t{font-family:var(--serif);font-size:1.5rem;line-height:1.24;font-weight:450;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.hl .w{font-size:.92rem;color:var(--faint);margin-top:.22rem}
+.hl.lead .t{font-size:2.15rem;line-height:1.15;font-weight:500;-webkit-line-clamp:3}
+.hl.lead .s{font-family:var(--serif);font-size:1.28rem;line-height:1.4;color:var(--muted);margin-top:.5rem;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.hl.mega .t{font-size:2.9rem;line-height:1.1;-webkit-line-clamp:3}
+.hl.mega .s{font-size:1.45rem;-webkit-line-clamp:2}
+
+/* transactions */
+.tx{border-top:1px solid var(--line);padding:.58rem 0;font-size:1.22rem;line-height:1.32;display:grid;grid-template-columns:4.4rem 1fr;column-gap:.8rem}
+.tx .d{font-size:.95rem;color:var(--faint);padding-top:.2rem}
+.tx .x{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+
+/* games */
+.gc{background:var(--panel);border:1px solid var(--line);border-radius:1rem;padding:1.35rem 1.6rem 1.25rem;min-width:0}
+.gc-head{display:flex;justify-content:space-between;align-items:center;gap:1rem;font-size:1.15rem;color:var(--muted);margin-bottom:.8rem}
+.gc-head .st{display:flex;align-items:center;gap:.9rem;color:var(--text);font-weight:600}
+.gc-row{display:grid;grid-template-columns:4.4rem minmax(0,1fr) auto 2.6rem 2.6rem;align-items:center;column-gap:1rem;padding:.3rem 0}
+.gc-row .ab{font-size:1.25rem;font-weight:700;font-stretch:78%;letter-spacing:.03em;color:var(--muted)}
+.gc-row .nm{font-size:1.95rem;font-weight:520;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gc-row .nm small{font-size:1rem;color:var(--faint);font-weight:400;margin-left:.6rem}
+.gc-row .r{font-size:3.1rem;font-weight:620;font-stretch:84%;text-align:right;min-width:3rem;line-height:1}
+.gc-row .he{font-size:1.05rem;color:var(--faint);text-align:right}
+.gc-row.lose .nm,.gc-row.lose .r{color:var(--muted)}
+.gc-legend{display:grid;grid-template-columns:4.4rem minmax(0,1fr) auto 2.6rem 2.6rem;column-gap:1rem;font-size:.85rem;color:var(--faint);text-align:right}
+.gc-foot{margin-top:.8rem;padding-top:.75rem;border-top:1px solid var(--line);font-size:1.12rem;color:var(--muted);display:flex;justify-content:space-between;gap:1rem}
+.gc-foot b{color:var(--text);font-weight:600}
+.outs{display:flex;gap:.3rem}
+.outs i{width:.55rem;height:.55rem;border-radius:50%;border:1.5px solid var(--muted)}
+.outs i.on{background:var(--text);border-color:var(--text)}
+.diamond{width:2.6rem;height:2rem}
+.season{display:flex;flex-direction:column;gap:.35rem;margin-bottom:1rem}
+.season .big{font-size:2.5rem;font-weight:600;font-stretch:88%;line-height:1.05}
+.season .sub{font-size:1.25rem;color:var(--muted)}
+.mini-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.9rem}
+.mini{background:var(--panel);border:1px solid var(--line);border-radius:.8rem;padding:.75rem 1rem}
+.mini .st{font-size:.95rem;color:var(--muted);margin-bottom:.35rem;display:flex;align-items:center;gap:.45rem}
+.mini .rw{display:flex;justify-content:space-between;font-size:1.45rem;font-weight:600;font-stretch:85%;line-height:1.3}
+.mini .rw.lose{color:var(--muted);font-weight:450}
+
+/* standings */
+.stand{width:100%;border-collapse:collapse;font-size:1.28rem}
+.stand th{font-size:.92rem;font-weight:500;color:var(--faint);text-align:right;padding:0 .5rem .45rem}
+.stand th:first-child{text-align:left}
+.stand td{padding:.5rem;text-align:right;border-top:1px solid var(--line)}
+.stand td:first-child{text-align:left;font-weight:600}
+.stand td.nm{text-align:left;font-weight:400;color:var(--muted);font-size:1.1rem}
+.stand tr.me td{background:repeating-linear-gradient(90deg,rgba(238,231,215,.045) 0 1px,transparent 1px 1.1rem);color:var(--text)}
+.stand tr.me td.nm{color:var(--text)}
+
+/* ---------- zmanim band ---------- */
+.band{grid-column:1 / -1;display:grid;grid-template-columns:36.5rem minmax(0,1fr);column-gap:3.2rem;border-top:1px solid var(--line);padding-top:1.3rem}
+.shab{display:flex;flex-direction:column;justify-content:flex-start}
+.shab .ttl{display:flex;align-items:baseline;justify-content:space-between;gap:1rem}
+.shab .en{font-size:2.05rem;font-weight:620;font-stretch:90%;line-height:1.1}
+.shab .he{font-family:var(--heb);font-size:1.9rem;font-weight:500;color:var(--gold);direction:rtl;white-space:nowrap}
+.shab .rows{display:flex;gap:2.4rem;margin-top:.9rem}
+.shab .rows div{display:flex;flex-direction:column;gap:.15rem}
+.shab .rows span{font-size:.98rem;color:var(--muted)}
+.shab .rows b{font-size:1.5rem;font-weight:560}
+.shab .note{margin-top:.75rem;font-size:1.05rem;color:var(--muted)}
+.shab .count{font-size:1.25rem;color:var(--gold);margin-top:.35rem}
+.sky{position:relative;height:10.6rem}
+.sky-bar{position:absolute;left:0;right:0;top:4.25rem;height:1.5rem;border-radius:1rem;overflow:hidden}
+.sky-bar .tm{position:absolute;left:2.2rem;top:50%;transform:translateY(-50%);font-size:.85rem;font-weight:600;color:rgba(238,231,215,.8)}
+.tick{position:absolute;width:1px;background:rgba(238,231,215,.28)}
+.tick.up{top:3.55rem;height:.7rem}
+.tick.dn{top:5.75rem;height:.7rem}
+.zl{position:absolute;transform:translateX(-50%);text-align:center;white-space:nowrap;line-height:1.15}
+.zl.up{top:0}
+.zl.dn{top:6.65rem}
+.zl .n{font-family:var(--heb);font-size:1.18rem;color:var(--muted)}
+.zl.en .n{font-family:var(--sans);font-size:1rem}
+.zl .v{font-size:1.38rem;font-weight:520}
+.zl.dn .v{order:-1}
+.zl.dn{display:flex;flex-direction:column}
+.zl.past .n,.zl.past .v{color:var(--faint)}
+.zl.next .n,.zl.next .v{color:var(--gold)}
+.zl.next .v{font-weight:650}
+.marker{position:absolute;top:5rem;width:2rem;height:2rem;margin:-1rem 0 0 -1rem;border-radius:50%;transition:left 30s linear}
+.marker.sun{background:radial-gradient(circle at 40% 40%,#FFF4CF,#F2C665 55%,#E1A447);box-shadow:0 0 1.2rem rgba(242,198,101,.75),0 0 0 .25rem rgba(13,23,38,.6)}
+.marker.moon{background:#E9E2CF;box-shadow:0 0 .9rem rgba(233,226,207,.5),0 0 0 .25rem rgba(13,23,38,.6)}
+.marker.moon::after{content:"";position:absolute;width:1.55rem;height:1.55rem;border-radius:50%;background:#1A2740;top:-.2rem;left:.6rem}
+
+/* shabbat / yom tov mode */
+body.holy{--tint:#3A2E1F}
+body.holy .band{border-top-color:rgba(229,186,94,.45)}
+body.holy .shab .en{color:var(--gold)}
+
+.badge{position:absolute;top:.9rem;right:2.6rem;font-size:.9rem;color:var(--faint)}
+.dim{position:fixed;inset:0;background:#000;pointer-events:none;opacity:0;transition:opacity 90s linear}
+@media (prefers-reduced-motion:reduce){.scene,.marker,.canvas,.dim,body{transition:none}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-sun" viewBox="0 0 32 32"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="16" cy="16" r="5.6"/><path d="M16 3.5v3M16 25.5v3M3.5 16h3M25.5 16h3M7.2 7.2l2.1 2.1M22.7 22.7l2.1 2.1M7.2 24.8l2.1-2.1M22.7 9.3l2.1-2.1"/></g></symbol>
+    <symbol id="i-moon" viewBox="0 0 32 32"><path d="M20.5 5.5a10.5 10.5 0 1 0 6 16.8A9 9 0 0 1 20.5 5.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+    <symbol id="i-pday" viewBox="0 0 32 32"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 3v2.2M3 12h2.2M5.6 5.6l1.6 1.6M18.4 5.6l-1.6 1.6"/><path d="M11 27h12.5a4.8 4.8 0 0 0 .4-9.6 6.6 6.6 0 0 0-12.6 1.7A4 4 0 0 0 11 27z"/></g></symbol>
+    <symbol id="i-pnight" viewBox="0 0 32 32"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 4.5a6.5 6.5 0 1 0 5 10.6A5.6 5.6 0 0 1 13.5 4.5z"/><path d="M11 27h12.5a4.8 4.8 0 0 0 .4-9.6 6.6 6.6 0 0 0-12.6 1.7A4 4 0 0 0 11 27z"/></g></symbol>
+    <symbol id="i-cloud" viewBox="0 0 32 32"><path d="M9 24h14.5a5.5 5.5 0 0 0 .5-11 7.5 7.5 0 0 0-14.4 2A4.6 4.6 0 0 0 9 24z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+    <symbol id="i-fog" viewBox="0 0 32 32"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 17.5h14.5a5 5 0 0 0 .3-10 7 7 0 0 0-13.4 1.8A4.2 4.2 0 0 0 9 17.5z"/><path d="M5 22h22M8 26.5h16"/></g></symbol>
+    <symbol id="i-rain" viewBox="0 0 32 32"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19h14.5a5.2 5.2 0 0 0 .4-10.4 7.2 7.2 0 0 0-13.8 1.9A4.3 4.3 0 0 0 9 19z"/><path d="M11 23l-1.4 3.5M16.5 23l-1.4 3.5M22 23l-1.4 3.5"/></g></symbol>
+    <symbol id="i-snow" viewBox="0 0 32 32"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19h14.5a5.2 5.2 0 0 0 .4-10.4 7.2 7.2 0 0 0-13.8 1.9A4.3 4.3 0 0 0 9 19z"/><path d="M11 23.5v.1M16 26v.1M21 23.5v.1M13.5 28.5v.1M18.5 28.5v.1"/></g></symbol>
+    <symbol id="i-storm" viewBox="0 0 32 32"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h14.5a5.2 5.2 0 0 0 .4-10.4 7.2 7.2 0 0 0-13.8 1.9A4.3 4.3 0 0 0 9 18z"/><path d="M16.5 20.5l-3 5h4l-2.5 4.5"/></g></symbol>
+  </defs>
+</svg>
+
+<div class="canvas" id="canvas">
+  <div class="badge" id="badge"></div>
+
+  <aside class="side">
+    <div>
+      <div class="clock"><span class="t" id="clk">--:--</span><span class="ap" id="clkap"></span></div>
+      <div class="dates"><span class="gdate" id="gdate"></span><span class="hdate" id="hdate"></span></div>
+      <div class="offline" id="offline" hidden></div>
+    </div>
+    <div class="now" id="wxnow"></div>
+    <div class="nws" id="nws"></div>
+    <div class="hourly" id="hourly"></div>
+    <div class="days" id="days"></div>
+  </aside>
+
+  <main class="stage">
+    <div class="alert" id="alert"></div>
+    <div class="stage-head">
+      <div class="stage-title" id="stitle"></div>
+      <div class="head-right">
+        <div class="chip" id="chip"></div>
+        <div class="scenes" id="scenes"></div>
+      </div>
+    </div>
+    <div class="scene-wrap">
+      <section class="scene" id="layerA"></section>
+      <section class="scene" id="layerB"></section>
+    </div>
+  </main>
+
+  <footer class="band">
+    <div class="shab" id="shab"></div>
+    <div class="sky" id="sky"></div>
+  </footer>
+</div>
+<div class="dim" id="dim"></div>
+
+<script>
+"use strict";
+// ------------------------------------------------------------------ basics
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const Q = new URLSearchParams(location.search);
+let offset = 0;
+if (Q.get("at")) { const t = new Date(Q.get("at")); if (!isNaN(t)) offset = t - Date.now(); }
+const NOW = () => new Date(Date.now() + offset);
+const DOW = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+const MON = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+function pd(s) {
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) { const [y,m,d] = s.split("-").map(Number); return new Date(y, m-1, d); }
+  const d = new Date(s); return isNaN(d) ? null : d;
+}
+const sameDay = (a, b) => a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
+function hm(d) { return (d.getHours() % 12 || 12) + ":" + String(d.getMinutes()).padStart(2, "0"); }
+const ap = (d) => d.getHours() < 12 ? "am" : "pm";
+const hmap = (d) => hm(d) + " " + ap(d);
+const short = (d) => d.toLocaleDateString("en-US", {month:"short", day:"numeric"});
+function dayLabel(d) {
+  const n = NOW(); const t = new Date(n); t.setDate(n.getDate()+1);
+  if (sameDay(d, n)) return "Today"; if (sameDay(d, t)) return "Tomorrow";
+  return d.toLocaleDateString("en-US", {weekday:"short"});
+}
+function rel(iso) {
+  const d = pd(iso); if (!d) return "";
+  const m = (NOW() - d) / 60000;
+  if (m < 1) return "just now"; if (m < 60) return Math.round(m) + " min ago";
+  if (m < 60*24) return Math.round(m/60) + " hr ago";
+  return short(d);
+}
+function ordinal(n) { n = Number(n); const s = ["th","st","nd","rd"], v = n % 100; return n + (s[(v-20)%10] || s[v] || s[0]); }
+
+// ------------------------------------------------------------------ data
+let S = null, DEMO = false, lastOk = 0;
+
+async function poll() {
+  try {
+    const r = await fetch("/api/state", {cache: "no-store"});
+    if (!r.ok) throw new Error(r.status);
+    S = await r.json(); DEMO = false; lastOk = Date.now();
+  } catch (e) {
+    if (!S || DEMO) { S = makeDemo(); DEMO = true; }
+  }
+  renderAll();
+}
+const D = (k) => (S && S.data && S.data[k]) || null;
+const CFG = () => (S && S.config) || {};
+
+function ageHTML(key, label) {
+  const m = S && S.meta && S.meta[key];
+  if (!m || !m.updated) return `<span class="age">${label || ""}</span>`;
+  const mins = (Date.now() / 1000 - m.updated) / 60;
+  const txt = mins < 1.5 ? "Updated just now" : mins < 90 ? `Updated ${Math.round(mins)} min ago` : `Updated ${Math.round(mins/60)} hr ago`;
+  const stale = m.ok === false && mins > 30;
+  return `<span class="age${stale ? " stale" : ""}">${stale ? "Last " + txt.toLowerCase() : txt}</span>`;
+}
+
+// ------------------------------------------------------------------ weather
+const WX = {0:"Clear",1:"Mostly clear",2:"Partly cloudy",3:"Cloudy",45:"Fog",48:"Freezing fog",51:"Light drizzle",53:"Drizzle",55:"Heavy drizzle",
+  56:"Freezing drizzle",57:"Freezing drizzle",61:"Light rain",63:"Rain",65:"Heavy rain",66:"Freezing rain",67:"Freezing rain",71:"Light snow",
+  73:"Snow",75:"Heavy snow",77:"Snow grains",80:"Showers",81:"Showers",82:"Heavy showers",85:"Snow showers",86:"Snow showers",
+  95:"Thunderstorms",96:"Thunderstorms, hail",99:"Thunderstorms, hail"};
+function wxIcon(code, day = true) {
+  let id = "cloud";
+  if (code <= 1) id = day ? "sun" : "moon";
+  else if (code === 2) id = day ? "pday" : "pnight";
+  else if (code === 3) id = "cloud";
+  else if (code === 45 || code === 48) id = "fog";
+  else if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) id = "rain";
+  else if ((code >= 71 && code <= 77) || code === 85 || code === 86) id = "snow";
+  else if (code >= 95) id = "storm";
+  return `<svg><use href="#i-${id}"/></svg>`;
+}
+
+function renderSide() {
+  const w = D("weather");
+  if (w) {
+    const c = w.current, t = w.today || {};
+    $("wxnow").innerHTML = `${wxIcon(c.code, c.is_day)}<div class="temp">${c.temp}°</div>
+      <div><div class="cond">${esc(WX[c.code] || "")}</div>
+      <div class="meta">High ${t.hi ?? "–"}°, low ${t.lo ?? "–"}°<br>Feels like ${c.feels}°, wind ${esc(c.wind_dir)} ${c.wind_mph} mph</div></div>`;
+    $("hourly").innerHTML = (w.hourly || []).slice(0, 8).map((h) => {
+      const d = pd(h.time);
+      const lab = (d.getHours() % 12 || 12) + (d.getHours() < 12 ? "a" : "p");
+      return `<div><span class="h">${lab}</span>${wxIcon(h.code, h.is_day)}<span class="v">${h.temp}°</span><span class="p">${h.precip >= 20 ? h.precip + "%" : ""}</span></div>`;
+    }).join("");
+    const days = w.daily || [];
+    const lo = Math.min(...days.map((d) => d.lo)), hi = Math.max(...days.map((d) => d.hi)), span = Math.max(hi - lo, 1);
+    $("days").innerHTML = days.map((d) => {
+      const dt = pd(d.date);
+      return `<div class="day"><span class="n">${dt.toLocaleDateString("en-US", {weekday:"short"})}</span>${wxIcon(d.code)}
+        <span class="p">${d.precip >= 20 ? d.precip + "%" : ""}</span><span class="lo">${d.lo}°</span>
+        <span class="range"><i style="left:${(d.lo-lo)/span*100}%;right:${(hi-d.hi)/span*100}%"></i></span><span class="hi">${d.hi}°</span></div>`;
+    }).join("");
+  }
+  const nws = D("nws");
+  $("nws").innerHTML = nws && nws[0] ? `<b>${esc(nws[0].name)}</b>${esc(nws[0].text)}` : "";
+
+  const al = (D("alerts") || [])[0];
+  const box = $("alert");
+  if (al) {
+    const ends = pd(al.ends);
+    box.className = "alert on" + (/(Severe|Extreme)/.test(al.severity || "") ? " severe" : "");
+    box.textContent = al.event + (ends ? ` until ${dayLabel(ends) === "Today" ? "" : dayLabel(ends) + " "}${hmap(ends)}` : "");
+  } else box.className = "alert";
+}
+
+function renderClock() {
+  const n = NOW();
+  $("clk").textContent = hm(n); $("clkap").textContent = ap(n);
+  $("gdate").textContent = `${DOW[n.getDay()]}, ${MON[n.getMonth()]} ${n.getDate()}`;
+  const h = D("hebdate"); $("hdate").textContent = h ? h.hebrew : "";
+  const off = $("offline");
+  if (!DEMO && lastOk && Date.now() - lastOk > 3 * 60000) {
+    off.hidden = false; off.textContent = `Can't reach the data server since ${hmap(new Date(lastOk))}. Showing the last update.`;
+  } else off.hidden = true;
+}
+
+// ------------------------------------------------------------------ zmanim band
+const ZL = {
+  hebrew: {alot:"עלות השחר", sunrise:"הנץ החמה", shema:"סוף זמן ק״ש", tefilla:"סוף זמן תפילה", chatzot:"חצות",
+           mincha_gedola:"מנחה גדולה", plag:"פלג המנחה", sunset:"שקיעה", tzeit:"צאת הכוכבים"},
+  english: {alot:"Alot", sunrise:"Netz", shema:"Shema", tefilla:"Tefillah", chatzot:"Chatzot",
+            mincha_gedola:"Mincha", plag:"Plag", sunset:"Shkia", tzeit:"Tzeit"},
+};
+const UP = ["alot","shema","chatzot","plag","tzeit"], DN = ["sunrise","tefilla","mincha_gedola","sunset"];
+
+function renderSky() {
+  const z = D("zmanim"); if (!z) return;
+  const T = {}; for (const k in z.times) T[k] = pd(z.times[k]);
+  if (!T.alot || !T.tzeit) return;
+  const a = T.alot.getTime() - 40*60000, b = T.tzeit.getTime() + 40*60000, span = b - a;
+  const pct = (d) => Math.max(0, Math.min(100, (d.getTime() - a) / span * 100));
+  const P = (k) => pct(T[k]).toFixed(2) + "%";
+  const grad = `linear-gradient(90deg,#0E1A2D 0%,#28294D ${P("alot")},#8C6A8C ${pct(new Date(T.sunrise - 12*60000)).toFixed(2)}%,
+    #6F9BC8 ${pct(new Date(+T.sunrise + 70*60000)).toFixed(2)}%,#7AA6D2 ${P("chatzot")},#6F9BC8 ${pct(new Date(T.sunset - 80*60000)).toFixed(2)}%,
+    #D8A15C ${pct(new Date(T.sunset - 8*60000)).toFixed(2)}%,#7B4E6E ${pct(new Date(+T.sunset + 14*60000)).toFixed(2)}%,#202A4A ${P("tzeit")},#0E1A2D 100%)`;
+  const n = NOW();
+  const order = ["alot","sunrise","shema","tefilla","chatzot","mincha_gedola","plag","sunset","tzeit"];
+  const nextKey = order.find((k) => T[k] && T[k] > n);
+  const labels = ZL[CFG().zmanim_labels === "english" ? "english" : "hebrew"];
+  const en = CFG().zmanim_labels === "english";
+  let html = `<div class="sky-bar" style="background:${grad}">${z.is_tomorrow ? `<span class="tm">Tomorrow</span>` : ""}</div>`;
+  for (const k of order) {
+    if (!T[k]) continue;
+    const up = UP.includes(k), cls = (T[k] < n ? " past" : "") + (k === nextKey ? " next" : "");
+    let val = hm(T[k]);
+    if (k === "shema" && T.shema_mga) val = hm(T.shema_mga) + " / " + hm(T.shema);
+    html += `<div class="tick ${up ? "up" : "dn"}" style="left:${P(k)}"></div>`;
+    if (k === "shema" && T.shema_mga) html += `<div class="tick up" style="left:${P("shema_mga")}"></div>`;
+    html += `<div class="zl ${up ? "up" : "dn"}${en ? " en" : ""}${cls}" style="left:${P(k)}"><div class="n">${labels[k]}</div><div class="v">${val}</div></div>`;
+  }
+  const isDay = T.sunrise && T.sunset && n > T.sunrise && n < T.sunset;
+  html += `<div class="marker ${isDay ? "sun" : "moon"}" style="left:${pct(n).toFixed(2)}%"></div>`;
+  $("sky").innerHTML = html;
+
+  // background tint follows the sky
+  const R = document.documentElement.style;
+  const holy = document.body.classList.contains("holy");
+  let tint = "#121F33";
+  const tz = D("zmanim").today || z.times;
+  const tSunrise = pd(tz.sunrise), tSunset = pd(tz.sunset), tAlot = pd(tz.alot), tTzeit = pd(tz.tzeit);
+  if (tSunrise && tSunset) {
+    if (n > tAlot && n < tSunrise) tint = "#231F3A";
+    else if (n >= tSunrise && n < new Date(tSunset - 50*60000)) tint = "#16304D";
+    else if (n >= new Date(tSunset - 50*60000) && n < tTzeit) tint = "#2E2131";
+  }
+  R.setProperty("--tint", holy ? "#33291D" : tint);
+}
+
+function holyState() {
+  const cal = D("calendar"); if (!cal) return null;
+  const n = NOW();
+  const items = cal.items.map((it) => ({...it, d: pd(it.date)})).filter((it) => it.d).sort((x, y) => x.d - y.d);
+  const marks = items.filter((it) => it.category === "candles" || it.category === "havdalah");
+  const lastMark = [...marks].reverse().find((it) => it.d <= n);
+  const nextHav = marks.find((it) => it.category === "havdalah" && it.d > n);
+  const nextCandles = marks.find((it) => it.category === "candles" && it.d > n);
+  const inHoly = !!(lastMark && lastMark.category === "candles" && nextHav);
+  const today0 = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+  const parsha = items.find((it) => it.category === "parashat" && it.d >= today0);
+  const yt = (when) => when && items.find((it) => it.category === "holiday" && it.yomtov && (sameDay(it.d, when) || sameDay(it.d, new Date(+when + 864e5))));
+  const upcoming = items.find((it) => (it.category === "holiday" || it.category === "roshchodesh") && it.d >= today0 && it.d - today0 < 8*864e5);
+  return {inHoly, lastMark, nextHav, nextCandles, parsha, ytNow: inHoly && yt(lastMark.d), ytNext: yt(nextCandles && nextCandles.d), upcoming};
+}
+
+function renderShabbat() {
+  const h = holyState(); const box = $("shab");
+  if (!h) { box.innerHTML = ""; return; }
+  const n = NOW();
+  document.body.classList.toggle("holy", h.inHoly);
+  const pName = h.parsha ? h.parsha.title.replace(/^Parashat\s+/, "") : "";
+  const pHeb = h.parsha && h.parsha.hebrew ? h.parsha.hebrew.replace(/^פרשת\s+/, "") : "";
+  const fmtDay = (d) => d.toLocaleDateString("en-US", {weekday:"short"}) + " " + hmap(d);
+  if (h.inHoly) {
+    const isYT = !!h.ytNow;
+    box.innerHTML = `<div class="ttl"><span class="en">${isYT ? esc(h.ytNow.title) : "Shabbat Shalom"}</span>
+        <span class="he">${isYT ? esc(h.ytNow.hebrew || "") : "שבת " + esc(pHeb)}</span></div>
+      <div class="rows">${!isYT && pName ? `<div><span>Parashah</span><b>${esc(pName)}</b></div>` : ""}
+        <div><span>Havdalah</span><b>${fmtDay(h.nextHav.d)}</b></div></div>`;
+    return;
+  }
+  if (!h.nextCandles) { box.innerHTML = ""; return; }
+  const isYT = !!h.ytNext;
+  const title = isYT ? h.ytNext.title : `Shabbat ${pName}`;
+  const heb = isYT ? (h.ytNext.hebrew || "") : `שבת ${pHeb}`;
+  const nextHavAfter = h.nextHav;
+  const mins = (h.nextCandles.d - n) / 60000;
+  const count = mins > 0 && mins < 8*60
+    ? `<div class="count">Candle lighting in ${mins >= 60 ? Math.floor(mins/60) + " hr " : ""}${Math.round(mins % 60)} min</div>` : "";
+  const up = h.upcoming && !(isYT && h.upcoming.title === h.ytNext.title)
+    ? `<div class="note">${esc(h.upcoming.title)}, ${dayLabel(h.upcoming.d).toLowerCase() === "today" ? "today" : h.upcoming.d.toLocaleDateString("en-US", {weekday:"long"})}</div>` : "";
+  box.innerHTML = `<div class="ttl"><span class="en">${esc(title)}</span><span class="he">${esc(heb)}</span></div>
+    <div class="rows"><div><span>Candle lighting</span><b>${fmtDay(h.nextCandles.d)}</b></div>
+    ${nextHavAfter ? `<div><span>Havdalah</span><b>${fmtDay(nextHavAfter.d)}</b></div>` : ""}</div>${count || up}`;
+}
+
+// ------------------------------------------------------------------ games
+function diamond(b) {
+  const sq = (x, y, on) => `<rect x="${x-5}" y="${y-5}" width="10" height="10" transform="rotate(45 ${x} ${y})" fill="${on ? "#EEE7D7" : "none"}" stroke="#9CA8B8" stroke-width="1.4"/>`;
+  return `<svg class="diamond" viewBox="0 0 40 30">${sq(20,8,b[1])}${sq(31,19,b[0])}${sq(9,19,b[2])}</svg>`;
+}
+function inningText(g) {
+  if (g.state !== "Live") return g.detail;
+  if (!g.inning) return g.detail;
+  return `${g.inning_state || g.half || ""} ${g.inning_ordinal || g.inning}`.trim();
+}
+function gameStatusHTML(g) {
+  if (g.state === "Live") {
+    const outs = [0,1,2].map((i) => `<i class="${i < (g.outs || 0) ? "on" : ""}"></i>`).join("");
+    const mid = /Middle|End/.test(g.inning_state || "");
+    return `<span class="st"><span class="livedot"></span>${esc(inningText(g))}${mid ? "" : `<span class="outs">${outs}</span>${diamond(g.bases || [])}`}</span>`;
+  }
+  if (g.state === "Final") return `<span class="st">Final${g.inning && g.inning !== 9 ? ` (${g.inning})` : ""}</span>`;
+  const d = pd(g.start);
+  return `<span class="st">${d ? `${dayLabel(d)} ${hmap(d)}` : esc(g.detail)}</span>`;
+}
+function gameCard(g, opts = {}) {
+  const fin = g.state === "Final";
+  const row = (s, other) => {
+    const lose = fin && s.score != null && other.score != null && s.score < other.score;
+    const sub = g.state === "Preview" ? (s.probable ? s.probable : s.record) : (opts.showRecord ? s.record : "");
+    return `<div class="gc-row${lose ? " lose" : ""}"><span class="ab">${esc(s.abbr)}</span>
+      <span class="nm">${esc(s.name)}${sub ? `<small>${esc(sub)}</small>` : ""}</span>
+      <span class="r">${g.state === "Preview" ? "" : (s.score ?? "")}</span>
+      <span class="he">${g.state === "Preview" ? "" : (s.hits ?? "")}</span><span class="he">${g.state === "Preview" ? "" : (s.errors ?? "")}</span></div>`;
+  };
+  const post = g.series && g.game_type && !["R", "S", "E"].includes(g.game_type);
+  const series = post ? g.series + (g.series_game ? `, Game ${g.series_game}` : "") : "";
+  const head = g.state === "Final" ? [short(pd(g.start)), series].filter(Boolean).join(", ")
+             : g.state === "Preview" ? (series || "Next game") : series;
+  const foot = [];
+  if (g.series_status && post && !opts.noSeriesStatus) foot.push(`<b>${esc(g.series_status)}</b>`);
+  if (g.venue) foot.push(`<span>${esc(g.venue)}</span>`);
+  const hasHE = g.away.hits != null;
+  return `<div class="gc"><div class="gc-head"><span>${esc(head)}</span>${gameStatusHTML(g)}</div>
+    ${g.state !== "Preview" ? `<div class="gc-legend"><span></span><span></span><span>R</span><span>${hasHE ? "H" : ""}</span><span>${hasHE ? "E" : ""}</span></div>` : ""}
+    ${row(g.away, g.home)}${row(g.home, g.away)}
+    ${foot.length ? `<div class="gc-foot">${foot.join("")}</div>` : ""}</div>`;
+}
+function miniGame(g) {
+  const fin = g.state === "Final";
+  const rw = (s, o) => `<div class="rw${fin && s.score < o.score ? " lose" : ""}"><span>${esc(s.abbr)}</span><span>${g.state === "Preview" ? "" : (s.score ?? "")}</span></div>`;
+  const st = g.state === "Live" ? `<span class="livedot"></span>${esc(inningText(g))}` : g.state === "Final" ? "Final" : esc(hmap(pd(g.start)));
+  return `<div class="mini"><div class="st">${st}</div>${rw(g.away, g.home)}${rw(g.home, g.away)}</div>`;
+}
+
+// ------------------------------------------------------------------ lists
+function emptyMsg(key) {
+  const m = S && S.meta && S.meta[key];
+  return `<div class="empty">${m && m.ok === false ? "This feed isn't responding. The server keeps retrying." : "Waiting for headlines."}</div>`;
+}
+function headlines(key, n, leadMode) {
+  const f = D(key); const items = (f && f.items) || [];
+  if (!items.length) return emptyMsg(key);
+  return items.slice(0, n).map((it, i) => {
+    const lead = leadMode && i === 0;
+    const when = it.time ? rel(it.time) : "";
+    return `<div class="hl${lead ? " lead" + (leadMode === "mega" ? " mega" : "") : ""}"><div class="t">${esc(it.title)}</div>
+      ${lead && it.summary ? `<div class="s">${esc(it.summary)}</div>` : ""}${when ? `<div class="w">${when}</div>` : ""}</div>`;
+  }).join("");
+}
+function txList(list, n) {
+  if (!list || !list.length) return `<div class="empty">No recent moves.</div>`;
+  return list.slice(0, n).map((t) => `<div class="tx"><span class="d">${short(pd(t.date))}</span><span class="x">${esc(t.text)}</span></div>`).join("");
+}
+const col = (title, key, body) => `<div class="col"><div class="col-h"><h3>${esc(title)}</h3>${key ? ageHTML(key) : ""}</div>${body}</div>`;
+
+// ------------------------------------------------------------------ scenes
+const SCENES = {
+  yankees: {title: () => "Yankees", tab: "Yankees", render: sceneTeam},
+  mlb: {title: () => {
+          const sb = D("scoreboard"); const ws = sb && sb.games.some((g) => g.game_type === "W");
+          return ws ? "World Series" : "Around the majors"; }, tab: "MLB", render: sceneMLB},
+  news: {title: () => "Headlines", tab: "Headlines", render: sceneNews},
+  israel: {title: () => "Israel", tab: "Israel", render: sceneIsrael},
+};
+
+function sceneTeam() {
+  const t = D("team") || {}, st = D("standings"), tx = D("transactions");
+  const me = st && st.teams.find((x) => x.is_team);
+  let left = "";
+  if (t.live) left = gameCard(t.live, {showRecord: true});
+  else if (t.season_over && t.last) {
+    const L = t.last;
+    const post = L.game_type && L.game_type !== "R" && L.game_type !== "S";
+    left = `<div class="season"><div class="big">${me ? `${me.w}–${me.l}, ${ordinal(me.rank)} in the ${esc(CFG().division_name || "division")}` : "Season over"}</div>
+      <div class="sub">${post && L.series ? `${esc(L.series)}${L.series_status ? ": " + esc(L.series_status) : ""}` : `${st ? st.season + " " : ""}season complete`}</div></div>
+      ${gameCard(L, {noSeriesStatus: post})}`;
+  } else {
+    if (t.last) left += gameCard(t.last);
+    if (t.next) left += `<div style="height:1.1rem"></div>` + gameCard(t.next);
+    if (!left) left = `<div class="empty">No games scheduled.</div>`;
+  }
+  const table = st ? `<table class="stand"><tr><th>${esc(CFG().division_name || "")}</th><th>W</th><th>L</th><th>GB</th><th>Strk</th></tr>
+    ${st.teams.map((x) => `<tr class="${x.is_team ? "me" : ""}"><td>${esc(x.abbr)}</td><td>${x.w}</td><td>${x.l}</td><td>${esc(x.gb)}</td><td>${esc(x.streak || "")}</td></tr>`).join("")}</table>` : "";
+  return `<div class="grid2" style="grid-template-columns:minmax(0,1.25fr) minmax(0,1fr)"><div>${left}</div><div class="col"><div class="col-h"><h3>Standings</h3>${ageHTML("standings")}</div>${table}</div></div>
+    <div class="grid2" style="flex:1">${col("Roster moves", "transactions", txList(tx && tx.team, 5))}${col("Yankees news", "yankees_news", headlines("yankees_news", 5))}</div>`;
+}
+
+function sceneMLB() {
+  const sb = D("scoreboard"), tx = D("transactions");
+  const games = (sb && sb.games) || [];
+  const league = (tx && tx.league) || [];
+  const label = games.length && sb.label === "Yesterday" ? `<div class="col-h"><h3>Yesterday's scores</h3></div>` : "";
+  if (games.length === 1) {
+    // one big game (usually the World Series): moves beside it, news underneath in two columns
+    const f = D("mlb_news"); const items = (f && f.items) || [];
+    const li = (arr) => arr.map((it) => `<div class="hl"><div class="t">${esc(it.title)}</div><div class="w">${rel(it.time)}</div></div>`).join("");
+    return `<div class="grid2" style="grid-template-columns:minmax(0,1.35fr) minmax(0,1fr)"><div>${label}${gameCard(games[0])}</div>
+        ${col("Transactions", "transactions", txList(league, 3))}</div>
+      <div class="col" style="flex:1"><div class="col-h"><h3>MLB news</h3>${ageHTML("mlb_news")}</div>
+        <div class="grid2">${items.length ? `<div>${li(items.slice(0, 4))}</div><div>${li(items.slice(4, 8))}</div>` : `<div class="empty">Waiting for headlines.</div>`}</div></div>`;
+  }
+  let top = "";
+  if (games.length === 2) top = `<div class="grid2">${games.map((g) => gameCard(g)).join("")}</div>`;
+  else if (games.length > 2) top = `<div class="mini-grid">${games.slice(0, 8).map(miniGame).join("")}</div>`;
+  const nTx = games.length > 2 ? 4 : 5;
+  return `${top ? `<div>${label}${top}</div>` : ""}
+    <div class="grid2" style="flex:1">${col("Transactions", "transactions", txList(league, top ? nTx : 9))}${col("MLB news", "mlb_news", headlines("mlb_news", top ? 5 : 8))}</div>`;
+}
+
+function sceneNews() {
+  return `<div class="grid2" style="flex:1">${col("The New York Times", "nyt", headlines("nyt", 6, "lead"))}${col("CNN", "cnn", headlines("cnn", 7))}</div>`;
+}
+
+function sceneIsrael() {
+  const f = D("toi"); const items = (f && f.items) || [];
+  if (!items.length) return col("The Times of Israel", "toi", emptyMsg("toi"));
+  const lead = `<div class="hl lead mega"><div class="t">${esc(items[0].title)}</div>${items[0].summary ? `<div class="s">${esc(items[0].summary)}</div>` : ""}<div class="w">${rel(items[0].time)}</div></div>`;
+  const rest = items.slice(1, 9);
+  const half = Math.ceil(rest.length / 2);
+  const li = (arr) => arr.map((it) => `<div class="hl"><div class="t">${esc(it.title)}</div><div class="w">${rel(it.time)}</div></div>`).join("");
+  return `<div class="col" style="flex:none"><div class="col-h"><h3>The Times of Israel</h3>${ageHTML("toi")}</div>${lead}</div>
+    <div class="grid2" style="flex:1"><div class="col">${li(rest.slice(0, half))}</div><div class="col">${li(rest.slice(half))}</div></div>`;
+}
+
+// rotation
+let order = [], idx = 0, sceneStart = Date.now(), current = null, front = "layerA";
+const HOLD = Q.get("hold") === "1";
+
+function buildOrder() {
+  const has = (k) => { const f = D(k); return !!(f && f.items && f.items.length); };
+  const ok = {yankees: true, mlb: true, news: has("nyt") || has("cnn"), israel: has("toi")};
+  const t = D("team");
+  const seq = t && t.live ? ["yankees", "mlb", "yankees", "news", "yankees", "israel"] : ["yankees", "mlb", "news", "israel"];
+  return seq.filter((s) => ok[s] || s === Q.get("scene"));
+}
+function duration(name) {
+  const r = CFG().rotation_seconds || {};
+  return (r[name] || 30) * 1000;
+}
+// hide list items that would be cut off at the bottom of their column
+function fitColumns(layer) {
+  layer.querySelectorAll(".col").forEach((c) => {
+    const limit = c.getBoundingClientRect().bottom + 1;
+    const cut = new Set();
+    c.querySelectorAll(".hl, .tx").forEach((el) => {
+      const p = el.parentElement;
+      if (cut.has(p) || el.getBoundingClientRect().bottom > limit) { el.style.display = "none"; cut.add(p); }
+    });
+  });
+}
+function paint(layerId, name) {
+  $(layerId).innerHTML = SCENES[name].render();
+  fitColumns($(layerId));
+}
+function showScene(name, fade = true) {
+  current = name;
+  const back = front === "layerA" ? "layerB" : "layerA";
+  const target = fade ? back : front;
+  paint(target, name);
+  if (fade) { $(back).classList.add("show"); $(front).classList.remove("show"); front = back; }
+  else $(front).classList.add("show");
+  $("stitle").textContent = SCENES[name].title();
+  const tabs = [...new Set(order)];
+  $("scenes").innerHTML = tabs.map((s) => `<span class="${s === name ? "on" : ""}">${SCENES[s].tab}<i id="${s === name ? "prog" : ""}"></i></span>`).join("");
+  renderChip();
+}
+function renderChip() {
+  const t = D("team"); const chip = $("chip");
+  if (t && t.live && current !== "yankees") {
+    const g = t.live;
+    chip.className = "chip on";
+    chip.innerHTML = `<span class="dot"></span>${esc(g.away.abbr)} ${g.away.score ?? 0}&nbsp; ${esc(g.home.abbr)} ${g.home.score ?? 0}&nbsp; <span style="font-weight:450">${esc(inningText(g))}</span>`;
+  } else chip.className = "chip";
+}
+function tick() {
+  if (!S) return;
+  const el = Date.now() - sceneStart;
+  const p = $("prog");
+  if (p) p.style.width = Math.min(100, el / duration(current) * 100) + "%";
+  if (!HOLD && el > duration(current)) {
+    order = buildOrder(); idx = (idx + 1) % order.length; sceneStart = Date.now();
+    showScene(order[idx], true);
+  }
+}
+
+// ------------------------------------------------------------------ misc
+function renderDim() {
+  const c = CFG(); const n = NOW();
+  const toMin = (s) => { const [h, m] = String(s || "0:0").split(":").map(Number); return h * 60 + m; };
+  const cur = n.getHours() * 60 + n.getMinutes(), a = toMin(c.dim_start), b = toMin(c.dim_end);
+  const on = a > b ? (cur >= a || cur < b) : (cur >= a && cur < b);
+  $("dim").style.opacity = on ? (c.dim_level ?? .5) : 0;
+}
+function renderAll() {
+  renderClock(); renderSide(); renderShabbat(); renderSky(); renderDim();
+  $("badge").textContent = DEMO ? "Preview data. Run server.py for live feeds." : "";
+  if (!current) {
+    order = buildOrder();
+    const start = Q.get("scene"); idx = Math.max(0, order.indexOf(start));
+    showScene(order[idx], false); sceneStart = Date.now();
+  } else {
+    paint(front, current);
+    $("stitle").textContent = SCENES[current].title(); renderChip();
+  }
+}
+
+// screen care: shift everything a few pixels every 10 minutes
+setInterval(() => {
+  const x = Math.round(Math.random() * 6 - 3), y = Math.round(Math.random() * 6 - 3);
+  $("canvas").style.transform = `translate(${x}px,${y}px)`;
+}, 10 * 60000);
+// reload the page every 6 hours (only if the server answers) to keep the browser fresh
+setInterval(async () => {
+  try { const r = await fetch("/health", {cache: "no-store"}); if (r.ok) location.reload(); } catch (e) {}
+}, 6 * 3600000);
+
+// keep the screen on (backup to the launcher; works in Chrome and Edge on localhost)
+let wakeLock = null;
+async function holdScreen() {
+  try {
+    if ("wakeLock" in navigator && (!wakeLock || wakeLock.released) && document.visibilityState === "visible") {
+      wakeLock = await navigator.wakeLock.request("screen");
+    }
+  } catch (e) {}
+}
+document.addEventListener("visibilitychange", holdScreen);
+setInterval(holdScreen, 60000);
+holdScreen();
+
+setInterval(renderClock, 1000);
+setInterval(tick, 250);
+setInterval(() => { renderShabbat(); renderSky(); renderDim(); }, 30000);
+setInterval(poll, 20000);
+
+// ------------------------------------------------------------------ preview data
+// Used only when the page is opened without the server, so the layout can be previewed.
+function makeDemo() {
+  const n = NOW();
+  const at = (h, m, dayOff = 0) => { const d = new Date(n.getFullYear(), n.getMonth(), n.getDate() + dayOff, h, m); return d.toISOString(); };
+  const zt = (off) => ({alot: at(5,55,off), sunrise: at(7,21,off), shema_mga: at(9,24,off), shema: at(10,0,off), tefilla: at(10,53,off),
+    chatzot: at(12,38,off), mincha_gedola: at(13,4,off), plag: at(16,50,off), sunset: at(17,56,off), tzeit: at(18,35,off)});
+  const tzeit = new Date(at(18,35)), sunset = new Date(at(17,56));
+  const tom = n > tzeit;
+  const fridayOff = n.getDay() === 6 ? -1 : 5 - n.getDay();
+  const ymd = (off) => { const d = new Date(n.getFullYear(), n.getMonth(), n.getDate() + off); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
+  const hourIso = (k) => { const d = new Date(n); d.setMinutes(0,0,0); d.setHours(d.getHours() + k); return d.toISOString(); };
+  const isDay = n.getHours() >= 7 && n.getHours() < 18;
+  const temps = [52,51,50,49,48,48,47,47];
+  const updated = Date.now()/1000 - 240;
+  const meta = {}; ["weather","nws","standings","transactions","yankees_news","mlb_news","nyt","cnn","toi","team","scoreboard"].forEach((k) => meta[k] = {updated, ok: true});
+  const nyt = ["A city plan to reshape its waterfront heads to a final vote","Economists see hiring cooling as companies hold budgets steady",
+    "Inside the effort to restore a century-old rail tunnel","Schools test later start times, and parents weigh in",
+    "What a warm autumn means for fall foliage in the Northeast","A guide to the season's new museum exhibitions"];
+  const cnn = ["Storm system expected to bring heavy rain to the Southeast","Airlines add flights ahead of the holiday travel season",
+    "How one small town rebuilt its main street after a flood","Researchers track a rise in backyard bird sightings",
+    "Markets end mixed as investors await new economic data","Five things to watch in Washington this week","Hospitals prepare for the winter flu season"];
+  const toi = ["Jerusalem light rail extension opens to riders on a new line","Tel Aviv startups report a rise in early-stage funding",
+    "Rain forecast across the north as the winter season begins","Archaeologists uncover a Second Temple-era ritual bath near Jerusalem",
+    "Health Ministry launches seasonal flu vaccination campaign","Haifa port expansion enters final construction phase",
+    "Israeli cyclists head to the European track championships","New hiking trail links Galilee villages","Cabinet to discuss next year's education budget"];
+  const mlbn = ["Ranking the top free agents of the winter","Offseason primer: the key dates to know","Arizona Fall League standouts so far",
+    "Breaking down the World Series pitching matchups","Front offices brace for a busy hot stove"];
+  const yn = ["Yankees offseason preview: rotation and bullpen questions","Five storylines to watch in the Bronx this winter",
+    "Yankees prospects to watch in the Arizona Fall League","The Yankees' 2026 season by the numbers"];
+  const feed = (arr, mins, sum) => ({items: arr.map((t, i) => ({title: t, time: new Date(+n - (mins + i*37) * 60000).toISOString(),
+    summary: i === 0 ? sum : ""}))});
+  return {
+    config: {location_name: "Teaneck", team_abbr: "NYY", division_name: "AL East", zmanim_labels: "hebrew",
+      dim_start: "23:00", dim_end: "06:30", dim_level: .55, rotation_seconds: {yankees: 30, mlb: 30, news: 30, israel: 25}},
+    meta,
+    data: {
+      weather: {current: {temp: isDay ? 58 : 53, feels: isDay ? 57 : 50, code: 2, is_day: isDay, wind_mph: 9, wind_dir: "NW", humidity: 61},
+        today: {hi: 61, lo: 46}, hourly: temps.map((t, i) => { const hh = pd(hourIso(i+1)).getHours();
+          return {time: hourIso(i+1), temp: t, code: i > 5 ? 3 : 2, precip: i > 5 ? 20 : 0, is_day: hh >= 7 && hh < 18}; }),
+        daily: [[63,47,1,0],[66,50,2,10],[59,48,61,70],[55,41,3,20],[57,42,0,0]].map((d, i) => ({date: ymd(i+1), hi: d[0], lo: d[1], code: d[2], precip: d[3]}))},
+      nws: [{name: isDay ? "This Afternoon" : "Tonight", text: "Partly cloudy, with a low around 46. Northwest wind around 9 mph."}],
+      alerts: [],
+      zmanim: {is_tomorrow: tom, times: zt(tom ? 1 : 0), today: zt(0)},
+      hebdate: {hebrew: n > sunset ? "י״ח בְּחֶשְׁוָן תשפ״ז" : "י״ז בְּחֶשְׁוָן תשפ״ז"},
+      calendar: {items: [
+        {category: "candles", title: "Candle lighting", date: at(17,44, fridayOff - 7)},
+        {category: "havdalah", title: "Havdalah", date: at(18,42, fridayOff - 6)},
+        {category: "candles", title: "Candle lighting", date: at(17,35, fridayOff)},
+        {category: "parashat", title: "Parashat Vayera", hebrew: "פרשת וירא", date: ymd(fridayOff + 1)},
+        {category: "havdalah", title: "Havdalah", date: at(18,32, fridayOff + 1)},
+        {category: "candles", title: "Candle lighting", date: at(16,27, fridayOff + 7)},
+        {category: "parashat", title: "Parashat Chayei Sara", hebrew: "פרשת חיי שרה", date: ymd(fridayOff + 8)},
+        {category: "havdalah", title: "Havdalah", date: at(17,25, fridayOff + 8)},
+      ]},
+      team: {live: null, next: null, season_over: true,
+        last: {state: "Final", detail: "Final", start: "2026-10-08T00:08:00Z", game_type: "D", series: "AL Division Series", series_game: 3,
+          series_status: "TB wins 3-0", venue: "Yankee Stadium", inning: 9,
+          away: {abbr: "TB", name: "Rays", score: 4, hits: null, errors: null}, home: {abbr: "NYY", name: "Yankees", score: 3, hits: null, errors: null}}},
+      standings: {season: 2026, teams: [["TB",98,64,"-","L1"],["NYY",93,68,"4.5","W1"],["BOS",87,75,"11.0","L1"],["BAL",79,82,"18.5","L1"],["TOR",79,83,"19.0","W1"]]
+        .map((r, i) => ({abbr: r[0], w: r[1], l: r[2], gb: r[3], streak: r[4], rank: i+1, is_team: r[0] === "NYY"}))},
+      scoreboard: {label: "Today", games: [{state: "Live", detail: "In Progress", start: at(20,7), inning: 6, inning_ordinal: "6th", inning_state: "Top",
+        outs: 0, bases: [false,false,false], game_type: "W", series: "World Series", series_game: 5, series_status: "MIL leads 3-1", venue: "Tropicana Field",
+        away: {abbr: "MIL", name: "Brewers", score: 2, hits: 5, errors: 1}, home: {abbr: "TB", name: "Rays", score: 0, hits: 2, errors: 0}}]},
+      transactions: {
+        team: [
+          {date: "2026-10-08", text: "Recalled RHP Luis Gil from FCL Yankees."},
+          {date: "2026-10-08", text: "Activated RF Aaron Judge."},
+          {date: "2026-10-08", text: "Activated RHP Clarke Schmidt."},
+          {date: "2026-10-08", text: "Activated C J.C. Escarra."},
+          {date: "2026-10-01", text: "Sent RHP Alexander Cornielle outright to FCL Yankees."}],
+        league: [{date: "2026-10-27", text: "Houston Astros released LF Nelson Velázquez."}]},
+      yankees_news: feed(yn, 95), mlb_news: feed(mlbn, 18),
+      nyt: feed(nyt, 22, "Officials say the proposal would add parkland and flood protection along two miles of shoreline, with construction starting next year."),
+      cnn: feed(cnn, 9), toi: feed(toi, 14, "The new segment adds stops in several neighborhoods and is expected to carry tens of thousands of riders a day."),
+    },
+  };
+}
+
+poll();
+</script>
+</body>
+</html>
