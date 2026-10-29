@@ -33,6 +33,25 @@ class Isolated(unittest.TestCase):
         server._cache.clear()
 
 
+class CacheTests(Isolated):
+    def test_expired_entries_are_dropped(self):
+        with mock.patch.object(server.time, "time", return_value=1000.0):
+            server.cached("old", 10, lambda: 1)
+        with mock.patch.object(server.time, "time", return_value=2000.0):
+            server.cached("new", 10, lambda: 2)
+        self.assertNotIn("old", server._cache)
+        self.assertIn("new", server._cache)
+
+    def test_ttl_can_depend_on_the_value(self):
+        calls = []
+        load = lambda: calls.append(1) or {"ok": False}  # noqa: E731
+        ttl = lambda v: 60 if not v["ok"] else 600  # noqa: E731
+        for t in (1000.0, 1059.0, 1061.0):
+            with mock.patch.object(server.time, "time", return_value=t):
+                server.cached("k", ttl, load)
+        self.assertEqual(len(calls), 2)  # refetched once the 60 s were up
+
+
 class ArticleTests(Isolated):
     def setUp(self):
         super().setUp()
@@ -67,13 +86,6 @@ class ArticleTests(Isolated):
         self.assertEqual(j["summary"], "S")
         self.assertEqual(j["message"], "The full article couldn't be loaded.")
 
-    def test_nyt_short_article_marked_truncated(self):
-        page = "<article>" + ("<p>%s</p>" % ("x" * 60)) * 3 + "</article>"
-        with mock.patch.object(server, "http_get_with", return_value=page):
-            j = server.article_json(NYT_LINK)
-        self.assertTrue(j["ok"])
-        self.assertTrue(j["truncated"])
-
     def test_secret_not_in_error(self):
         with mock.patch.object(server, "http_get_with", side_effect=OSError("boom secret123")):
             j = server.article_json(NYT_LINK)
@@ -94,6 +106,43 @@ class ArticleTests(Isolated):
             j = server.article_json(NYT_LINK)
         self.assertFalse(j["ok"])
         self.assertIn("nyt_cookie", j["hint"])
+
+    def test_failed_article_retried_after_a_minute(self):
+        calls = []
+
+        def fail(*a, **k):
+            calls.append(1)
+            raise OSError("down")
+        with mock.patch.object(server, "http_get_with", side_effect=fail):
+            for t in (1000.0, 1030.0, 1065.0):
+                with mock.patch.object(server.time, "time", return_value=t):
+                    server.article_json(NYT_LINK)
+        self.assertEqual(len(calls), 2)
+
+    def test_short_free_nyt_piece_not_marked_truncated(self):
+        page = "<article>" + ("<p>%s</p>" % ("x" * 60)) * 3 + "</article>"
+        with mock.patch.object(server, "http_get_with", return_value=page):
+            self.assertFalse(server.article_json(NYT_LINK)["truncated"])
+
+    def test_paywalled_nyt_piece_marked_truncated(self):
+        page = ('<script type="application/ld+json">{"isAccessibleForFree":false}</script>'
+                "<article>" + ("<p>%s</p>" % ("x" * 60)) * 3 + "</article>")
+        with mock.patch.object(server, "http_get_with", return_value=page):
+            self.assertTrue(server.article_json(NYT_LINK)["truncated"])
+
+    def test_only_http_links_are_fetched(self):
+        server.store.data["cnn"] = {"items": [{"title": "T", "summary": "", "link": "file:///etc/passwd", "source": "cnn"}]}
+        with self.assertRaises(LookupError):
+            server.article_json("file:///etc/passwd")
+
+    def test_google_news_links_not_fetched(self):
+        link = "https://news.google.com/rss/articles/CBMiabc"
+        server.store.data["toi"] = {"items": [{"title": "T", "summary": "S", "link": link, "source": "toi"}]}
+        with mock.patch.object(server, "http_get_with") as get:
+            j = server.article_json(link)
+        get.assert_not_called()
+        self.assertFalse(j["ok"])
+        self.assertEqual(j["message"], "The full article couldn't be loaded.")
 
     def test_route_404_for_unknown_url(self):
         code, body = server.article_route("url=https%3A%2F%2Fevil.example%2Fx")
@@ -128,6 +177,17 @@ class GameTests(Isolated):
         self.assertIsNone(server.game_id_from_query("id=12ab"))
         self.assertIsNone(server.game_id_from_query(""))
         self.assertEqual(server.game_id_from_query("id=778899"), 778899)
+
+    def test_game_route_rejects_non_ascii_digits(self):
+        self.assertIsNone(server.game_id_from_query("id=%C2%B2"))          # superscript two
+        self.assertIsNone(server.game_id_from_query("id=%D9%A1%D9%A2"))    # Arabic-Indic digits
+
+    def test_postponed_game_is_off(self):
+        feed = json.loads(fixture("game_preview.json"))
+        feed["gameData"]["status"]["detailedState"] = "Postponed"
+        b = server.norm_boxscore(feed)
+        self.assertEqual(b["state"], "Off")
+        self.assertEqual(b["detail"], "Postponed")
 
     def test_parse_error_is_not_reported_as_missing_game(self):
         # a change in MLB's format must show up as an error, not as "no such game"
@@ -183,6 +243,27 @@ class ForecastTests(Isolated):
         self.assertIsNone(f["now"]["aqi"])
         self.assertEqual(f["periods"], [])
 
+    def test_days_start_tomorrow_when_yesterday_is_included(self):
+        # past_days=1 puts yesterday first in the daily and hourly data
+        om = json.loads(fixture("openmeteo.json"))
+        d, h = om["daily"], om["hourly"]
+        for k in d:
+            d[k] = [("2026-10-28" if k == "time" else d[k][0])] + d[k]
+        for k in h:
+            h[k] = [(f"2026-10-28T{i:02d}:00" if k == "time" else h[k][0]) for i in range(24)] + h[k]
+        f = server.build_forecast(om, None, None, start="2026-10-29T01:00")
+        self.assertEqual(f["days"][0]["date"], "2026-10-30")
+        self.assertEqual(len(f["days"]), 7)
+        self.assertEqual(f["hours"][0]["time"], "2026-10-29T01:00")
+
+    def test_forecast_asks_for_yesterday(self):
+        # so the 3-hour pressure trend works just after midnight
+        urls = []
+        om = json.loads(fixture("openmeteo.json"))
+        with mock.patch.object(server, "get_json", side_effect=lambda u, **k: urls.append(u) or om):
+            server.forecast_json()
+        self.assertIn("past_days=1", urls[0])
+
     def test_alerts_keep_full_text(self):
         feature = {"properties": {"event": "Flood Watch", "headline": "Flood Watch until Sunday",
                                   "severity": "Moderate", "ends": None, "expires": "2026-11-01T06:00:00-04:00",
@@ -200,6 +281,48 @@ class ForecastTests(Isolated):
             {"category": "candles", "date": "2026-11-06T16:29:00-05:00", "title": "Candle lighting"}]}
         marks = build()["marks"]
         self.assertEqual([m["label"] for m in marks], ["Candles"])
+
+
+class RouteTests(Isolated):
+    """The real request handler, on a free local port."""
+
+    @classmethod
+    def setUpClass(cls):
+        import threading
+        from http.server import ThreadingHTTPServer
+        cls.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+        cls.base = f"http://127.0.0.1:{cls.httpd.server_address[1]}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+        cls.httpd.server_close()
+
+    def status(self, path):
+        try:
+            with server.urllib.request.urlopen(self.base + path, timeout=10) as r:
+                return r.status
+        except server.urllib.error.HTTPError as e:
+            return e.code
+
+    def test_health(self):
+        self.assertEqual(self.status("/health"), 200)
+
+    def test_bad_game_ids_are_404(self):
+        self.assertEqual(self.status("/api/game?id=abc"), 404)
+        self.assertEqual(self.status("/api/game?id=%C2%B2"), 404)
+
+    def test_unknown_article_is_404(self):
+        self.assertEqual(self.status("/api/article?url=https%3A%2F%2Fevil.example%2F"), 404)
+
+    def test_state_has_no_secrets(self):
+        server.CONFIG["nyt_cookie"] = "secret123"
+        server.CONFIG["agenda_ics"] = ["https://example.com/feed/secret456.ics"]
+        with server.urllib.request.urlopen(self.base + "/api/state", timeout=10) as r:
+            body = r.read().decode()
+        self.assertNotIn("secret123", body)
+        self.assertNotIn("secret456", body)
 
 
 if __name__ == "__main__":

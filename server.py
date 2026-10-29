@@ -1008,13 +1008,18 @@ _cache_lock = threading.Lock()
 
 
 def cached(key, ttl, fn):
+    """ttl is seconds, or a function of the value giving seconds. Expired entries are
+    dropped on each store, so the cache doesn't grow without end."""
     with _cache_lock:
         hit = _cache.get(key)
-        if hit and time.time() - hit[0] < ttl:
+        if hit and time.time() < hit[0]:
             return hit[1]
     value = fn()  # an exception is not cached
     with _cache_lock:
-        _cache[key] = (time.time(), value)
+        t = time.time()
+        for k in [k for k, (expires, _) in _cache.items() if expires <= t]:
+            del _cache[k]
+        _cache[key] = (t + (ttl(value) if callable(ttl) else ttl), value)
     return value
 
 
@@ -1124,28 +1129,37 @@ def extract_article(page):
     return out
 
 
+# Google News backup links are redirect pages with no article in them.
+NO_ARTICLE_HOSTS = ("news.google.com",)
+# Paywalled NYT pages say so in their JSON-LD; free pieces (briefs, newsletters) don't.
+PAYWALLED = re.compile(r'"isAccessibleForFree"\s*:\s*"?false', re.I)
+
+
 def article_json(url):
     item = feed_item_for(url)
-    if item is None:
+    if item is None or urllib.parse.urlparse(url).scheme not in ("http", "https"):
         raise LookupError(url)
 
     def load():
         base = {"title": item.get("title"), "source": ARTICLE_SOURCES.get(item.get("source"), ""),
                 "time": item.get("time")}
-        try:
-            paras = extract_article(http_get_with(url, article_headers(url)))
-        except Exception:  # noqa: BLE001 - the panel shows the summary instead
-            log(f"article: {urllib.parse.urlparse(url).hostname} failed")
-            paras = []
+        paras, paywalled = [], False
+        if (urllib.parse.urlparse(url).hostname or "").lower() not in NO_ARTICLE_HOSTS:
+            try:
+                page = http_get_with(url, article_headers(url))
+                paras, paywalled = extract_article(page), bool(PAYWALLED.search(page))
+            except Exception:  # noqa: BLE001 - the panel shows the summary instead
+                log(f"article: {urllib.parse.urlparse(url).hostname} failed")
         if not paras:
             out = {**base, "ok": False, "summary": item.get("summary") or "", "message": ARTICLE_FAILED}
             if is_nyt(url):
                 out["hint"] = ("The Times sometimes turns away requests that don't come from a browser. "
                                "If you added \"nyt_cookie\" to settings.json, it may have expired (see README).")
             return out
-        return {**base, "ok": True, "paragraphs": paras, "truncated": is_nyt(url) and len(paras) < 5}
+        return {**base, "ok": True, "paragraphs": paras, "truncated": is_nyt(url) and paywalled and len(paras) < 5}
 
-    return cached("article:" + url, 600, load)
+    # a failure is retried after a minute, in case it was a passing network problem
+    return cached("article:" + url, lambda j: 600 if j["ok"] else 60, load)
 
 
 def article_route(query):
@@ -1235,16 +1249,13 @@ def norm_boxscore(feed):
 
 
 def game_json(pk):
-    with _cache_lock:
-        hit = _cache.get(f"game:{pk}")
-    live = not hit or hit[1].get("state") == "Live"
-    return cached(f"game:{pk}", 25 if live else 600,
+    return cached(f"game:{pk}", lambda b: 25 if b.get("state") in ("Live", "Preview") else 600,
                   lambda: norm_boxscore(get_json(f"https://statsapi.mlb.com/api/v1.1/game/{pk}/feed/live")))
 
 
 def game_id_from_query(query):
     v = (urllib.parse.parse_qs(query).get("id") or [""])[0]
-    return int(v) if v.isdigit() and len(v) < 12 else None
+    return int(v) if re.fullmatch(r"[0-9]{1,11}", v) else None  # ASCII digits only
 
 
 def game_route(query):
@@ -1290,10 +1301,11 @@ def build_forecast(om, aq, nws, start=None):
               "precip": h["precipitation_probability"][i] or 0, "amount_in": h["precipitation"][i] or 0,
               "code": h["weather_code"][i], "is_day": bool(h["is_day"][i])}
              for i in range(i0, min(i0 + 48, len(h["time"])))]
+    d0 = next((i for i, t in enumerate(d["time"]) if t >= start[:10]), 0)  # today
     days = [{"date": d["time"][i], "hi": round(d["temperature_2m_max"][i]), "lo": round(d["temperature_2m_min"][i]),
              "code": d["weather_code"][i], "precip": d["precipitation_probability_max"][i] or 0,
              "amount_in": d["precipitation_sum"][i] or 0}
-            for i in range(1, min(8, len(d["time"])))]
+            for i in range(d0 + 1, min(d0 + 8, len(d["time"])))]
     aqi = ((aq or {}).get("current") or {}).get("us_aqi")
     periods = [{"name": p["name"], "start": p["startTime"], "is_day": p["isDaytime"],
                 "short": p["shortForecast"], "text": p["detailedForecast"]}
@@ -1327,7 +1339,8 @@ def forecast_json():
             "hourly": "temperature_2m,precipitation_probability,precipitation,weather_code,is_day,pressure_msl",
             "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum",
             "temperature_unit": "fahrenheit", "wind_speed_unit": "mph", "precipitation_unit": "inch",
-            "timezone": "auto", "forecast_days": 8}))
+            # yesterday too, so the 3-hour pressure trend works just after midnight
+            "timezone": "auto", "forecast_days": 8, "past_days": 1}))
         try:
             aq = get_json("https://air-quality-api.open-meteo.com/v1/air-quality?" + qs({
                 "latitude": CONFIG["lat"], "longitude": CONFIG["lon"], "current": "us_aqi"}))
