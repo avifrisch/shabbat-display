@@ -319,7 +319,8 @@ def fetch_alerts():
     for f in j.get("features", []):
         p = f["properties"]
         out.append({"event": p.get("event"), "headline": p.get("headline"),
-                    "severity": p.get("severity"), "ends": p.get("ends") or p.get("expires")})
+                    "severity": p.get("severity"), "ends": p.get("ends") or p.get("expires"),
+                    "description": p.get("description") or "", "instruction": p.get("instruction") or ""})
     return out
 
 
@@ -1017,9 +1018,23 @@ def cached(key, ttl, fn):
     return value
 
 
+class CookieSafeRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib copies every header to a redirect target; the NYT cookie must only go to
+    nytimes.com over https."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and not (is_nyt(newurl) and newurl.lower().startswith("https://")):
+            new.remove_header("Cookie")
+        return new
+
+
+_opener = urllib.request.build_opener(CookieSafeRedirect)
+
+
 def http_get_with(url, headers, timeout=15, limit=3_000_000):
     req = urllib.request.Request(url, headers={"User-Agent": UA, **headers})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with _opener.open(req, timeout=timeout) as r:
         raw = r.read(limit)
         charset = r.headers.get_content_charset() or "utf-8"
     return raw.decode(charset, "replace")
@@ -1123,7 +1138,11 @@ def article_json(url):
             log(f"article: {urllib.parse.urlparse(url).hostname} failed")
             paras = []
         if not paras:
-            return {**base, "ok": False, "summary": item.get("summary") or "", "message": ARTICLE_FAILED}
+            out = {**base, "ok": False, "summary": item.get("summary") or "", "message": ARTICLE_FAILED}
+            if is_nyt(url):
+                out["hint"] = ("The Times sometimes turns away requests that don't come from a browser. "
+                               "If you added \"nyt_cookie\" to settings.json, it may have expired (see README).")
+            return out
         return {**base, "ok": True, "paragraphs": paras, "truncated": is_nyt(url) and len(paras) < 5}
 
     return cached("article:" + url, 600, load)
@@ -1143,10 +1162,14 @@ def _decision(note):
     return (m.group(1), m.group(2)) if m else ("", "")
 
 
+class GameNotFound(Exception):
+    pass
+
+
 def norm_boxscore(feed):
     gd, ld = feed.get("gameData", {}), feed.get("liveData", {})
     if not gd.get("status"):
-        raise LookupError("no such game")
+        raise GameNotFound()
     st, ls = gd.get("status", {}), ld.get("linescore", {})
     detail = st.get("detailedState", "")
     state = "Off" if detail in ("Postponed", "Cancelled", "Suspended") else st.get("abstractGameState")
@@ -1230,7 +1253,7 @@ def game_route(query):
         return 404, json.dumps({"ok": False, "message": "not found"})
     try:
         return 200, json.dumps(game_json(pk))
-    except LookupError:
+    except GameNotFound:
         return 404, json.dumps({"ok": False, "message": "not found"})
     except urllib.error.HTTPError as e:
         return (404 if e.code == 404 else 503), json.dumps({"ok": False})

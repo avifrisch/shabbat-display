@@ -235,6 +235,7 @@ h3{margin:0;font-weight:600}
 .fc-radar-off{position:relative;padding-top:91.67%;font-size:1.15rem;color:var(--faint)}  /* 600x550, as the radar image */
 .fc-radar-off span{position:absolute;inset:0;display:grid;place-items:center}
 .fc-alert{margin:0 3.5rem 1rem 0;padding:.65rem 1rem;border-radius:.6rem;background:rgba(233,161,59,.13);color:#F3C784;font-size:1.15rem;line-height:1.4}
+.fc-alert p{margin:.5rem 0 0;font-size:1.05rem;color:#EBD3A6}
 body.touchable [data-tap],body.touchable [data-scene],body.touchable [data-toggle],body.touchable .panel-x{cursor:pointer}
 body.touchable [data-tap]:active,body.touchable [data-scene]:active,body.touchable [data-toggle]:active{opacity:.6}
 
@@ -832,7 +833,7 @@ const idleMs = () => (Q.get("debug") === "1" && window.IDLE_MS_OVERRIDE) || IDLE
 const interactive = () => !document.body.classList.contains("holy") && Q.get("saver") !== "1";
 // kind -> {load(arg) -> Promise<data>, render(data, arg) -> html, refreshMs?, shouldRefresh?(data)}
 const PANELS = {};
-let panelOpen = null, panelTimer = null, panelSeq = 0, lastInput = 0, down = null;
+let panelOpen = null, panelTimer = null, panelSeq = 0, lastInput = 0, down = null, lastXY = null;
 
 function touched(mouse) {
   if (!interactive()) return false;
@@ -907,7 +908,14 @@ document.addEventListener("pointerdown", (e) => {
           stage: !!e.target.closest(".scene-wrap, .stage-head"), top: $("pbody").scrollTop};
 });
 document.addEventListener("pointermove", (e) => {
-  if (!down) { if (e.pointerType === "mouse") touched(true); return; }
+  if (!down) {
+    // only a real move counts: a pointermove with the mouse sitting still must not pause the display
+    if (e.pointerType !== "mouse") return;
+    const moved = lastXY && Math.hypot(e.screenX - lastXY[0], e.screenY - lastXY[1]) >= 4;
+    if (!lastXY || moved) lastXY = [e.screenX, e.screenY];
+    if (moved) touched(true);
+    return;
+  }
   // a touch scrolls the panel natively; a mouse drag scrolls it here
   if (down.mouse && panelOpen && (e.buttons & 1) && down.target.closest("#panel")) {
     $("pbody").scrollTop = down.top - (e.clientY - down.y);
@@ -947,7 +955,7 @@ PANELS.article = {
     const head = `<div class="read-src">${esc(j.source || "")}${when ? " · " + esc(rel(when)) : ""}</div><h2 class="read-h">${esc(title)}</h2>`;
     if (!j.ok) {
       const sum = j.summary || it.summary;
-      return `<div class="read">${head}${sum ? `<p>${esc(sum)}</p>` : ""}<p class="read-note">The full article couldn't be loaded.</p></div>`;
+      return `<div class="read">${head}${sum ? `<p>${esc(sum)}</p>` : ""}<p class="read-note">The full article couldn't be loaded.${j.hint ? " " + esc(j.hint) : ""}</p></div>`;
     }
     const note = j.truncated ? `<p class="read-note">The rest of this article is for subscribers. To read it in full, refresh "nyt_cookie" in settings.json (see README).</p>` : "";
     return `<div class="read">${head}${j.paragraphs.map((p) => `<p>${esc(p)}</p>`).join("")}${note}</div>`;
@@ -1062,7 +1070,8 @@ PANELS.forecast = {
     const facts = [fact("Feels like", n.feels + "°"), fact("Humidity", n.humidity + "%"), fact("Dew point", n.dew + "°"),
       fact("Air quality", n.aqi == null ? "" : `${n.aqi} ${esc(n.aqi_word)}`), fact("Wind", `${esc(n.wind_dir)} ${n.wind_mph} mph`),
       fact("Gusts", n.gust_mph + " mph"), fact("UV index", n.uv), fact("Pressure", `${n.pressure_inhg.toFixed(2)}″ ${arrow}`)].join("");
-    const alerts = (f.alerts || []).map((a) => `<div class="fc-alert">${esc(a.headline || a.event)}</div>`).join("");
+    const paras = (s) => String(s || "").split(/\n\s*\n/).map((p) => p.replace(/\s*\n\s*/g, " ").trim()).filter(Boolean).map((p) => `<p>${esc(p)}</p>`).join("");
+    const alerts = (f.alerts || []).map((a) => `<div class="fc-alert"><b>${esc(a.headline || a.event)}</b>${paras(a.description)}${paras(a.instruction)}</div>`).join("");
     const days = f.days || [];
     const lo = Math.min(...days.map((d) => d.lo)), hi = Math.max(...days.map((d) => d.hi)), span = Math.max(hi - lo, 1);
     const daysHtml = days.map((d) => {

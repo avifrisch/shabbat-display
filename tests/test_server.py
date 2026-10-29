@@ -79,6 +79,22 @@ class ArticleTests(Isolated):
             j = server.article_json(NYT_LINK)
         self.assertNotIn("secret123", json.dumps(j))
 
+    def test_cookie_dropped_on_redirect_off_nytimes(self):
+        handler = server.CookieSafeRedirect()
+        req = server.urllib.request.Request(NYT_LINK, headers={"Cookie": "NYT-S=secret123"})
+        away = handler.redirect_request(req, None, 302, "Found", {}, "https://evil.example/b")
+        self.assertNotIn("Cookie", away.headers)
+        plain = handler.redirect_request(req, None, 302, "Found", {}, "http://www.nytimes.com/b")
+        self.assertNotIn("Cookie", plain.headers)
+        home = handler.redirect_request(req, None, 302, "Found", {}, "https://www.nytimes.com/b")
+        self.assertEqual(home.headers.get("Cookie"), "NYT-S=secret123")
+
+    def test_nyt_failure_hints_at_cookie(self):
+        with mock.patch.object(server, "http_get_with", side_effect=OSError("HTTP Error 403")):
+            j = server.article_json(NYT_LINK)
+        self.assertFalse(j["ok"])
+        self.assertIn("nyt_cookie", j["hint"])
+
     def test_route_404_for_unknown_url(self):
         code, body = server.article_route("url=https%3A%2F%2Fevil.example%2Fx")
         self.assertEqual(code, 404)
@@ -112,6 +128,13 @@ class GameTests(Isolated):
         self.assertIsNone(server.game_id_from_query("id=12ab"))
         self.assertIsNone(server.game_id_from_query(""))
         self.assertEqual(server.game_id_from_query("id=778899"), 778899)
+
+    def test_parse_error_is_not_reported_as_missing_game(self):
+        # a change in MLB's format must show up as an error, not as "no such game"
+        with mock.patch.object(server, "get_json", return_value={"gamePk": 5}), \
+                mock.patch.object(server, "norm_boxscore", side_effect=KeyError("seasonStats")):
+            code, _ = server.game_route("id=5")
+        self.assertEqual(code, 503)
 
     def test_unknown_game_is_404(self):
         # statsapi answers 200 with no gameData for an id that doesn't exist
@@ -159,6 +182,16 @@ class ForecastTests(Isolated):
         f = build(aq=False, nws=False)
         self.assertIsNone(f["now"]["aqi"])
         self.assertEqual(f["periods"], [])
+
+    def test_alerts_keep_full_text(self):
+        feature = {"properties": {"event": "Flood Watch", "headline": "Flood Watch until Sunday",
+                                  "severity": "Moderate", "ends": None, "expires": "2026-11-01T06:00:00-04:00",
+                                  "description": "* WHAT...Flooding caused by excessive rainfall.",
+                                  "instruction": "Monitor later forecasts."}}
+        with mock.patch.object(server, "get_json", return_value={"features": [feature]}):
+            a = server.fetch_alerts()[0]
+        self.assertEqual(a["description"], "* WHAT...Flooding caused by excessive rainfall.")
+        self.assertEqual(a["instruction"], "Monitor later forecasts.")
 
     def test_candles_marked_inside_48_hours(self):
         server.store.data["calendar"] = {"items": [
