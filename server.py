@@ -62,7 +62,7 @@ CONFIG = {
     "dim_start": "23:00",        # screen dims between these times
     "dim_end": "06:30",
     "dim_level": 0.55,           # 0 = no dimming, 0.8 = very dark
-    "rotation_seconds": {"agenda": 25, "yankees": 30, "mlb": 30, "news": 30, "israel": 25},
+    "rotation_seconds": {"agenda": 25, "shul": 30, "yankees": 30, "mlb": 30, "news": 30, "israel": 25},
 
     # Weekday agenda: the private ICS link of each calendar to show (the LPM
     # calendar feed, or any other ICS link). Hidden on Shabbat and Yom Tov.

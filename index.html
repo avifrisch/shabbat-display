@@ -248,6 +248,22 @@ body{position:fixed;inset:0}
 .fc-radar-off span{position:absolute;inset:0;display:grid;place-items:center}
 .fc-alert{margin:0 3.5rem 1rem 0;padding:.65rem 1rem;border-radius:.6rem;background:rgba(233,161,59,.13);color:#F3C784;font-size:1.15rem;line-height:1.4}
 .fc-alert p{margin:.5rem 0 0;font-size:1.05rem;color:#EBD3A6}
+/* shul tab: the weekly chart on weekdays, the bulletin's Shabbat times on Shabbat */
+.shul-chart{flex:1;min-height:0;display:flex;justify-content:center;align-items:flex-start}
+.shul-chart img{max-width:100%;max-height:100%;object-fit:contain;border-radius:.5rem;filter:invert(.88) hue-rotate(180deg)}
+.shul-foot{flex:none;display:flex;align-items:center;gap:1rem;font-size:1.1rem;color:var(--muted)}
+.shul-btn{padding:.45rem 1.1rem;border:1px solid var(--line);border-radius:2rem;color:var(--text);white-space:nowrap}
+.shul-stale{color:var(--warn);margin-left:auto;text-align:right}
+.st-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:2.6rem;min-height:0;align-content:start}
+.st-row{display:grid;grid-template-columns:minmax(0,1fr) auto 6.2rem;column-gap:1rem;align-items:baseline;padding:.36rem 0;border-top:1px solid var(--line)}
+.st-row .l{font-size:1.2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st-row .h{font-family:var(--heb);font-size:1.1rem;color:var(--gold);direction:rtl;white-space:nowrap}
+.st-row .tm{font-size:1.35rem;font-weight:600;text-align:right;white-space:nowrap}
+.st-note{font-size:1.02rem;font-style:italic;color:var(--muted);padding:.2rem 0 .3rem}
+.st-msg{font-size:1.15rem;color:var(--warn);margin-bottom:.4rem}
+.shul-full{display:block;width:100%;height:auto;border-radius:.5rem;filter:invert(.88) hue-rotate(180deg)}
+.shul-pdf{display:block;width:100%;height:100%;border:0;border-radius:.5rem;background:#fff}
+.shul-open{display:inline-block;margin-top:1rem;padding:1rem 2rem;border-radius:2rem;background:var(--gold-soft);color:var(--gold);font-size:1.4rem;text-decoration:none}
 body.touchable [data-tap],body.touchable [data-scene],body.touchable [data-toggle],body.touchable .panel-x{cursor:pointer}
 body.touchable [data-tap]:active,body.touchable [data-scene]:active,body.touchable [data-toggle]:active{opacity:.6}
 
@@ -709,7 +725,54 @@ const SCENES = {
           return ws ? "World Series" : "Around the majors"; }, tab: "MLB", render: sceneMLB},
   news: {title: () => "Headlines", tab: "Headlines", render: sceneNews},
   israel: {title: () => "Israel", tab: "Israel", render: sceneIsrael},
+  shul: {title: () => isHoly() ? "Shabbat times" : "Davening times", tab: "Shul", render: sceneShul},
 };
+const isHoly = () => document.body.classList.contains("holy");
+
+// ------------------------------------------------------------------ shul tab
+const shulSrc = (e) => e.src || "/shul/" + encodeURIComponent(e.file);
+const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+function upcomingShabbat() { const n = NOW(); return new Date(n.getFullYear(), n.getMonth(), n.getDate() + (6 - n.getDay())); }
+function sceneShul() {
+  const s = D("shul") || {};
+  return isHoly() ? shulShabbat(s) : shulWeek(s);
+}
+function shulWeek(s) {
+  const ch = s.chart;
+  if (!ch) return `<div class="empty">The shul's davening chart hasn't been fetched yet.</div>`;
+  const n = NOW(), wk = pd(ch.week_of);
+  const stale = !wk || (new Date(n.getFullYear(), n.getMonth(), n.getDate()) - wk) / 864e5 > 6;
+  const month = (f) => MON.find((m) => f.toLowerCase().startsWith(m.toLowerCase())) || f.replace(/\.\w+$/, "");
+  const cals = (s.calendars || []).slice().sort((a, b) => (month(a.file) === MON[n.getMonth()] ? -1 : 0) - (month(b.file) === MON[n.getMonth()] ? -1 : 0));
+  const btn = (kind, src, title, label) => `<span class="shul-btn" data-tap="${kind}" data-src="${esc(src)}" data-title="${esc(title)}">${esc(label)}</span>`;
+  return `<div class="shul-chart"><img src="${esc(shulSrc(ch))}" alt="Weekly davening schedule" data-tap="shulimg" data-src="${esc(shulSrc(ch))}" data-title="Weekly davening schedule"></div>
+    <div class="shul-foot">${cals.map((c) => btn("shulimg", shulSrc(c), month(c.file) + " calendar", month(c.file) + " calendar")).join("")}
+      ${s.bulletin ? btn("bulletin", shulSrc(s.bulletin), "Shabbat bulletin", "Bulletin") : ""}
+      ${stale ? `<span class="shul-stale">${wk ? `Chart for the week of ${esc(short(wk))}. The new one isn't posted yet.` : "This chart's week isn't known."}</span>` : ""}</div>`;
+}
+function shulShabbat(s) {
+  const b = s.bulletin || {}, t = b.times;
+  const msg = [];
+  if (b.file && b.shabbat !== isoDay(upcomingShabbat())) {
+    const d = pd(b.shabbat);
+    msg.push(`Bulletin from ${d ? esc(short(d)) : "an earlier week"}. This week's isn't posted.`);
+  }
+  if (!t) {
+    const h = holyState();
+    const rows = h ? [h.lastMark && h.lastMark.category === "candles" ? ["Candle lighting", h.lastMark.d] : null, h.nextHav ? ["Havdalah", h.nextHav.d] : null].filter(Boolean) : [];
+    return `<div class="st-msg">Shul times unavailable. See the bulletin.</div>${msg.map((m) => `<div class="st-msg">${m}</div>`).join("")}
+      <div class="st-cols"><div>${rows.map(([l, d]) => `<div class="st-row"><span class="l">${l}</span><span class="h"></span><span class="tm">${hmap(d)}</span></div>`).join("")}</div></div>`;
+  }
+  const items = [];
+  t.rows.forEach((r, i) => {
+    t.notes.filter((nt) => nt.after === i).forEach((nt) => items.push(`<div class="st-note">${esc(nt.text)}</div>`));
+    items.push(`<div class="st-row"><span class="l">${esc(r.label)}</span><span class="h">${esc(r.he)}</span><span class="tm">${esc(r.time)}</span></div>`);
+  });
+  t.notes.filter((nt) => nt.after >= t.rows.length).forEach((nt) => items.push(`<div class="st-note">${esc(nt.text)}</div>`));
+  const half = Math.ceil(items.length / 2);
+  return `${msg.map((m) => `<div class="st-msg">${m}</div>`).join("")}
+    <div class="st-cols"><div>${items.slice(0, half).join("")}</div><div>${items.slice(half).join("")}</div></div>`;
+}
 
 function sceneTeam() {
   const t = D("team") || {}, st = D("standings"), tx = D("transactions");
@@ -776,10 +839,12 @@ const HOLD = Q.get("hold") === "1";
 
 function buildOrder() {
   const has = (k) => { const f = D(k); return !!(f && f.items && f.items.length); };
-  const ok = {agenda: agendaOn(), yankees: true, mlb: true, news: has("nyt") || has("cnn"), israel: has("toi")};
+  const shul = D("shul");
+  const ok = {agenda: agendaOn(), yankees: true, mlb: true, news: has("nyt") || has("cnn"), israel: has("toi"),
+              shul: !!(shul && (isHoly() ? shul.bulletin || D("calendar") : shul.chart))};
   const t = D("team");
-  const seq = t && t.live ? ["yankees", "mlb", "yankees", "agenda", "yankees", "news", "yankees", "israel"]
-                          : ["agenda", "yankees", "mlb", "news", "israel"];
+  const seq = t && t.live ? ["yankees", "mlb", "yankees", "agenda", "yankees", "shul", "yankees", "news", "yankees", "israel"]
+                          : ["agenda", "shul", "yankees", "mlb", "news", "israel"];
   return seq.filter((s) => ok[s] || s === Q.get("scene"));
 }
 function duration(name) {
@@ -958,6 +1023,19 @@ async function panelData(url, demoKey) {
   if (!r.ok && r.status !== 404) throw new Error(r.status);
   return r.json();
 }
+
+// ------------------------------------------------------------------ shul panels
+PANELS.shulimg = {
+  load: async (a) => a,
+  render: (a) => `<h2 class="read-h">${esc(a.title)}</h2><img class="shul-full" src="${esc(a.src)}" alt="${esc(a.title)}">`,
+};
+// iPad Safari shows only the first page of a PDF in a frame, so a touch screen gets a link to its own viewer
+PANELS.bulletin = {
+  load: async (a) => a,
+  render: (a) => document.body.classList.contains("fullpanel")
+    ? `<h2 class="read-h">Shabbat bulletin</h2><a class="shul-open" href="${esc(a.src)}" target="_blank" rel="noopener">Open the bulletin</a>`
+    : `<iframe class="shul-pdf" src="${esc(a.src)}" title="Shabbat bulletin"></iframe>`,
+};
 
 // ------------------------------------------------------------------ reading panel
 PANELS.article = {
@@ -1176,6 +1254,21 @@ function makeDemo() {
   const hourIso = (k) => { const d = new Date(n); d.setMinutes(0,0,0); d.setHours(d.getHours() + k); return d.toISOString(); };
   const isDay = n.getHours() >= 7 && n.getHours() < 18;
   const temps = [52,51,50,49,48,48,47,47];
+  // a made-up weekly chart (the real one is the shul's image) and made-up bulletin times
+  const chartRows = [["Shacharit – New Main","6:13 am"],["Shacharit – Beis Medrash","6:20 am"],["Shacharit – Old Main","7:20 am"],
+    ["Shacharit – New Main","8:00 am"],["Mincha – Old Main","1:45 pm"],["Mincha – New Main","5:45 pm"],["Maariv – Old Main","8:00 pm"],["Maariv – Beis Medrash","10:01 pm"]];
+  const chartSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1150" height="${70 + chartRows.length * 40}" font-family="Georgia" font-size="20">
+    <rect width="100%" height="100%" fill="#fff"/><text x="575" y="40" text-anchor="middle" font-size="28" font-weight="bold">Weekly Davening Schedule (preview)</text>
+    ${chartRows.map(([l, t], i) => `<text x="20" y="${92 + i * 40}">${l}</text>${[0,1,2,3,4,5].map((c) => `<text x="${470 + c * 115}" y="${92 + i * 40}">${t}</text>`).join("")}
+      <line x1="10" x2="1140" y1="${102 + i * 40}" y2="${102 + i * 40}" stroke="#999"/>`).join("")}</svg>`;
+  const st = [["Candle Lighting","5:35 pm","הדלקת נרות"],["Mincha & Kabbalat Shabbat","5:45 pm","מנחה וקבלת שבת"],["Latest Shema","9:59 am","סוף זמן קריאת שמע"],
+    ["Hashkama","7:00 am","השכמה"],["Nusach Sefard","8:30 am","נוסח ספרד"],["Nusach Ashkenaz","9:00 am","נוסח אשכנז"],["Teen Minyan","9:15 am","מנין נוער"],
+    ["Mincha","1:45 pm","מנחה"],["Daf Yomi","4:30 pm","דף יומי"],["Mincha","5:30 pm","מנחה"],["Maariv & Shabbat Ends","6:38 pm","מעריב"]];
+  const shul = {chart: {file: "preview.svg", src: "data:image/svg+xml;charset=utf-8," + encodeURIComponent(chartSvg), week_of: ymd(-n.getDay())},
+    bulletin: {file: "preview.pdf", src: "about:blank", shabbat: ymd(6 - n.getDay()),
+      times: Q.get("notimes") === "1" ? null : {rows: st.map(([label, time, he]) => ({label, time, he})),
+        notes: [{text: "Youth groups at 9:15 am in the youth wing (preview)", after: 7}, {text: "Rabbi's shiur after mincha (preview)", after: 10}]}},
+    calendars: []};
   const updated = Date.now()/1000 - 240;
   const meta = {}; ["weather","nws","standings","transactions","yankees_news","mlb_news","nyt","cnn","toi","team","scoreboard","agenda"].forEach((k) => meta[k] = {updated, ok: true});
   const nd = n.getDay() === 5 ? 2 : 1;
@@ -1236,7 +1329,7 @@ function makeDemo() {
   };
   return {
     config: {location_name: "Teaneck", team_abbr: "NYY", division_name: "AL East", zmanim_labels: "hebrew",
-      dim_start: "23:00", dim_end: "06:30", dim_level: .55, rotation_seconds: {agenda: 25, yankees: 30, mlb: 30, news: 30, israel: 25}},
+      dim_start: "23:00", dim_end: "06:30", dim_level: .55, rotation_seconds: {agenda: 25, shul: 30, yankees: 30, mlb: 30, news: 30, israel: 25}},
     meta, demo_panels,
     data: {
       weather: {current: {temp: isDay ? 58 : 53, feels: isDay ? 57 : 50, code: 2, is_day: isDay, wind_mph: 9, wind_dir: "NW", humidity: 61},
@@ -1247,6 +1340,7 @@ function makeDemo() {
       alerts: [],
       zmanim: {is_tomorrow: tom, times: zt(tom ? 1 : 0), today: zt(0)},
       hebdate: {hebrew: n > sunset ? "י״ח בְּחֶשְׁוָן תשפ״ז" : "י״ז בְּחֶשְׁוָן תשפ״ז"},
+      shul,
       calendar: {items: [
         {category: "candles", title: "Candle lighting", date: at(17,44, fridayOff - 7)},
         {category: "havdalah", title: "Havdalah", date: at(18,42, fridayOff - 6)},
