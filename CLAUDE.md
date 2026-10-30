@@ -15,6 +15,13 @@ Owner preferences:
   - Serves `index.html` at `/`, all data at `/api/state`, and `/health` and `/fonts/*`.
   - On-demand endpoints for the panels, each behind `cached(key, ttl, fn)` (in memory): `/api/article?url=` (only http(s) URLs that are a `link` in one of the `ARTICLE_FEEDS`, else 404; text from `<p>`s via `extract_article()`; on failure the feed summary, retried after 60 s; Google News backup links aren't fetched; "cut off" only for NYT pages marked `isAccessibleForFree:false`), `/api/game?id=` (ASCII digits only; statsapi v1.1 live feed → `norm_boxscore()`; 25 s cache while live or not started, 10 min otherwise). `cached()` takes a ttl or a function of the value, and drops expired entries on each store, `/api/forecast` (Open-Meteo + air quality + all NWS periods + calendar candle/havdalah marks → `build_forecast()`), `/api/radar` (NWS KOKX loop GIF, 5 min).
   - `nyt_cookie` (secret, like `agenda_ics`): sent only to nytimes.com hosts by `article_headers()`. nytimes.com and timesofisrael.com answer 403 to non-browser article requests at times; that is bot protection and is not worked around.
+  - Shul (Bnai Yeshurun) source, `shul` in `SOURCES` (design: `docs/superpowers/specs/2026-10-30-shul-tab-design.md`):
+    - `fetch_shul()` runs hourly but fetches only when `shul_due()`: nothing stored, a stored file missing, or Friday 12:00 until candle lighting (`todays_candles()`, else 18:00) while the bulletin isn't this Shabbat's.
+    - It reads `/minyan`, `/bulletin` and `/monthlycalendar`, and `shul_links()` picks the chart PNG, the newest bulletin PDF and the calendar JPGs (only `images.shulcloud.com`).
+    - It downloads only URLs that changed into `shul/` (gitignored, served at `/shul/<name>`, names `[A-Za-z0-9._-]` only), and deletes files the new value no longer uses. Dates come from file names (`file_date()`).
+    - `pdf_pages()` is a small stdlib PDF text reader (Flate, Tj/TJ, ToUnicode). `shabbat_times()` reads the bulletin's "Shabbat Times" box into rows `{label, time, he}` and notes `{text, after}`, using column positions measured on the real Word-made bulletin. It returns None rather than a partial table.
+    - Every request uses `SHUL_UA = "ShabbatDisplay/1.0 (personal home display)"`. The site 406s generic tools (curl, Python) but answers this. Never switch to a browser User-Agent to get past a refusal; a refusal just keeps the last files.
+    - `/api/shul-update` (127.0.0.1 only) runs a forced fetch. `python server.py --update-shul` (`update-shul.bat`/`.sh`) calls it, or fetches in-process if the server isn't running.
   - `python server.py --check` fetches every source once and prints OK/FAIL.
   - Defaults live in the `CONFIG` dict at the top of the file (location, candle-lighting minutes, havdalah method, team, dimming, rotation, bind address). `settings.json` (gitignored, created by setup from `settings.example.json`) overrides them at startup in `load_settings()`; dict values such as `rotation_seconds` merge.
   - `python server.py --setting KEY` prints one resolved setting (used by `setup-pi.sh` for `tzid`).
@@ -23,7 +30,7 @@ Owner preferences:
   - Designed on a 120×67.5 rem canvas (16:9), scaled by setting the root font-size from the viewport. On screens taller than 16:9 (the iPad, 16:10 laptops) the canvas takes the full height (`height:100%`): the scene area grows and `.side` spreads out (`max-aspect-ratio:17/10`). A 16:9 screen is unchanged.
   - On a touch screen (`pointer: coarse`, or `?fullpanel=1`) `body.fullpanel` makes panels cover the whole screen at `zoom:1.3`.
   - Fixed regions: a left column (clock, dates, weather, hourly, 5-day) and a bottom band (Shabbat/Yom Tov box and the zmanim "sky bar").
-  - The stage rotates between scenes `agenda`, `yankees`, `mlb`, `news` and `israel`. During a live Yankees game the Yankees scene repeats every other turn and a live score chip appears on the other scenes.
+  - The stage rotates between scenes `agenda`, `shul`, `yankees`, `mlb`, `news` and `israel`. `shul` shows the weekly chart image on weekdays, with Calendar/Bulletin buttons (`PANELS.shulimg`, and `PANELS.bulletin`, which uses an iframe on the PC and a link to Safari's viewer under `body.fullpanel`). In `body.holy` it shows the bulletin's Shabbat Times, or Hebcal candles/havdalah with "Shul times unavailable" when they couldn't be read. Images are inverted to suit the dark theme. Stale notes cover a chart older than 6 days and a bulletin that isn't this Shabbat's. During a live Yankees game the Yankees scene repeats every other turn and a live score chip appears on the other scenes.
   - `agenda` (today plus the next non-Shabbat day) and the "Next" line under the clock show only when `agenda_ics` is set and not in `body.holy` (`agendaOn()`). If Shabbat starts while the agenda is up, `renderAll()` advances off it immediately.
   - Shabbat/Yom Tov mode (`body.holy`) runs from the last candle-lighting item until havdalah, based on Hebcal calendar items.
   - Overnight dimming uses a black overlay. A small pixel shift every 10 minutes guards against burn-in. The page reloads every 6 hours if `/health` answers. It requests a Screen Wake Lock.
@@ -61,6 +68,7 @@ Owner preferences:
 | nyt | NYT HomePage RSS | |
 | cnn | lite.cnn.com HTML | CNN's RSS feeds stopped updating in 2023. The backup is a Google News RSS search of `site:cnn.com`. |
 | agenda | `agenda_ics` URLs in settings.json: the LPM calendar feed (Avi's practice management app; the feed is specified in `../lpm-calendar-feed.md`, outside the repo) or any ICS link | `CATEGORIES` becomes `kind`; `deadline` and `court_date` get labels, and deadlines are counted in the "Next" line. Own ICS parser: RRULE (daily/weekly/monthly/yearly, BYDAY ordinals, BYSETPOS, COUNT, UNTIL), EXDATE, RECURRENCE-ID overrides, CANCELLED. Time zones come from the file's VTIMEZONE because Windows Python has no tzdata; zoneinfo is the fallback (Pi), then local time. Window is today plus 4 days. URLs are secret: never logged, never sent to the page. |
+| shul | bnaiyeshurun.org (ShulCloud): `/minyan`, `/bulletin`, `/monthlycalendar`; files on images.shulcloud.com | Fridays from noon until this Shabbat's bulletin is in, plus `--update-shul`. The chart is an image only. Bulletin file names carry the Shabbat date (`24Oct-LechLecha.pdf`). The chart's carries the Sunday it starts (`Oct25-weeklydavening.png`). The Shabbat Times box is on page 2. Hebrew gershayim (ק"ש) aren't in the PDF's ToUnicode map, so they read as קש. |
 | toi | Times of Israel RSS | Cloudflare returned 403 to our cloud test machine. It may work from home. The backup is a Google News search of `site:timesofisrael.com`. |
 
 `parse_feed()` handles both RSS and Atom, with a regex fallback for malformed XML.
@@ -68,7 +76,8 @@ Owner preferences:
 ## Testing
 
 - `python server.py --check`: tests every source.
-- `python -m unittest discover -s tests`: stdlib unit tests for the on-demand endpoints (`tests/test_server.py`, fixtures in `tests/fixtures/`; the article fixtures are made-up pages with real page structure, not saved copies). On Avi's PC `python` in PowerShell is the Store stub; use `C:\msys64\mingw64\bin\python.exe`.
+- `python -m unittest discover -s tests`: stdlib unit tests for the on-demand endpoints (`tests/test_server.py`) and the shul source (`tests/test_shul.py`). Fixtures are in `tests/fixtures/`. The article and shul pages there are made up, with real page structure, not saved copies. Synthetic bulletin PDFs come from `tests/pdfmaker.py`, laid out like the real Shabbat Times box.
+- `python server.py --update-shul`: fetches the shul's files now and prints what it got, including the number of Shabbat Times rows. Compare a new bulletin's rows to its page 2 if the layout ever changes. On Avi's PC `python` in PowerShell is the Store stub; use `C:\msys64\mingw64\bin\python.exe`.
 - URL parameters:
   - `?at=2026-10-30T15:10`: fakes the clock. Note this affects only the client side, since the server still fetches for the real "now".
   - `?scene=mlb&hold=1`: pins one scene and stops the rotation.
@@ -84,14 +93,11 @@ Owner preferences:
 
 ## Open items / ideas discussed
 
-1. **Minyan times for Bnai Yeshurun (bnaiyeshurun.org, ShulCloud).**
-   - The weekly schedule is published only as a PNG image on `/minyan`.
-   - The site refuses automated requests (406, and robots disallow on images.shulcloud.com). Do not build a scraper that works around that.
-   - Options Avi was offered:
-     - (a) A `minyanim/` drop-in folder: the newest image becomes a fifth scene.
-     - (b) A hand-edited `minyanim.json` of times, shown in the bottom band with the next minyan highlighted.
-     - (c) Ask the shul whether ShulCloud can publish the schedule as text or an ICS feed.
-   - Awaiting his choice.
+1. **Minyan times for Bnai Yeshurun: built (Oct 2026) as the `shul` scene.**
+   - Avi wants the shul's exact times, not computed ones (the schedule moves with sunrise, seasons and holidays).
+   - The 406 turned out to be a filter on generic tools' User-Agents, not on programs. A request that honestly names itself is answered. images.shulcloud.com's robots.txt (`Disallow: /`) is ShulCloud's default for all its shuls, aimed at search engines.
+   - A few honest requests on Fridays plus manual runs was judged acceptable. Disguising the request was not, and still isn't.
+   - A courtesy note to the shul office is still a good idea.
 2. **Echo Show 15.** Can't host this. There is no sideloading, Silk times out to the home screen, and the device reacts to motion and voice. Not pursuing.
 3. **Hardware:** Raspberry Pi 4 or 5 on a wall monitor is now supported via `setup-pi.sh`. An e-ink panel is still only an idea.
 4. **Possibly to verify:** two-day Yom Tov and Shabbat running into Yom Tov in `holyState()`, which has only been exercised with demo data for a regular Shabbat.

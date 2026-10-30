@@ -8,6 +8,7 @@ A full-screen dashboard for a spare Windows PC or laptop, or a Raspberry Pi on a
 - **Bottom left:** this week's Shabbat or Yom Tov, with candle lighting, havdalah, and a countdown on Friday afternoon. From candle lighting to havdalah the screen switches to a warm Shabbat theme.
 - **Rotating panel:** screens that alternate:
   - **Agenda** (weekdays, once you add your calendar): today's events and the next day's, with deadlines and court dates labeled. A "Next" line under the clock shows the next event and how many deadlines are due today. Both disappear from candle lighting until havdalah.
+  - **Shul** (Congregation Bnai Yeshurun): on weekdays, the shul's weekly davening chart, with buttons for the monthly calendar and the bulletin. On Shabbat and Yom Tov, the Shabbat Times from the weekly bulletin: candle lighting, every minyan and shiur, Mincha, Shabbat ends and next week's candle lighting. See [The Shul screen](#the-shul-screen).
   - **Yankees:** live or last game, AL East standings, roster moves, Yankees news.
   - **MLB:** today's scores, league transactions, MLB.com news.
   - **Headlines:** The New York Times and CNN.
@@ -37,6 +38,16 @@ On the iPad, tap. On the PC, click with the mouse (the pointer appears when you 
 
 It lasts for months. When it runs out, an NYT article shows only its first paragraphs, with a note saying so; repeat the steps. The cookie is a password to your NYT account: it stays in `settings.json`, is sent only to nytimes.com, and is never logged or shown on the page.
 
+## The Shul screen
+
+The shul posts its weekly davening chart, its Shabbat bulletin and a monthly calendar on bnaiyeshurun.org. The display fetches them itself every Friday from noon, once an hour until it has this week's bulletin, and stops at candle lighting. To fetch them now (say the shul posted something late), double-click `update-shul.bat` (`./update-shul.sh` on a Pi) on the display machine. It lists what it got.
+
+- **Weekdays:** the chart fills the screen. Tap it to see it bigger, or tap **October calendar**, **November calendar** or **Bulletin**. On the PC the bulletin opens in the panel; on the iPad it opens in Safari's own viewer, so every page shows.
+- **Shabbat:** the Shabbat Times box, read from the bulletin and laid out like the rest of the display.
+- **Old information is marked:** if the chart is from an earlier week, or this week's bulletin isn't posted yet, the screen says so. If the bulletin's times can't be read, it shows candle lighting and havdalah from Hebcal and says to see the bulletin. It never guesses at times.
+
+Every request names itself (`ShabbatDisplay/1.0 (personal home display)`) and only files that changed are downloaded. If the site ever refuses those requests, the display keeps the last files it has.
+
 ## Data sources (all free, no accounts)
 
 | What | Where it comes from | Refresh |
@@ -50,6 +61,7 @@ It lasts for months. When it runs out, an NYT article shows only its first parag
 | CNN | lite.cnn.com, with a Google News backup (CNN no longer updates its RSS feeds) | 10 min |
 | Times of Israel | Times of Israel RSS, with a Google News backup | 10 min |
 | Agenda | The LPM calendar feed, or any calendar's private ICS link | 10 min |
+| Shul davening chart, bulletin, monthly calendar | bnaiyeshurun.org | Fridays from noon until this week's bulletin is in, or `update-shul` |
 | Article text, box scores, detailed forecast, radar | The news sites, MLB Stats API, Open-Meteo (forecast and air quality), National Weather Service (forecast and Upton, NY radar) | Only when a panel is open |
 
 If a source fails, the screen keeps showing the last good data, notes how old it is, and the server keeps retrying. Everything is also saved to `cache.json`, so a restart comes back with data right away.
@@ -172,10 +184,10 @@ Open `index.html` directly (without the server) to see the layout with preview d
 With the server running, you can add these to the address:
 
 - `?at=2026-10-30T15:10`: pretend it's a given time. Use this to see the Friday countdown or Shabbat mode before Shabbat.
-- `?scene=yankees&hold=1`: show one screen without rotating. The others are `agenda`, `mlb`, `news` and `israel`.
+- `?scene=yankees&hold=1`: show one screen without rotating. The others are `agenda`, `shul`, `mlb`, `news` and `israel`.
 - `?debug=1`: lets you shorten the 2-minute return for testing, by typing `IDLE_MS_OVERRIDE = 5000` in the browser console.
 
-The server's on-demand code has automated tests (standard library only): `python -m unittest discover -s tests`.
+The server's on-demand and shul code has automated tests (standard library only): `python -m unittest discover -s tests`.
 
 ## Files
 
@@ -185,10 +197,11 @@ The server's on-demand code has automated tests (standard library only): `python
 | `start-display.*`, `stop-display.*` | Start or stop the display (`.bat` on Windows, `.sh` on the Pi). |
 | `start-screensaver.bat` | Turns on screen saver mode (Windows). `stop-display.bat` turns it off. |
 | `check-feeds.*` | Tests every data source once. |
+| `update-shul.*` | Fetches the shul's chart, bulletin and calendar now. |
 | `settings.example.json` | Template for `settings.json`, your settings. |
 | `server.py` | Data server. Uses only the Python standard library; nothing to install. |
 | `index.html` | The dashboard page. |
 | `launcher.pyw` | Keeps the server and the full-screen browser running, on Windows and Linux. |
 | `setup-windows.ps1` | The Windows setup steps; `setup-windows.bat` runs it. |
 | `fonts/` | Archivo, Newsreader and Frank Ruhl Libre, bundled so the page looks right offline. All are under the SIL Open Font License. |
-| `settings.json`, `cache.json`, `*.log`, `browser-profile*/` | Created when it runs. All but `settings.json` are safe to delete. |
+| `settings.json`, `cache.json`, `*.log`, `browser-profile*/`, `shul/` | Created when it runs. All but `settings.json` are safe to delete. |
