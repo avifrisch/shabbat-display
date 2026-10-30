@@ -10,3 +10,4 @@ browser-profile-saver-*/
 __pycache__/
 .superpowers/
 .playwright-mcp/
+dist/

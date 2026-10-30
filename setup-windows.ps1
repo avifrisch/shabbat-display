@@ -2,8 +2,10 @@
 # Double-click setup-windows.bat to run this. It is safe to run again at any time.
 #
 #   1. Finds Python 3, or installs it with winget.
-#   2. Creates settings.json from settings.example.json.
-#   3. Tests every data source.
+#   2. Looks for the house's always-on display PC (Tailscale, then the home network).
+#      If it's there, this PC just shows its display; otherwise it runs its own copy.
+#   3. Creates settings.json from settings.example.json, and tests every data source
+#      when this PC fetches its own data.
 #   4. Sets the screen and computer to never sleep while plugged in, and lid close to do nothing.
 #   5. Makes the display start when you sign in.
 #   6. Starts it.
@@ -44,11 +46,51 @@ function Find-Python {
 
 Write-Host 'Shabbat Display setup' -ForegroundColor Yellow
 Write-Host "Folder: $Here"
+# Files from a downloaded zip carry Windows' "came from the internet" mark, which makes
+# PowerShell and Python shortcuts ask before running. These are ours, so clear it.
+Get-ChildItem $Here -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
 if ($Here -like "$env:TEMP*" -or $Here -like '*\Downloads\*') {
+    $target = 'C:\ShabbatDisplay'
     Write-Host ''
-    Write-Host 'Tip: this folder looks temporary. Move it somewhere permanent, such as C:\ShabbatDisplay,' -ForegroundColor Yellow
-    Write-Host 'and run setup again from there, so the startup shortcut keeps working.' -ForegroundColor Yellow
-    if (-not (Ask 'Continue from here anyway?')) { exit 1 }
+    Write-Host 'This folder looks temporary (Downloads or a temp folder).' -ForegroundColor Yellow
+    if ((Test-Path $target) -and (Get-ChildItem $target -Force -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+        Write-Host "$target already has files in it. To update that copy, run setup-windows.bat from there."
+        if (-not (Ask 'Continue from here anyway?')) { exit 1 }
+    } elseif (Ask "Move the Shabbat Display to $target and continue setup there?") {
+        New-Item -ItemType Directory -Force $target | Out-Null
+        Copy-Item (Join-Path $Here '*') $target -Recurse -Force
+        Write-Host "Copied to $target. Setup continues there."
+        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $target 'setup-windows.ps1')
+        exit $LASTEXITCODE
+    } elseif (-not (Ask 'Continue from here anyway? (the startup shortcut breaks if this folder is deleted)')) { exit 1 }
+}
+
+# The always-on display PC in this house. A second PC (or a screen saver) shows that
+# PC's display instead of fetching everything itself. Tried in this order: its
+# Tailscale address (works anywhere), its name on the home network, its home address.
+$ServerName = 'DESKTOP-H72VKDJ'
+$ServerAddresses = @(@{ Host = '100.98.145.119'; Via = 'Tailscale' },
+                     @{ Host = $ServerName; Via = 'the home network' },
+                     @{ Host = '192.168.4.109'; Via = 'the home network' })
+$Port = 8765
+
+function Test-Display($hostName) {
+    try {
+        $r = Invoke-WebRequest "http://${hostName}:$Port/health" -UseBasicParsing -TimeoutSec 4
+        return ($r.StatusCode -eq 200 -and "$($r.Content)".Trim() -eq 'ok')
+    } catch { return $false }
+}
+
+function Get-Tailscale {
+    # 'missing', 'stopped' (installed, not connected) or 'running'
+    $exe = (Get-Command tailscale.exe -ErrorAction SilentlyContinue).Source
+    if (-not $exe -and (Test-Path "$env:ProgramFiles\Tailscale\tailscale.exe")) { $exe = "$env:ProgramFiles\Tailscale\tailscale.exe" }
+    if (-not $exe) { return 'missing' }
+    try {
+        $state = (& $exe status --json 2>$null | Out-String | ConvertFrom-Json).BackendState
+        if ($state -eq 'Running') { return 'running' }
+    } catch {}
+    return 'stopped'
 }
 
 # ------------------------------------------------------------------ Mode
@@ -58,6 +100,51 @@ Write-Host ' 2. Screen saver: a PC you work at. The display appears after some m
 Write-Host '    mouse or keyboard input, and any input closes it and locks the PC.'
 $saver = (Read-Host 'Enter 1 or 2 [1]') -eq '2'
 $launchArgs = if ($saver) { "`"$Here\launcher.pyw`" --screensaver" } else { "`"$Here\launcher.pyw`"" }
+
+# ------------------------------------------------------------------ Display server
+Step 'Where the display comes from'
+$serverUrl = ''
+$isServer = ($env:COMPUTERNAME -eq $ServerName)
+try { $isServer = $isServer -or ((Invoke-WebRequest "http://localhost:$Port/health" -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200) } catch {}
+if ($isServer) {
+    Write-Host 'This PC runs the display server, so it fetches its own data.'
+} else {
+    $found = $null
+    $ts = Get-Tailscale
+    foreach ($a in $ServerAddresses) {
+        if ($a.Via -eq 'Tailscale' -and $ts -ne 'running') { continue }
+        Write-Host "Looking for the always-on display PC at $($a.Host) ($($a.Via))..."
+        if (Test-Display $a.Host) { $found = $a; break }
+    }
+    if ($found) {
+        Write-Host "Found it at $($found.Host), through $($found.Via)." -ForegroundColor Green
+        Write-Host " 1. Show that PC's display here (recommended). Nothing else to set up."
+        Write-Host ' 2. Run a separate copy on this PC that fetches its own data.'
+        if ((Read-Host 'Enter 1 or 2 [1]') -ne '2') { $serverUrl = "http://$($found.Host):$Port" }
+    } else {
+        Write-Host "The always-on display PC ($ServerName) didn't answer." -ForegroundColor Yellow
+        switch ($ts) {
+            'missing' { Write-Host ' - Tailscale is not installed on this PC, so it can only be reached on the home Wi-Fi.' }
+            'stopped' { Write-Host ' - Tailscale is installed but not connected. Open Tailscale and sign in, then run setup again.' }
+            'running' { Write-Host " - Tailscale is connected, but $($ServerAddresses[0].Host) didn't answer. Is the display PC on?" }
+        }
+        Write-Host ' - On the home network it did not answer either. Check that this PC is on the home Wi-Fi'
+        Write-Host '   (not a guest network) and that the display PC is on and showing the display.'
+        Write-Host ' 1. Type its address yourself'
+        Write-Host ' 2. Run a separate copy on this PC that fetches its own data'
+        Write-Host ' 3. Stop here and try again later'
+        switch (Read-Host 'Enter 1, 2 or 3 [3]') {
+            '1' {
+                $h = (Read-Host 'Address (for example 192.168.4.109)').Trim() -replace '^https?://', '' -replace '[:/].*$', ''
+                if ($h -and (Test-Display $h)) { $serverUrl = "http://${h}:$Port"; Write-Host "Found it at $h." -ForegroundColor Green }
+                elseif ($h -and (Ask "$h didn't answer. Use it anyway?")) { $serverUrl = "http://${h}:$Port" }
+                elseif (-not $h) { exit 1 }
+            }
+            '2' { }
+            default { exit 1 }
+        }
+    }
+}
 
 # ------------------------------------------------------------------ Python
 Step 'Python'
@@ -95,13 +182,31 @@ else { Write-Host 'No Chrome or Edge found. Install Google Chrome, then run setu
 # ------------------------------------------------------------------ Settings
 Step 'Settings'
 if (Test-Path 'settings.json') {
-    Write-Host 'settings.json already exists; leaving it as is.'
+    Write-Host 'settings.json already exists; keeping your settings.'
 } else {
     Copy-Item 'settings.example.json' 'settings.json'
     Write-Host 'Created settings.json (Teaneck, NJ). Edit it in Notepad to change location, dimming and so on.'
 }
+# Record where the display comes from (or that this PC has its own server).
+try {
+    $cfg = Get-Content 'settings.json' -Raw -Encoding UTF8 | ConvertFrom-Json
+    $had = if ($cfg.PSObject.Properties['server_url']) { "$($cfg.server_url)" } else { '' }
+    if ($serverUrl -ne $had) {  # rewrite settings.json only when this changes
+        if ($serverUrl) { $cfg | Add-Member -NotePropertyName server_url -NotePropertyValue $serverUrl -Force }
+        else { $cfg.PSObject.Properties.Remove('server_url') }
+        $json = $cfg | ConvertTo-Json -Depth 5
+        [IO.File]::WriteAllText((Join-Path $Here 'settings.json'), $json, (New-Object Text.UTF8Encoding $false))
+    }
+    if ($serverUrl) { Write-Host "This PC will show the display from $serverUrl." }
+} catch {
+    Write-Host "Couldn't update settings.json ($_). Add `"server_url`": `"$serverUrl`" to it in Notepad." -ForegroundColor Red
+}
 
 # ------------------------------------------------------------------ Feeds
+if ($serverUrl) {
+    Step 'Data'
+    Write-Host 'The always-on PC fetches everything; nothing to test here.'
+} else {
 Step 'Testing the data sources (takes about a minute)'
 # Windows downloads some root certificates only when a Windows program first asks
 # for them, and Python can't trigger that (lite.cnn.com fails without it). One
@@ -113,6 +218,7 @@ foreach ($site in 'https://lite.cnn.com/', 'https://api.open-meteo.com/', 'https
 }
 & $python server.py --check
 Write-Host 'One or two failures are usually a slow connection. The display retries on its own.'
+}
 
 # ------------------------------------------------------------------ Power
 if ($saver) {
