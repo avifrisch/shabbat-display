@@ -96,6 +96,26 @@ On a PC you sit at, the display can come up as a screen saver instead of running
 - **Not locking:** set `"screensaver_lock": false` in `settings.json`, then sign out and back in.
 - **Starting and stopping it by hand:** `start-screensaver.bat` turns it on and `stop-display.bat` turns it off.
 
+## Another PC in the house
+
+A second PC, full time or as a screen saver, can show the always-on PC's display instead of fetching everything itself. Your calendar link then stays on the one PC that has it, and there's nothing to configure.
+
+**Making the download:** on the PC with this folder, double-click `make-installer.bat`. It builds `dist\ShabbatDisplay.zip` from the committed files, so `settings.json` and its secrets are never in it. Upload the zip to your website.
+
+**On the other PC:**
+
+1. Download the zip, right-click → **Extract All**, and double-click `setup-windows.bat` in the extracted folder. Setup offers to move itself to `C:\ShabbatDisplay`; say yes.
+2. Choose **Full time** or **Screen saver**.
+3. Setup looks for the always-on PC: first over Tailscale (if this PC has it and is connected), then by name on the home network, then by its home-network address. When it finds it, choose **1** to show that PC's display. If it doesn't find it, setup says why (Tailscale not installed or not connected, not on the home Wi-Fi), and you can type an address, run a separate copy with its own data, or stop and try later.
+
+**What to know:**
+
+- **The always-on PC** must be on, with the display server reachable from the network (`"bind": "0.0.0.0"` and the firewall rule; see the iPad section below). The firewall rule also needs the Tailscale range (`100.64.0.0/10`) for Tailscale to work.
+- **The always-on PC's addresses** are at the top of `setup-windows.ps1` (`$ServerName`, `$ServerAddresses`). Change them there if that PC changes, and build the zip again.
+- **If the always-on PC is off,** the full-time screen waits and opens once it answers, and the screen saver doesn't appear.
+- **To switch a PC back to its own data,** run setup again and choose the separate copy. It takes `server_url` out of `settings.json`.
+- **The download is public** unless your website protects it. It has no secrets in it, but anyone with the link can read the code.
+
 ## On an iPad, as a second screen
 
 An iPad can't run the display itself, but it can show the one running on your PC or Pi over Wi-Fi. It needs iPadOS 14.5 or later (iPad Air 2, iPad mini 4, iPad 5th generation, or newer).
@@ -198,6 +218,7 @@ The server's on-demand and shul code has automated tests (standard library only)
 | `start-screensaver.bat` | Turns on screen saver mode (Windows). `stop-display.bat` turns it off. |
 | `check-feeds.*` | Tests every data source once. |
 | `update-shul.*` | Fetches the shul's chart, bulletin and calendar now. |
+| `make-installer.bat` | Builds `dist\ShabbatDisplay.zip`, the download for another PC in the house. |
 | `settings.example.json` | Template for `settings.json`, your settings. |
 | `server.py` | Data server. Uses only the Python standard library; nothing to install. |
 | `index.html` | The dashboard page. |

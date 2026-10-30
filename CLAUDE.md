@@ -39,6 +39,7 @@ Owner preferences:
   - Opened as a file with no server, it renders built-in demo data (`makeDemo()`, including `demo_panels`) for layout work.
   - Interaction: elements carry `data-tap="article|game|forecast"` (plus `data-key`/`data-link` or `data-id`), scene tabs `data-scene`, forecast day rows `data-toggle`. Pointer Events on `document`: a tap is under 10 px / 500 ms; a swipe starts in `.scene-wrap`/`.stage-head` and is ≥ 80 px, mostly horizontal. `PANELS[kind] = {load, render, refreshMs?, shouldRefresh?}` render into `#panel` inside `.scene-wrap` (the scenes repaint underneath and never touch it). `lastInput` pauses rotation; `tick()` ends the interaction after `idleMs()` (2 min; `?debug=1` + `IDLE_MS_OVERRIDE`) or when `interactive()` turns false. The pointer is hidden (`cursor:none`) until the mouse moves. Hidden scene layers have `pointer-events:none`.
 - `launcher.pyw`: supervisor for Windows and Linux.
+  - `server_url` in settings.json (`display_url()`): the PC shows another machine's display and never starts `server.py`; the browser opens only once that server's `/health` answers (full time), and the screen saver doesn't open while it's down.
   - Starts the server and Chrome, Edge or Chromium in `--kiosk` mode with its own profile in `browser-profile/`, and restarts either one if it exits. Reads `port` from `settings.json`.
   - Single instance (a named mutex on Windows, `flock` on `launcher.lock` on Linux).
   - Before each browser start it marks the profile as cleanly exited, and on Linux removes stale `Singleton*` locks, so a power cut never leaves a restore-pages bubble or a refused profile.
@@ -53,6 +54,11 @@ Owner preferences:
     - Chrome relaunches itself at startup, so the real main process is found by profile path (`browser_pids()`, a PowerShell CIM query) after the window is up.
 - iPad as a second screen: set `"bind": "0.0.0.0"` and a Windows firewall rule for TCP 8765 from `LocalSubnet`. Then open `http://<ip>:8765` in Safari and add it to the Home Screen; Apple's web-app meta tags make that full screen. Needs iPadOS 14.5+, because the page uses `??` and flex `gap`. Avi's home PC is set up this way.
 - Windows: `setup-windows.bat` runs `setup-windows.ps1` (finds real Python while skipping the WindowsApps Store stub, or installs it with winget, then powercfg settings and a Startup-folder shortcut to `pythonw launcher.pyw`). `start-display.bat`, `stop-display.bat`, `check-feeds.bat`.
+- Another PC in the house: `make-installer.bat`/`.ps1` builds `dist/ShabbatDisplay.zip` with `git archive` (so settings.json and secrets never go in; `.gitattributes` export-ignores docs, tests, CLAUDE.md and the builder) for Avi to upload to avifrischlaw.com. `setup-windows.ps1` then:
+  - unblocks the zip's files and offers to move out of Downloads to `C:\ShabbatDisplay` (only if that folder is empty);
+  - unless this PC is the server (`$env:COMPUTERNAME -eq $ServerName` or localhost:8765 answers), probes `$ServerAddresses` (Tailscale 100.98.145.119 if `tailscale status` says Running, then DESKTOP-H72VKDJ, then 192.168.4.109) at `/health`, explains failures (Tailscale missing/not connected, not on home Wi-Fi), and writes `server_url` into settings.json (rewritten only when it changes);
+  - skips `server.py --check` for a remote-display PC. `server.py` ignores the launcher-only keys (`LAUNCHER_SETTINGS`) instead of logging them as unknown.
+  - Not yet run end to end on a second PC.
 - Pi/Linux: `setup-pi.sh` (Chromium, time zone, `raspi-config` autologin and blanking, an XDG autostart entry in `~/.config/autostart`). `start-display.sh`, `stop-display.sh`, `check-feeds.sh`. `.gitattributes` keeps `*.sh` LF.
 - `fonts/`: Archivo (UI), Newsreader (headlines) and Frank Ruhl Libre (Hebrew), all OFL and bundled so the page works offline.
 

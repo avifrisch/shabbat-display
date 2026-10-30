@@ -126,6 +126,10 @@ def log(msg):
             pass
 
 
+# read by launcher.pyw, not the server
+LAUNCHER_SETTINGS = {"screensaver_minutes", "screensaver_lock", "server_url"}
+
+
 def load_settings():
     """Overlay settings.json on CONFIG. A bad file is logged and ignored."""
     if not os.path.exists(SETTINGS_FILE):
@@ -137,7 +141,7 @@ def load_settings():
         log(f"settings.json not used ({e}); running with defaults")
         return
     for k, v in user.items():
-        if k.startswith("_"):
+        if k.startswith("_") or k in LAUNCHER_SETTINGS:
             continue
         if k not in CONFIG:
             log(f"settings.json: unknown setting '{k}' ignored")

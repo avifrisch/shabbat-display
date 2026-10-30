@@ -11,3 +11,4 @@ __pycache__/
 .superpowers/
 .playwright-mcp/
 shul/
+dist/

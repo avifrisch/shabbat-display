@@ -33,6 +33,20 @@ class Isolated(unittest.TestCase):
         server._cache.clear()
 
 
+class SettingsTests(Isolated):
+    def test_launcher_settings_are_not_reported_as_unknown(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "settings.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"server_url": "http://x:8765", "screensaver_minutes": 30, "screensaver_lock": False,
+                           "made_up": 1}, f)
+            logged = []
+            with mock.patch.object(server, "SETTINGS_FILE", path), mock.patch.object(server, "log", logged.append):
+                server.load_settings()
+        self.assertEqual(logged, ["settings.json: unknown setting 'made_up' ignored"])
+
+
 class CacheTests(Isolated):
     def test_expired_entries_are_dropped(self):
         with mock.patch.object(server.time, "time", return_value=1000.0):

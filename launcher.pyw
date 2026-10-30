@@ -10,6 +10,9 @@ both running: if either one closes or crashes, it is started again.
 With --screensaver (Windows only; start-screensaver.bat) it acts as a screen saver
 instead: the server stays running in the background, the browser opens after
 screensaver_minutes without mouse or keyboard input, and any input closes it.
+
+With "server_url" in settings.json it starts no server and shows that machine's
+display instead (a second screen in the house; setup-windows.ps1 finds the server).
 """
 import json
 import os
@@ -47,7 +50,22 @@ def setting(key, default):
         return default
 
 
-URL = f"http://localhost:{setting('port', 8765)}/"
+def display_url(server_url, port):
+    """The page to show: this PC's own server, or (server_url set) another machine's."""
+    s = (server_url or "").strip().rstrip("/")
+    if not s:
+        return f"http://localhost:{port}/"
+    if "://" not in s:
+        s = "http://" + s
+    if not re.search(r":\d+$", s.split("://", 1)[1]):
+        s += f":{port}"
+    return s + "/"
+
+
+# With "server_url" in settings.json this PC only shows the display; the data
+# server runs on another machine in the house (setup finds it).
+REMOTE = bool(setting("server_url", "").strip())
+URL = display_url(setting("server_url", ""), setting("port", 8765))
 
 
 def log(msg):
@@ -305,6 +323,8 @@ def saver_loop(browser_path, server):
             time.sleep(2)
             idle = idle_seconds()
             busy = screen_busy() if idle >= wait else ""
+            if idle >= wait and not busy and REMOTE and not server_up():
+                busy = f"the display server at {URL} isn't answering"
             if busy != noted:  # log each reason once, so screensaver.log shows why it didn't appear
                 if busy:
                     log(f"not opening: {busy}")
@@ -334,6 +354,8 @@ def saver_loop(browser_path, server):
                         lock_screen()
                 else:
                     log("closed: browser exited")
+        if REMOTE:
+            continue
         if server is not None and server.poll() is not None:
             log(f"server exited with code {server.returncode}; restarting")
             server = start_server()
@@ -354,20 +376,28 @@ def main():
         log("no Chrome, Chromium or Edge found")
         print("No Chrome, Chromium or Edge found. Run the setup script first.", file=sys.stderr)
         return
-    server = None if server_up() else start_server()
+    server = None if REMOTE or server_up() else start_server()
     for _ in range(30):
         if server_up():
             break
         time.sleep(1)
+    if REMOTE:
+        log(f"showing the display from {URL}" + ("" if server_up() else " (not answering yet)"))
     if SAVER:
         saver_loop(browser_path, server)
         return
     keep_awake()
-    if not browser_running():
+    if not browser_running() and (not REMOTE or server_up()):
         start_browser(browser_path)
     while True:
         time.sleep(30)
         keep_awake()
+        if REMOTE:
+            # another machine's server: open the browser once it answers, never start one here
+            if not browser_running() and server_up():
+                log("browser not running; starting")
+                start_browser(browser_path)
+            continue
         if server is not None and server.poll() is not None:
             log(f"server exited with code {server.returncode}; restarting")
             server = start_server()
