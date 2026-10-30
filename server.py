@@ -27,6 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+import zlib
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
@@ -1367,6 +1368,150 @@ def radar_gif():
         with urllib.request.urlopen(req, timeout=20) as r:
             return r.read(15_000_000)
     return cached("radar", 300, load)
+
+
+# ---------------------------------------------------------------- shul
+# Bnai Yeshurun's weekly davening chart, Shabbat bulletin and monthly calendar.
+# The bulletin is a PDF; this reads just enough of the format to get its text.
+
+_PDF_TOKEN = re.compile(rb"\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]*>|\[|\]|/[^\s/\[\]()<>{}%]+"
+                        rb"|[-+]?\d*\.?\d+|[A-Za-z'\"*]+")
+_PDF_ESC = {ord("n"): 10, ord("r"): 13, ord("t"): 9, ord("b"): 8, ord("f"): 12}
+
+
+def _pdf_literal(tok):
+    s, out, i = tok[1:-1], bytearray(), 0
+    while i < len(s):
+        c = s[i]
+        if c != 0x5C or i + 1 >= len(s):
+            out.append(c)
+            i += 1
+            continue
+        n = s[i + 1]
+        if n in _PDF_ESC:
+            out.append(_PDF_ESC[n])
+            i += 2
+        elif 48 <= n <= 55:  # octal
+            j, v = i + 1, 0
+            while j < len(s) and j < i + 4 and 48 <= s[j] <= 55:
+                v, j = v * 8 + s[j] - 48, j + 1
+            out.append(v & 255)
+            i = j
+        elif n in (10, 13):  # line continuation
+            i += 2
+        else:
+            out.append(n)
+            i += 2
+    return bytes(out)
+
+
+def _pdf_stream(body):
+    m = re.search(rb"stream\r?\n(.*)\r?\nendstream", body, re.S)
+    if not m:
+        return b""
+    raw = m.group(1)
+    if b"/FlateDecode" in body:
+        return zlib.decompressobj().decompress(raw)
+    return raw
+
+
+def _pdf_tounicode(objs, font_num):
+    """{code: text}, code width in bytes; ({}, 0) for a plain single-byte font."""
+    m = re.search(rb"/ToUnicode\s+(\d+) 0 R", objs.get(font_num, b""))
+    if not m:
+        return {}, 0
+    cm = _pdf_stream(objs.get(int(m.group(1)), b""))
+    mp, width = {}, 1
+    for blk in re.findall(rb"beginbfchar(.*?)endbfchar", cm, re.S):
+        for a, u in re.findall(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", blk):
+            width = len(a) // 2
+            mp[int(a, 16)] = bytes.fromhex(u.decode()).decode("utf-16-be", "replace")
+    for blk in re.findall(rb"beginbfrange(.*?)endbfrange", cm, re.S):
+        for a, b, u in re.findall(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", blk):
+            width, base = len(a) // 2, int(u, 16)
+            for i, c in enumerate(range(int(a, 16), int(b, 16) + 1)):
+                mp[c] = chr(base + i)
+    return mp, width
+
+
+def _pdf_page_runs(objs, page):
+    fd = re.search(rb"/Font\s*<<(.*?)>>", page, re.S)
+    fonts = {k.decode(): _pdf_tounicode(objs, int(v))
+             for k, v in re.findall(rb"/([^\s/]+)\s+(\d+) 0 R", fd.group(1) if fd else b"")}
+    cm = re.search(rb"/Contents\s*(\[[^\]]*\]|\d+ 0 R)", page)
+    refs = [int(r) for r in re.findall(rb"(\d+) 0 R", cm.group(1))] if cm else []
+    content = b"\n".join(_pdf_stream(objs.get(r, b"")) for r in refs)
+    runs, stack, font = [], [], None
+    tm, lm, lead = [1, 0, 0, 1, 0, 0], [1, 0, 0, 1, 0, 0], 0.0
+
+    def show(b):
+        mp, w = fonts.get(font, ({}, 0))
+        if not w:
+            return b.decode("cp1252", "replace")
+        return "".join(mp.get(int.from_bytes(b[i:i + w], "big"), "") for i in range(0, len(b), w))
+
+    def emit(text):
+        if text:
+            runs.append((round(tm[4], 1), round(tm[5], 1), text))
+
+    for tok in _PDF_TOKEN.findall(content):
+        c = tok[:1]
+        if c == b"(":
+            stack.append(_pdf_literal(tok))
+        elif c == b"<":
+            hexs = re.sub(rb"\s", b"", tok[1:-1])
+            stack.append(bytes.fromhex(hexs.decode() + ("0" if len(hexs) % 2 else "")))
+        elif tok == b"[":
+            stack.append("[")
+        elif tok == b"]":
+            arr = []
+            while stack and stack[-1] != "[":
+                arr.insert(0, stack.pop())
+            if stack:
+                stack.pop()
+            stack.append(arr)
+        elif c == b"/":
+            stack.append(tok[1:].decode("latin-1"))
+        elif re.fullmatch(rb"[-+]?\d*\.?\d+", tok):
+            stack.append(float(tok))
+        else:
+            op = tok.decode("latin-1")
+            nums = [v for v in stack if isinstance(v, float)]
+            if op == "Tf" and len(stack) >= 2 and isinstance(stack[-2], str):
+                font = stack[-2]
+            elif op == "Tm" and len(nums) >= 6:
+                tm = nums[-6:]
+                lm = list(tm)
+            elif op in ("Td", "TD") and len(nums) >= 2:
+                lm[4] += nums[-2] * lm[0]
+                lm[5] += nums[-1] * lm[3]
+                tm = list(lm)
+                if op == "TD":
+                    lead = -nums[-1]
+            elif op == "TL" and nums:
+                lead = nums[-1]
+            elif op == "T*":
+                lm[5] -= lead
+                tm = list(lm)
+            elif op == "BT":
+                tm, lm = [1, 0, 0, 1, 0, 0], [1, 0, 0, 1, 0, 0]
+            elif op in ("Tj", "'", '"') and stack and isinstance(stack[-1], bytes):
+                emit(show(stack[-1]))
+            elif op == "TJ" and stack and isinstance(stack[-1], list):
+                emit("".join(show(v) if isinstance(v, bytes) else (" " if v < -200 else "")
+                             for v in stack[-1] if isinstance(v, (bytes, float))))
+            stack = []
+    return runs
+
+
+def pdf_pages(data):
+    """Text runs (x, y, text) for each page, in page order. Needs plain (not object-stream) pages."""
+    objs = {int(m.group(1)): m.group(2)
+            for m in re.finditer(rb"(\d+)\s+0\s+obj(.*?)endobj", data, re.S)}
+    pages = [n for n in sorted(objs) if re.search(rb"/Type\s*/Page(?![s\w])", objs[n])]
+    if not pages:
+        raise ValueError("no readable pages in the PDF")
+    return [_pdf_page_runs(objs, objs[n]) for n in pages]
 
 
 # ---------------------------------------------------------------- scheduler
