@@ -1514,6 +1514,56 @@ def pdf_pages(data):
     return [_pdf_page_runs(objs, objs[n]) for n in pages]
 
 
+SHUL_SITE = "https://www.bnaiyeshurun.org"
+SHUL_FILES = "https://images.shulcloud.com/"
+# The shul's site turns away generic tools but answers a request that says what it is.
+# Never swap this for a browser's User-Agent to get past a refusal.
+SHUL_UA = "ShabbatDisplay/1.0 (personal home display)"
+_MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+
+
+def _shul_urls(page, folder, ext):
+    found = []
+    for u in re.findall(r"""(?:src|href)\s*=\s*["']([^"']+)["']""", page or "", re.I):
+        u = html.unescape(u)
+        if u.startswith(SHUL_FILES) and f"/uploads/{folder}/" in u and re.search(ext + r"$", u, re.I) \
+                and u not in found:
+            found.append(u)
+    return found
+
+
+def shul_links(minyan_html, bulletin_html, calendar_html):
+    """The newest weekly chart and bulletin, and every monthly calendar image, from the shul's pages."""
+    chart = _shul_urls(minyan_html, "Weekly-Davening-Schedule", r"\.(png|jpe?g)")
+    bulletin = _shul_urls(bulletin_html, "Bulletin", r"\.pdf")
+    return {"chart": chart[0] if chart else None, "bulletin": bulletin[0] if bulletin else None,
+            "calendars": _shul_urls(calendar_html, "Monthly-Calendars", r"\.jpe?g")}
+
+
+def file_date(name, today):
+    """The date in a shul file name ("24Oct-LechLecha.pdf", "Oct25-weeklydavening.png"),
+    in the year that puts it nearest today; None if there is none."""
+    m = re.match(r"(\d{1,2})([A-Za-z]{3,9})\b|([A-Za-z]{3,9})(\d{1,2})-", name)
+    if not m:
+        return None
+    day, mon = (m.group(1), m.group(2)) if m.group(1) else (m.group(4), m.group(3))
+    if mon[:3].lower() not in _MONTHS:
+        return None
+    best = None
+    for y in (today.year - 1, today.year, today.year + 1):
+        try:
+            d = date(y, _MONTHS.index(mon[:3].lower()) + 1, int(day))
+        except ValueError:
+            continue
+        if best is None or abs((d - today).days) < abs((best - today).days):
+            best = d
+    return best
+
+
+def upcoming_shabbat(today):
+    return today + timedelta(days=(5 - today.weekday()) % 7)
+
+
 # Where the bulletin's "Shabbat Times" box puts things, in PDF points, measured
 # on the real bulletin: labels left of 180, times 180-228, Hebrew from 228 to
 # the box's right edge (found from the gap before the page's next column).

@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_server  # noqa: E402  (puts the repo on sys.path)
@@ -137,6 +138,40 @@ class ShabbatTimesTests(unittest.TestCase):
     def test_unreadable_layout_returns_none(self):
         self.assertIsNone(self.times(heading=False))
         self.assertIsNone(self.times(with_ends=False))
+
+
+IMG = "https://images.shulcloud.com/1268/uploads/"
+
+
+class LinkTests(unittest.TestCase):
+    def test_picks_chart_bulletin_calendars(self):
+        links = server.shul_links(test_server.fixture("shul_minyan.html"), test_server.fixture("shul_bulletin.html"),
+                                  test_server.fixture("shul_calendar.html"))
+        self.assertEqual(links, {
+            "chart": IMG + "Weekly-Davening-Schedule/2026/Oct25-weeklydavening.png",
+            "bulletin": IMG + "Bulletin/2026/24Oct-LechLecha.pdf",
+            "calendars": [IMG + "Monthly-Calendars/2026/November2026.jpg",
+                          IMG + "Monthly-Calendars/2026/October2026.jpg"]})
+
+    def test_missing_items_are_none(self):
+        self.assertEqual(server.shul_links("", "", ""), {"chart": None, "bulletin": None, "calendars": []})
+
+    def test_file_date_forms(self):
+        today = date(2026, 10, 30)
+        self.assertEqual(server.file_date("24Oct-LechLecha.pdf", today), date(2026, 10, 24))
+        self.assertEqual(server.file_date("Oct25-weeklydavening.png", today), date(2026, 10, 25))
+        self.assertEqual(server.file_date("5Sept-Nitzavim-Vayeilech_3.pdf", today), date(2026, 9, 5))
+
+    def test_file_date_none(self):
+        self.assertIsNone(server.file_date("PurimScheduleBulletin2026.pdf", date(2026, 10, 30)))
+
+    def test_file_date_year_boundary(self):
+        self.assertEqual(server.file_date("3Jan-Vayechi.pdf", date(2026, 12, 30)), date(2027, 1, 3))
+
+    def test_upcoming_shabbat(self):
+        self.assertEqual(server.upcoming_shabbat(date(2026, 10, 30)), date(2026, 10, 31))
+        self.assertEqual(server.upcoming_shabbat(date(2026, 10, 31)), date(2026, 10, 31))
+        self.assertEqual(server.upcoming_shabbat(date(2026, 11, 1)), date(2026, 11, 7))
 
 
 if __name__ == "__main__":
