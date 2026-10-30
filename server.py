@@ -102,6 +102,8 @@ SETTINGS_FILE = os.path.join(HERE, "settings.json")
 CACHE_FILE = os.path.join(HERE, "cache.json")
 LOG_FILE = os.path.join(HERE, "server.log")
 PAGE_FILE = os.path.join(HERE, "index.html")
+SHUL_DIR = os.path.join(HERE, "shul")
+SHUL_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "pdf": "application/pdf"}
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/130.0 Safari/537.36 ShabbatDisplay/1.0")
 MLB = "https://statsapi.mlb.com/api/v1"
@@ -1637,6 +1639,120 @@ def shabbat_times(pages):
             "notes": [{"text": n["text"], "after": sum(1 for r in rows if r["y"] > n["y"])} for n in notes]}
 
 
+def shul_get(url, limit=20_000_000):
+    req = urllib.request.Request(url, headers={"User-Agent": SHUL_UA, "Accept": "text/html,*/*"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return r.read(limit)
+
+
+def _shul_files(cur):
+    cur = cur or {}
+    return [e["file"] for e in [cur.get("chart"), cur.get("bulletin"), *(cur.get("calendars") or [])] if e]
+
+
+def todays_candles():
+    today = now().date().isoformat()
+    for it in (store.get("calendar") or {}).get("items", []):
+        if it.get("category") == "candles" and (it.get("date") or "").startswith(today):
+            return parse_dt(it["date"])
+    return None
+
+
+def shul_due(n, cur, candles):
+    """Fetch when nothing is stored or a stored file is gone, and on Friday from
+    noon until candle lighting while the bulletin isn't this Shabbat's."""
+    if not cur or any(not os.path.exists(os.path.join(SHUL_DIR, f)) for f in _shul_files(cur)):
+        return True
+    if n.weekday() != 4 or n.hour < 12:
+        return False
+    if n >= (candles or n.replace(hour=18, minute=0, second=0, microsecond=0)):
+        return False
+    return (cur.get("bulletin") or {}).get("shabbat") != upcoming_shabbat(n.date()).isoformat()
+
+
+def fetch_shul(force=False):
+    cur = store.get("shul")
+    n = now()
+    if not force and not shul_due(n, cur, todays_candles()):
+        return cur
+    cur = cur or {}
+    links = shul_links(*(shul_get(f"{SHUL_SITE}/{p}").decode("utf-8", "replace")
+                         for p in ("minyan", "bulletin", "monthlycalendar")))
+    os.makedirs(SHUL_DIR, exist_ok=True)
+
+    def keep_or_get(old, url):
+        """(entry, bytes or None): the stored entry when the URL hasn't changed, else a fresh download."""
+        if old and old.get("url") == url and os.path.exists(os.path.join(SHUL_DIR, old["file"])):
+            return old, None
+        name = re.sub(r"[^A-Za-z0-9._-]", "_", urllib.parse.unquote(url.rsplit("/", 1)[-1])).lstrip(".")
+        data = shul_get(url)
+        tmp = os.path.join(SHUL_DIR, name + ".tmp")
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, os.path.join(SHUL_DIR, name))
+        return {"file": name, "url": url}, data
+
+    def dated(entry, key):
+        d = file_date(entry["file"], n.date())
+        return dict(entry, **{key: d.isoformat() if d else None})
+
+    chart, bulletin = cur.get("chart"), cur.get("bulletin")
+    if links["chart"]:
+        chart = dated(keep_or_get(chart, links["chart"])[0], "week_of")
+    if links["bulletin"]:
+        entry, data = keep_or_get(bulletin, links["bulletin"])
+        if data is not None:
+            try:
+                entry["times"] = shabbat_times(pdf_pages(data))
+            except Exception as e:  # noqa: BLE001 - an unreadable bulletin still gets shown as a PDF
+                log(f"shul: bulletin times not readable ({e})")
+                entry["times"] = None
+        bulletin = dated(entry, "shabbat")
+    old_cals = {c["url"]: c for c in cur.get("calendars") or []}
+    calendars = [keep_or_get(old_cals.get(u), u)[0] for u in links["calendars"][:4]] or cur.get("calendars") or []
+    value = {"chart": chart, "bulletin": bulletin, "calendars": calendars,
+             "checked": n.isoformat(timespec="seconds")}
+    used = set(_shul_files(value))
+    for f in os.listdir(SHUL_DIR):  # drop last week's files
+        if f not in used and not f.endswith(".tmp"):
+            try:
+                os.remove(os.path.join(SHUL_DIR, f))
+            except OSError:
+                pass
+    return value
+
+
+def shul_summary(v):
+    v = v or {}
+    ch, b = v.get("chart") or {}, v.get("bulletin") or {}
+    t = b.get("times")
+    return (f"Davening: {ch.get('file', 'none')} · Bulletin: {b.get('file', 'none')} "
+            f"({b.get('shabbat') or 'no date'}) · Calendar: "
+            f"{', '.join(c['file'] for c in v.get('calendars') or []) or 'none'}\n"
+            f"Shabbat times: {len(t['rows']) if t else 'not readable'}{' rows' if t else ''}")
+
+
+def update_shul():
+    """--update-shul: ask the running server to fetch now, or fetch here if it isn't running."""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{CONFIG['port']}/api/shul-update", timeout=180) as r:
+            print(json.loads(r.read())["summary"])
+            return 0
+    except urllib.error.HTTPError as e:
+        print(f"The display server couldn't update: {json.loads(e.read() or b'{}').get('error', e)}")
+        return 1
+    except (urllib.error.URLError, OSError):
+        pass  # not running: do it here
+    try:
+        v = fetch_shul(force=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"Couldn't update: {e}")
+        return 1
+    store.set("shul", v)
+    print(shul_summary(v))
+    return 0
+
+
 # ---------------------------------------------------------------- scheduler
 
 SOURCES = [
@@ -1657,6 +1773,7 @@ SOURCES = [
     ("cnn",           fetch_cnn,                    600),
     ("toi",           feed_fetcher("toi"),          600),
     ("agenda",        fetch_agenda,                 600),
+    ("shul",          fetch_shul,                   3600),  # fetches only when shul_due()
 ]
 
 
@@ -1728,6 +1845,28 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception as e:  # noqa: BLE001
                     log(f"radar: {e}")
                     self._send(503, "radar unavailable", "text/plain")
+            elif path.startswith("/shul/"):
+                name = path[len("/shul/"):]
+                fp = os.path.join(SHUL_DIR, name)
+                if re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9._-]*", name) and os.path.isfile(fp):
+                    ext = name.rsplit(".", 1)[-1].lower()
+                    with open(fp, "rb") as f:
+                        self._send(200, f.read(), SHUL_TYPES.get(ext, "application/octet-stream"))
+                else:
+                    self._send(404, "not found", "text/plain")
+            elif path == "/api/shul-update":
+                if self.client_address[0] != "127.0.0.1":
+                    self._send(403, json.dumps({"ok": False, "error": "only from this machine"}),
+                               "application/json")
+                    return
+                try:
+                    v = fetch_shul(force=True)
+                    store.set("shul", v)
+                    self._send(200, json.dumps({"ok": True, "summary": shul_summary(v)}), "application/json")
+                except Exception as e:  # noqa: BLE001
+                    store.fail("shul", e)
+                    log(f"shul: {e}")
+                    self._send(503, json.dumps({"ok": False, "error": str(e)[:200]}), "application/json")
             elif path == "/health":
                 self._send(200, "ok", "text/plain")
             elif path.startswith("/fonts/") and ".." not in path:
@@ -1769,6 +1908,8 @@ def main():
     if "--check" in sys.argv:
         check()
         return
+    if "--update-shul" in sys.argv:
+        sys.exit(update_shul())
     try:
         server = ThreadingHTTPServer((CONFIG["bind"], CONFIG["port"]), Handler)
     except OSError as e:
