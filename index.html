@@ -726,7 +726,7 @@ const SCENES = {
           return ws ? "World Series" : "Around the majors"; }, tab: "MLB", render: sceneMLB},
   news: {title: () => "Headlines", tab: "Headlines", render: sceneNews},
   israel: {title: () => "Israel", tab: "Israel", render: sceneIsrael},
-  shul: {title: () => !isHoly() ? "Davening times" : (holyState() || {}).ytNow ? "Yom Tov times" : "Shabbat times",
+  shul: {title: () => !shulShabbatOn() ? "Davening times" : (shabbatSpan() || {}).yt ? "Yom Tov times" : "Shabbat times",
          tab: "Shul", render: sceneShul},
 };
 const isHoly = () => document.body.classList.contains("holy");
@@ -734,28 +734,47 @@ const isHoly = () => document.body.classList.contains("holy");
 // ------------------------------------------------------------------ shul tab
 const shulSrc = (e) => e.src || "/shul/" + encodeURIComponent(e.file);
 const day0 = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
-// the bulletin is this Shabbat's or Yom Tov's if its date falls from the day of the
-// candle lighting that began it through the day of havdalah
+// this Shabbat or Yom Tov, from the day of its candle lighting through havdalah: the one
+// under way, or on Friday (Erev Yom Tov) the one starting tonight
+function shabbatSpan() {
+  const h = holyState();
+  if (!h || !h.nextHav) return null;
+  if (h.inHoly) return {start: h.lastMark.d, end: h.nextHav.d, yt: h.ytNow};
+  if (h.nextCandles && sameDay(h.nextCandles.d, NOW())) return {start: h.nextCandles.d, end: h.nextHav.d, yt: h.ytNext};
+  return null;
+}
+// the bulletin is this Shabbat's or Yom Tov's if its date falls in that span
 function bulletinCurrent(b) {
-  const h = holyState(), d = pd(b.shabbat);
-  return !!(h && h.lastMark && h.nextHav && d && d >= day0(h.lastMark.d) && d <= day0(h.nextHav.d));
+  const sp = shabbatSpan(), d = pd(b.shabbat);
+  return !!(sp && d && d >= day0(sp.start) && d <= day0(sp.end));
+}
+// Shabbat times show from candle lighting, and on Friday as soon as this week's bulletin is in
+function shulShabbatOn() {
+  const b = (D("shul") || {}).bulletin;
+  return isHoly() || !!(b && b.times && bulletinCurrent(b));
 }
 function sceneShul() {
   const s = D("shul") || {};
-  return isHoly() ? shulShabbat(s) : shulWeek(s);
+  if (isHoly()) return shulShabbat(s);
+  // Friday before candle lighting: the times, with the chart and the rest a tap away
+  return shulShabbatOn() ? shulShabbat(s) + shulFoot(s, true) : shulWeek(s);
+}
+function shulFoot(s, withChart) {
+  const n = NOW(), ch = s.chart, wk = ch && pd(ch.week_of);
+  const stale = ch && !withChart && (!wk || (new Date(n.getFullYear(), n.getMonth(), n.getDate()) - wk) / 864e5 > 6);
+  const month = (f) => MON.find((m) => f.toLowerCase().startsWith(m.toLowerCase())) || f.replace(/\.\w+$/, "");
+  const cals = (s.calendars || []).slice().sort((a, b) => (month(a.file) === MON[n.getMonth()] ? -1 : 0) - (month(b.file) === MON[n.getMonth()] ? -1 : 0));
+  const btn = (kind, src, title, label) => `<span class="shul-btn" data-tap="${kind}" data-src="${esc(src)}" data-title="${esc(title)}">${esc(label)}</span>`;
+  return `<div class="shul-foot">${withChart && ch ? btn("shulimg", shulSrc(ch), "Weekly davening schedule", "Weekly chart") : ""}
+      ${cals.map((c) => btn("shulimg", shulSrc(c), month(c.file) + " calendar", month(c.file) + " calendar")).join("")}
+      ${s.bulletin ? btn("bulletin", shulSrc(s.bulletin), "Shabbat bulletin", "Bulletin") : ""}
+      ${stale ? `<span class="shul-stale">${wk ? `Chart for the week of ${esc(short(wk))}. The new one isn't posted yet.` : "This chart's week isn't known."}</span>` : ""}</div>`;
 }
 function shulWeek(s) {
   const ch = s.chart;
   if (!ch) return `<div class="empty">The shul's davening chart hasn't been fetched yet.</div>`;
-  const n = NOW(), wk = pd(ch.week_of);
-  const stale = !wk || (new Date(n.getFullYear(), n.getMonth(), n.getDate()) - wk) / 864e5 > 6;
-  const month = (f) => MON.find((m) => f.toLowerCase().startsWith(m.toLowerCase())) || f.replace(/\.\w+$/, "");
-  const cals = (s.calendars || []).slice().sort((a, b) => (month(a.file) === MON[n.getMonth()] ? -1 : 0) - (month(b.file) === MON[n.getMonth()] ? -1 : 0));
-  const btn = (kind, src, title, label) => `<span class="shul-btn" data-tap="${kind}" data-src="${esc(src)}" data-title="${esc(title)}">${esc(label)}</span>`;
   return `<div class="shul-chart"><img src="${esc(shulSrc(ch))}" alt="Weekly davening schedule" data-tap="shulimg" data-src="${esc(shulSrc(ch))}" data-title="Weekly davening schedule"></div>
-    <div class="shul-foot">${cals.map((c) => btn("shulimg", shulSrc(c), month(c.file) + " calendar", month(c.file) + " calendar")).join("")}
-      ${s.bulletin ? btn("bulletin", shulSrc(s.bulletin), "Shabbat bulletin", "Bulletin") : ""}
-      ${stale ? `<span class="shul-stale">${wk ? `Chart for the week of ${esc(short(wk))}. The new one isn't posted yet.` : "This chart's week isn't known."}</span>` : ""}</div>`;
+    ${shulFoot(s, false)}`;
 }
 function shulShabbat(s) {
   const b = s.bulletin || {}, t = b.times;
@@ -858,7 +877,7 @@ function buildOrder() {
   const has = (k) => { const f = D(k); return !!(f && f.items && f.items.length); };
   const shul = D("shul");
   const ok = {agenda: agendaOn(), yankees: true, mlb: true, news: has("nyt") || has("cnn"), israel: has("toi"),
-              shul: !!(shul && (isHoly() ? shul.bulletin || D("calendar") : shul.chart))};
+              shul: !!(shul && (isHoly() ? shul.bulletin || D("calendar") : shul.chart || shulShabbatOn()))};
   const t = D("team");
   const seq = t && t.live ? ["yankees", "mlb", "yankees", "agenda", "yankees", "shul", "yankees", "news", "yankees", "israel"]
                           : ["agenda", "shul", "yankees", "mlb", "news", "israel"];
