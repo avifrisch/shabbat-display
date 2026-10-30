@@ -41,5 +41,31 @@ class ScreenChoiceTests(unittest.TestCase):
         self.assertEqual(launcher.pick_screens([LAPTOP, MONITOR], "both"), [(50, 50), (1970, 50)])
 
 
+class IdleTests(unittest.TestCase):
+    def test_idle_time(self):
+        self.assertEqual(launcher.idle_from(tick=100_000, last=40_000), 60.0)
+
+    def test_tick_counter_wrapping(self):
+        self.assertEqual(launcher.idle_from(tick=5_000, last=2**32 - 5_000), 10.0)
+
+    def test_input_newer_than_now_is_not_idle(self):
+        # input that lands between reading the clock and reading the last input
+        self.assertEqual(launcher.idle_from(tick=100_000, last=100_016), 0.0)
+
+
+class SettingsReadTests(unittest.TestCase):
+    def test_bad_settings_file_is_logged(self):
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "settings.json"), "w", encoding="utf-8") as f:
+                f.write('{"screensaver_lock": false,}')
+            logged = []
+            with mock.patch.object(launcher, "HERE", d), mock.patch.object(launcher, "log", logged.append):
+                self.assertTrue(launcher.setting("screensaver_lock", True))
+        self.assertEqual(len(logged), 1)
+        self.assertIn("settings.json", logged[0])
+
+
 if __name__ == "__main__":
     unittest.main()

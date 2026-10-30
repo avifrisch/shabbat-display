@@ -42,11 +42,37 @@ LINUX_BROWSERS = ["chromium", "chromium-browser", "google-chrome", "google-chrom
                   "microsoft-edge"]
 
 
+def log(msg):
+    try:
+        if os.path.exists(LOG_FILE) and os.path.getsize(LOG_FILE) > 1_000_000:
+            os.replace(LOG_FILE, LOG_FILE + ".old")
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S  ") + msg + "\n")
+    except OSError:
+        pass
+
+
+_settings_problem = None
+
+
 def setting(key, default):
+    """One value from settings.json (read fresh each time), or the default. A file that
+    can't be read is logged once, since every setting then silently uses its default."""
+    global _settings_problem
     try:
         with open(os.path.join(HERE, "settings.json"), encoding="utf-8-sig") as f:
-            return type(default)(json.load(f).get(key, default))
-    except (OSError, ValueError, TypeError, AttributeError):
+            data = json.load(f)
+        _settings_problem = None
+    except FileNotFoundError:
+        return default
+    except (OSError, ValueError) as e:
+        if str(e) != _settings_problem:
+            _settings_problem = str(e)
+            log(f"settings.json can't be read ({e}); using the defaults until it's fixed")
+        return default
+    try:
+        return type(default)(data.get(key, default))
+    except (TypeError, ValueError, AttributeError):
         return default
 
 
@@ -66,16 +92,6 @@ def display_url(server_url, port):
 # server runs on another machine in the house (setup finds it).
 REMOTE = bool(setting("server_url", "").strip())
 URL = display_url(setting("server_url", ""), setting("port", 8765))
-
-
-def log(msg):
-    try:
-        if os.path.exists(LOG_FILE) and os.path.getsize(LOG_FILE) > 1_000_000:
-            os.replace(LOG_FILE, LOG_FILE + ".old")
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(time.strftime("%Y-%m-%d %H:%M:%S  ") + msg + "\n")
-    except OSError:
-        pass
 
 
 def keep_awake():
@@ -217,9 +233,19 @@ def last_input():
     return info.dwTime
 
 
+def idle_from(tick, last):
+    """Seconds since the last input, from two 32-bit millisecond tick counts. Input
+    newer than the clock reading (it arrived between the two reads) counts as none."""
+    d = (tick - last) & 0xFFFFFFFF
+    return 0.0 if d >= 0x80000000 else d / 1000
+
+
 def idle_seconds():
     import ctypes
-    return ((ctypes.windll.kernel32.GetTickCount() - last_input()) & 0xFFFFFFFF) / 1000
+    last = last_input()  # the last input first, then the clock
+    get_tick = ctypes.windll.kernel32.GetTickCount
+    get_tick.restype = ctypes.c_uint32
+    return idle_from(get_tick(), last)
 
 
 # SHQueryUserNotificationState: Windows' own test for "don't interrupt now", the one it
@@ -434,8 +460,6 @@ def saver_loop(browser_path, server):
     if off and off <= wait:
         log(f"warning: the power plan turns the screen off after {off / 60:g} minutes, before the screen saver"
             " opens. Raise 'Turn off my screen after' in Settings > System > Power, or run setup again.")
-    lock = setting("screensaver_lock", True)
-    which = setting("screensaver_screens", "all")
     restore_brightness()  # in case the launcher stopped while the laptop screen was darkened
     if setting("keep_pc_awake", False):
         keep_pc_awake()
@@ -444,6 +468,8 @@ def saver_loop(browser_path, server):
     while True:
         if not showing:
             time.sleep(2)
+            # settings are read as they're needed, so an edit to settings.json counts right away
+            wait = max(0.25, setting("screensaver_minutes", 10.0)) * 60
             idle = idle_seconds()
             busy = screen_busy() if idle >= wait else ""
             if idle >= wait and not busy and REMOTE and not server_up():
@@ -454,9 +480,9 @@ def saver_loop(browser_path, server):
                 noted = busy
             if idle >= wait and not busy:
                 found = screens()  # looked up each time, in case a monitor was plugged in or out
-                chosen = pick_screens(found, which) or [None]
+                chosen = pick_screens(found, setting("screensaver_screens", "all")) or [None]
                 profiles = saver_profiles(len(chosen))
-                log(f"opening on {len(chosen)} screen{'s' if len(chosen) > 1 else ''}")
+                log(f"opening on {len(chosen)} screen{'s' if len(chosen) > 1 else ''} after {idle / 60:.1f} minutes idle")
                 shown_at = last_input()
                 for profile, position in zip(profiles, chosen):
                     start_browser(browser_path, profile, position if len(found) > 1 else None)
@@ -479,6 +505,7 @@ def saver_loop(browser_path, server):
                 showing = False
                 restore_brightness()
                 if last_input() != shown_at:
+                    lock = setting("screensaver_lock", True)
                     log("closed: input" + ("; locking" if lock else ""))
                     if lock:
                         lock_screen()
