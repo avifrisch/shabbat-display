@@ -17,9 +17,26 @@ $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $Here
 
 function Step($text) { Write-Host ''; Write-Host "== $text" -ForegroundColor Cyan }
-function Ask($question) {
-    $a = Read-Host "$question [Y/n]"
-    return ($a -eq '' -or $a -match '^[Yy]')
+function Ask($question, $yes = $true) {
+    # Enter alone gives the default: yes, or no when $yes is false
+    $a = Read-Host "$question $(if ($yes) { '[Y/n]' } else { '[y/N]' })"
+    if ($a -eq '') { return [bool]$yes }
+    return ($a -match '^[Yy]')
+}
+function Read-Settings { Get-Content (Join-Path $Here 'settings.json') -Raw -Encoding UTF8 | ConvertFrom-Json }
+function Update-Setting($name, $value) {
+    # Sets (or, with $null, removes) one setting. settings.json is rewritten only when
+    # something changes, so a re-run leaves a hand-edited file alone.
+    $cfg = Read-Settings
+    $p = $cfg.PSObject.Properties[$name]
+    if ($null -eq $value) {
+        if (-not $p) { return }
+        $cfg.PSObject.Properties.Remove($name)
+    } else {
+        if ($p -and "$($p.Value)" -eq "$value") { return }
+        $cfg | Add-Member -NotePropertyName $name -NotePropertyValue $value -Force
+    }
+    [IO.File]::WriteAllText((Join-Path $Here 'settings.json'), ($cfg | ConvertTo-Json -Depth 5), (New-Object Text.UTF8Encoding $false))
 }
 
 function Find-Python {
@@ -53,8 +70,21 @@ if ($Here -like "$env:TEMP*" -or $Here -like '*\Downloads\*') {
     $target = 'C:\ShabbatDisplay'
     Write-Host ''
     Write-Host 'This folder looks temporary (Downloads or a temp folder).' -ForegroundColor Yellow
-    if ((Test-Path $target) -and (Get-ChildItem $target -Force -ErrorAction SilentlyContinue | Select-Object -First 1)) {
-        Write-Host "$target already has files in it. To update that copy, run setup-windows.bat from there."
+    if (Test-Path (Join-Path $target 'launcher.pyw')) {
+        if (Ask "The Shabbat Display is already in $target. Update it with this version? Its settings are kept.") {
+            # stop that copy (launcher, server, browsers) so its files can be replaced
+            Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.CommandLine -like "*$target\launcher.pyw*" -or
+                $_.CommandLine -like "*$target\server.py*" -or $_.CommandLine -like "*$target\browser-profile*") } |
+                ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+            Start-Sleep 2
+            Copy-Item (Join-Path $Here '*') $target -Recurse -Force -Exclude 'settings.json'
+            Write-Host "Updated $target. Setup continues there."
+            & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $target 'setup-windows.ps1')
+            exit $LASTEXITCODE
+        }
+        if (-not (Ask 'Continue setup from this folder instead?' $false)) { exit 1 }
+    } elseif ((Test-Path $target) -and (Get-ChildItem $target -Force -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+        Write-Host "$target already has other files in it, so setup won't copy there."
         if (-not (Ask 'Continue from here anyway?')) { exit 1 }
     } elseif (Ask "Move the Shabbat Display to $target and continue setup there?") {
         New-Item -ItemType Directory -Force $target | Out-Null
@@ -189,14 +219,7 @@ if (Test-Path 'settings.json') {
 }
 # Record where the display comes from (or that this PC has its own server).
 try {
-    $cfg = Get-Content 'settings.json' -Raw -Encoding UTF8 | ConvertFrom-Json
-    $had = if ($cfg.PSObject.Properties['server_url']) { "$($cfg.server_url)" } else { '' }
-    if ($serverUrl -ne $had) {  # rewrite settings.json only when this changes
-        if ($serverUrl) { $cfg | Add-Member -NotePropertyName server_url -NotePropertyValue $serverUrl -Force }
-        else { $cfg.PSObject.Properties.Remove('server_url') }
-        $json = $cfg | ConvertTo-Json -Depth 5
-        [IO.File]::WriteAllText((Join-Path $Here 'settings.json'), $json, (New-Object Text.UTF8Encoding $false))
-    }
+    Update-Setting 'server_url' $(if ($serverUrl) { $serverUrl } else { $null })
     if ($serverUrl) { Write-Host "This PC will show the display from $serverUrl." }
 } catch {
     Write-Host "Couldn't update settings.json ($_). Add `"server_url`": `"$serverUrl`" to it in Notepad." -ForegroundColor Red
@@ -230,6 +253,14 @@ if ($saver) {
         Set-ItemProperty 'HKCU:\Control Panel\Desktop' -Name ScreenSaveActive -Value '0'
         Write-Host 'Done.'
     }
+    $cur = Read-Settings
+    Write-Host ''
+    Write-Host 'On a laptop with a monitor plugged in, the display can use just the monitor and turn the'
+    Write-Host "laptop's own screen all the way down while it shows (Windows can't switch off one screen)."
+    $ext = Ask 'Show it only on a plugged-in monitor?' ($cur.screensaver_screens -eq 'external')
+    Update-Setting 'screensaver_screens' $(if ($ext) { 'external' } else { $null })
+    $awake = Ask 'Keep this PC from going to sleep? (The screens still turn off on schedule.)' ([bool]$cur.keep_pc_awake)
+    Update-Setting 'keep_pc_awake' $(if ($awake) { $true } else { $null })
     # If the screen turns off before the display would appear, it opens on a dark screen.
     $minutes = 10
     try { $m = (Get-Content 'settings.json' -Raw | ConvertFrom-Json).screensaver_minutes; if ($m) { $minutes = [double]$m } } catch {}

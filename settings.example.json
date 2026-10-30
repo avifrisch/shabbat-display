@@ -25,6 +25,9 @@
   "_screensaver_help": "Screen saver mode only (start-screensaver.bat): minutes without mouse or keyboard input before the display appears, and whether closing it locks Windows.",
   "screensaver_minutes": 10,
   "screensaver_lock": true,
+  "_screens_help": "Screen saver on a laptop with a monitor plugged in: \"external\" shows it only on the monitor and turns the laptop screen's brightness down while it shows; \"all\" uses every screen. keep_pc_awake: true stops the PC from sleeping (screens still turn off on schedule).",
+  "screensaver_screens": "all",
+  "keep_pc_awake": false,
 
   "bind": "127.0.0.1",
   "port": 8765

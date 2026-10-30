@@ -23,5 +23,23 @@ class DisplayUrlTests(unittest.TestCase):
         self.assertEqual(launcher.display_url(" 192.168.4.109:9000 ", 8765), "http://192.168.4.109:9000/")
 
 
+LAPTOP = {"pos": (50, 50), "internal": True}
+MONITOR = {"pos": (1970, 50), "internal": False}
+
+
+class ScreenChoiceTests(unittest.TestCase):
+    def test_all_screens_by_default(self):
+        self.assertEqual(launcher.pick_screens([LAPTOP, MONITOR], "all"), [(50, 50), (1970, 50)])
+
+    def test_external_only(self):
+        self.assertEqual(launcher.pick_screens([LAPTOP, MONITOR], "external"), [(1970, 50)])
+
+    def test_external_falls_back_to_the_laptop_alone(self):
+        self.assertEqual(launcher.pick_screens([LAPTOP], "external"), [(50, 50)])
+
+    def test_unknown_value_means_all(self):
+        self.assertEqual(launcher.pick_screens([LAPTOP, MONITOR], "both"), [(50, 50), (1970, 50)])
+
+
 if __name__ == "__main__":
     unittest.main()

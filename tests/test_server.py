@@ -40,6 +40,7 @@ class SettingsTests(Isolated):
             path = os.path.join(d, "settings.json")
             with open(path, "w", encoding="utf-8") as f:
                 json.dump({"server_url": "http://x:8765", "screensaver_minutes": 30, "screensaver_lock": False,
+                           "screensaver_screens": "external", "keep_pc_awake": True,
                            "made_up": 1}, f)
             logged = []
             with mock.patch.object(server, "SETTINGS_FILE", path), mock.patch.object(server, "log", logged.append):

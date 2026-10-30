@@ -12,3 +12,4 @@ __pycache__/
 .playwright-mcp/
 shul/
 dist/
+brightness-before-saver.txt

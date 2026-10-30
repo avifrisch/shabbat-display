@@ -240,24 +240,142 @@ def screen_busy():
     return BUSY_STATES.get(state.value, "")
 
 
-def monitors():
-    """A point just inside the top-left corner of each monitor, the primary one first."""
+def internal_displays():
+    """GDI names (\\\\.\\DISPLAY1 ...) of built-in panels, such as a laptop's own screen."""
     import ctypes
     from ctypes import wintypes
+
+    class LUID(ctypes.Structure):
+        _fields_ = [("low", wintypes.DWORD), ("high", wintypes.LONG)]
+
+    class PathSource(ctypes.Structure):
+        _fields_ = [("adapter", LUID), ("id", ctypes.c_uint32), ("mode", ctypes.c_uint32), ("flags", ctypes.c_uint32)]
+
+    class PathTarget(ctypes.Structure):
+        _fields_ = [("adapter", LUID), ("id", ctypes.c_uint32), ("mode", ctypes.c_uint32),
+                    ("tech", ctypes.c_uint32), ("rotation", ctypes.c_uint32), ("scaling", ctypes.c_uint32),
+                    ("refresh", ctypes.c_uint32 * 2), ("scanline", ctypes.c_uint32),
+                    ("available", wintypes.BOOL), ("flags", ctypes.c_uint32)]
+
+    class Path(ctypes.Structure):
+        _fields_ = [("source", PathSource), ("target", PathTarget), ("flags", ctypes.c_uint32)]
+
+    class Mode(ctypes.Structure):
+        _fields_ = [("raw", ctypes.c_byte * 64)]
+
+    class SourceName(ctypes.Structure):
+        _fields_ = [("type", ctypes.c_uint32), ("size", ctypes.c_uint32), ("adapter", LUID),
+                    ("id", ctypes.c_uint32), ("name", ctypes.c_wchar * 32)]
+
+    INTERNAL = {0x80000000, 11, 13}  # internal, embedded DisplayPort, embedded UDI
+    names = set()
+    try:
+        user32 = ctypes.windll.user32
+        n_paths, n_modes = ctypes.c_uint32(), ctypes.c_uint32()
+        if user32.GetDisplayConfigBufferSizes(2, ctypes.byref(n_paths), ctypes.byref(n_modes)):  # active paths
+            return names
+        paths, modes = (Path * n_paths.value)(), (Mode * n_modes.value)()
+        if user32.QueryDisplayConfig(2, ctypes.byref(n_paths), paths, ctypes.byref(n_modes), modes, None):
+            return names
+        for p in paths[:n_paths.value]:
+            if p.target.tech not in INTERNAL:
+                continue
+            src = SourceName(type=1, size=ctypes.sizeof(SourceName), adapter=p.source.adapter, id=p.source.id)
+            if user32.DisplayConfigGetDeviceInfo(ctypes.byref(src)) == 0:
+                names.add(src.name)
+    except (OSError, AttributeError):
+        pass
+    return names
+
+
+def screens():
+    """Each monitor as {"pos": a point just inside its top-left corner, "internal": built-in panel},
+    the primary one first."""
+    import ctypes
+    from ctypes import wintypes
+
+    class MonitorInfo(ctypes.Structure):
+        _fields_ = [("size", wintypes.DWORD), ("monitor", wintypes.RECT), ("work", wintypes.RECT),
+                    ("flags", wintypes.DWORD), ("device", ctypes.c_wchar * 32)]
+
+    inside = internal_displays()
     found = []
     proc = ctypes.WINFUNCTYPE(ctypes.c_int, wintypes.HMONITOR, wintypes.HDC, ctypes.POINTER(wintypes.RECT),
                               wintypes.LPARAM)
 
-    def each(_mon, _dc, rect, _data):
+    def each(mon, _dc, rect, _data):
         r = rect.contents
-        found.append((r.left == 0 and r.top == 0, r.left + 50, r.top + 50))
+        info = MonitorInfo(size=ctypes.sizeof(MonitorInfo))
+        ctypes.windll.user32.GetMonitorInfoW(mon, ctypes.byref(info))
+        found.append({"primary": bool(info.flags & 1), "pos": (r.left + 50, r.top + 50),
+                      "internal": info.device in inside})
         return 1
 
     try:
         ctypes.windll.user32.EnumDisplayMonitors(None, None, proc(each), 0)
     except (OSError, AttributeError):
         pass
-    return [(x, y) for _, x, y in sorted(found, reverse=True)] or [None]
+    return sorted(found, key=lambda s: not s["primary"])
+
+
+def pick_screens(found, which):
+    """Positions to open on. "external": plugged-in monitors only, or every screen when
+    there are none (a laptop on its own). Anything else: every screen."""
+    if which == "external" and any(not s["internal"] for s in found):
+        found = [s for s in found if not s["internal"]]
+    return [s["pos"] for s in found]
+
+
+DIM_FILE = os.path.join(HERE, "brightness-before-saver.txt")
+
+
+def save_dimmed(level):
+    try:
+        with open(DIM_FILE, "w") as f:
+            f.write(str(level))
+    except OSError:
+        pass
+
+
+def restore_brightness():
+    """Put the laptop screen back to the brightness it had before the screen saver darkened it."""
+    try:
+        with open(DIM_FILE) as f:
+            level = int(f.read().strip())
+    except (OSError, ValueError):
+        return
+    set_internal_brightness(level)
+    try:
+        os.remove(DIM_FILE)
+    except OSError:
+        pass
+
+
+def keep_pc_awake():
+    """Screen saver mode with keep_pc_awake: the PC never sleeps, but its screens
+    still turn off when the power plan says (no ES_DISPLAY_REQUIRED)."""
+    try:
+        import ctypes
+        ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+        ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+    except (OSError, AttributeError) as e:
+        log(f"keep-awake failed: {e}")
+
+
+def set_internal_brightness(level):
+    """Set the built-in panel's brightness (0-100) and return what it was, or None if
+    this PC has no adjustable built-in panel. Windows can't switch off one screen,
+    so 0 is as close to off as it gets."""
+    ps = ("$b = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness -ErrorAction Stop | "
+          "Select-Object -First 1; $b.CurrentBrightness; "
+          "Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods -ErrorAction Stop | "
+          f"Select-Object -First 1 | Invoke-CimMethod -MethodName WmiSetBrightness -Arguments @{{Timeout=0; Brightness={int(level)}}} | Out-Null")
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True,
+                             timeout=20, creationflags=NO_WINDOW).stdout.split()
+        return int(out[0]) if out and out[0].isdigit() else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
 
 
 def saver_profiles(count):
@@ -317,6 +435,11 @@ def saver_loop(browser_path, server):
         log(f"warning: the power plan turns the screen off after {off / 60:g} minutes, before the screen saver"
             " opens. Raise 'Turn off my screen after' in Settings > System > Power, or run setup again.")
     lock = setting("screensaver_lock", True)
+    which = setting("screensaver_screens", "all")
+    restore_brightness()  # in case the launcher stopped while the laptop screen was darkened
+    if setting("keep_pc_awake", False):
+        keep_pc_awake()
+        log("keeping the PC awake (the screens still turn off on schedule)")
     showing, pids, noted, profiles = False, [], "", [PROFILE]
     while True:
         if not showing:
@@ -330,12 +453,18 @@ def saver_loop(browser_path, server):
                     log(f"not opening: {busy}")
                 noted = busy
             if idle >= wait and not busy:
-                screens = monitors()  # looked up each time, in case a monitor was plugged in or out
-                profiles = saver_profiles(len(screens))
-                log(f"opening on {len(screens)} screen{'s' if len(screens) > 1 else ''}")
+                found = screens()  # looked up each time, in case a monitor was plugged in or out
+                chosen = pick_screens(found, which) or [None]
+                profiles = saver_profiles(len(chosen))
+                log(f"opening on {len(chosen)} screen{'s' if len(chosen) > 1 else ''}")
                 shown_at = last_input()
-                for profile, position in zip(profiles, screens):
-                    start_browser(browser_path, profile, position if len(screens) > 1 else None)
+                for profile, position in zip(profiles, chosen):
+                    start_browser(browser_path, profile, position if len(found) > 1 else None)
+                # plugged-in monitor only: darken the laptop's own screen while it shows
+                if len(chosen) < len(found) and any(s["internal"] for s in found):
+                    dimmed = set_internal_brightness(0)
+                    if dimmed is not None:
+                        save_dimmed(dimmed)
                 showing, pids = True, []
                 for _ in range(50):  # wait for the relaunched browsers, then remember their processes
                     if last_input() != shown_at or all(browser_running(p) for p in profiles):
@@ -348,6 +477,7 @@ def saver_loop(browser_path, server):
             if last_input() != shown_at or not any(browser_running(p) for p in profiles):
                 stop_browser(pids, profiles)
                 showing = False
+                restore_brightness()
                 if last_input() != shown_at:
                     log("closed: input" + ("; locking" if lock else ""))
                     if lock:

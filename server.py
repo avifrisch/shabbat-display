@@ -127,7 +127,7 @@ def log(msg):
 
 
 # read by launcher.pyw, not the server
-LAUNCHER_SETTINGS = {"screensaver_minutes", "screensaver_lock", "server_url"}
+LAUNCHER_SETTINGS = {"screensaver_minutes", "screensaver_lock", "screensaver_screens", "keep_pc_awake", "server_url"}
 
 
 def load_settings():
