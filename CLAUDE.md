@@ -46,7 +46,12 @@ Owner preferences:
   - Keeps the screen awake with `SetThreadExecutionState` on Windows and `xset` on X11. Under Wayland it relies on `setup-pi.sh` turning blanking off with `raspi-config`.
   - `--screensaver` (Windows only; `start-screensaver.bat`, or option 2 in `setup-windows.ps1`):
     - The server runs all the time. The browser opens after `screensaver_minutes` of no input (`GetLastInputInfo`), using its own `browser-profile-saver/`, mutex and `screensaver.log`.
-    - It opens one kiosk window per monitor (`monitors()`, `EnumDisplayMonitors`), each with its own profile (`browser-profile-saver`, `-2`, ...) and `--window-position`, because a second window in one profile opens on the first window's monitor.
+    - It opens one kiosk window per chosen monitor, using `screens()` and `pick_screens()`. `screens()` lists monitors with `EnumDisplayMonitors` + `GetMonitorInfoW`; `internal_displays()` finds built-in panels from `QueryDisplayConfig`'s output technology (internal or embedded). Each window gets its own profile (`browser-profile-saver`, `-2`, ...). It gets `--window-position` whenever the PC has more than one monitor, because a second window in one profile opens on the first window's monitor.
+    - `screensaver_screens: "external"`: plugged-in monitors only (all screens if there are none).
+      - While it shows, the built-in panel's brightness goes to 0 via WMI (`WmiSetBrightness` through PowerShell) and is restored on close.
+      - The old level is kept in `brightness-before-saver.txt` and restored at launcher start, in case the launcher was killed.
+      - Untested on a real laptop: Avi's desktop monitors report output technology OTHER (they go through a dock). If detection fails it falls back to all screens, with no dimming.
+    - `keep_pc_awake: true`: `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` on the saver thread, so the PC doesn't sleep but the screens still turn off.
     - Any input (the last-input tick changing) force-closes it within about a second, then locks Windows (`LockWorkStation`) unless `screensaver_lock` is false.
     - Skipped while `SHQueryUserNotificationState` reports locked, a full-screen app, D3D full screen or presentation mode. This is Windows' own test, so a maximized window doesn't count. An earlier window-rect check wrongly treated maximized windows as full screen when the taskbar auto-hides or on a second monitor.
     - The reason it was skipped is logged once to `screensaver.log`. At startup it warns if the power plan's screen-off time (`powercfg VIDEOIDLE`, plugged in) comes before `screensaver_minutes`. Setup offers to move it to that many minutes plus 20.
@@ -55,7 +60,8 @@ Owner preferences:
 - iPad as a second screen: set `"bind": "0.0.0.0"` and a Windows firewall rule for TCP 8765 from `LocalSubnet`. Then open `http://<ip>:8765` in Safari and add it to the Home Screen; Apple's web-app meta tags make that full screen. Needs iPadOS 14.5+, because the page uses `??` and flex `gap`. Avi's home PC is set up this way.
 - Windows: `setup-windows.bat` runs `setup-windows.ps1` (finds real Python while skipping the WindowsApps Store stub, or installs it with winget, then powercfg settings and a Startup-folder shortcut to `pythonw launcher.pyw`). `start-display.bat`, `stop-display.bat`, `check-feeds.bat`.
 - Another PC in the house: `make-installer.bat`/`.ps1` builds `dist/ShabbatDisplay.zip` with `git archive` (so settings.json and secrets never go in; `.gitattributes` export-ignores docs, tests, CLAUDE.md and the builder) for Avi to upload to avifrischlaw.com. `setup-windows.ps1` then:
-  - unblocks the zip's files and offers to move out of Downloads to `C:\ShabbatDisplay` (only if that folder is empty);
+  - unblocks the zip's files and offers to move out of Downloads to `C:\ShabbatDisplay`. If a copy is already there, it offers to update it instead: it stops that copy, copies over everything but settings.json, and reruns setup there.
+  - in screen-saver mode, asks about `screensaver_screens` and `keep_pc_awake`. `Update-Setting` rewrites settings.json only when a value changes.
   - unless this PC is the server (`$env:COMPUTERNAME -eq $ServerName` or localhost:8765 answers), probes `$ServerAddresses` (Tailscale 100.98.145.119 if `tailscale status` says Running, then DESKTOP-H72VKDJ, then 192.168.4.109) at `/health`, explains failures (Tailscale missing/not connected, not on home Wi-Fi), and writes `server_url` into settings.json (rewritten only when it changes);
   - skips `server.py --check` for a remote-display PC. `server.py` ignores the launcher-only keys (`LAUNCHER_SETTINGS`) instead of logging them as unknown.
   - Not yet run end to end on a second PC.
