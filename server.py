@@ -1570,7 +1570,22 @@ def upcoming_shabbat(today):
 # on the real bulletin: labels left of 180, times 180-228, Hebrew from 228 to
 # the box's right edge (found from the gap before the page's next column).
 SHABBAT_TIME = re.compile(r"(\d{1,2}:\d{2}) ?([ap]m)", re.I)
-_TIME_X, _HEB_X = 180, 228
+_TIME_X, _HEB_X, _BOX_RIGHT = 180, 228, 316
+_HEBREW = re.compile(r"[֐-׿]")
+
+
+def _note_text(parts):
+    """A line that isn't a row: its English left to right, then its Hebrew right to
+    left. A space run goes with the nearest run that isn't a space."""
+    solid = [(x, t) for x, t in parts if t.strip()]
+    heb, rest = [], []
+    for x, t in parts:
+        ref = t if t.strip() else min(solid, key=lambda p: abs(p[0] - x), default=(0, ""))[1]
+        (heb if _HEBREW.search(ref) else rest).append((x, t))
+    latin = " ".join(s for s in (_join_runs([p for p in rest if p[0] < _TIME_X]),
+                                 _join_runs([p for p in rest if p[0] >= _TIME_X])) if s)
+    hebrew = " ".join("".join(t for x, t in sorted(heb, reverse=True)).split())
+    return " ".join(s for s in (latin, hebrew) if s)
 
 
 def _join_runs(runs):
@@ -1595,9 +1610,10 @@ def shabbat_times(pages):
     else:
         return None
     top = head[1] - 3
-    # right edge: the first gap of more than 8 pt between run starts right of 280
+    # right edge: the first gap of more than 8 pt between run starts right of 280,
+    # and never past where the box ends on the real bulletin (x 308)
     xs = sorted({x for x, y, t in runs if x > 280 and y < top})
-    right = next((a + 8 for a, b in zip(xs, xs[1:]) if b - a > 8), float("inf"))
+    right = min(next((a + 8 for a, b in zip(xs, xs[1:]) if b - a > 8), _BOX_RIGHT), _BOX_RIGHT)
     box = sorted(((x, y, t) for x, y, t in runs if y < top and x < right), key=lambda r: (-r[1], r[0]))
     lines = []  # [y, [(x, text)], [y of each run]] top to bottom, runs within 3.5 pt of a line's first y
     for x, y, t in box:
@@ -1624,10 +1640,13 @@ def shabbat_times(pages):
     for y, parts, _ in kept:
         near = min(rows, key=lambda r: abs(r["y"] - y), default=None)
         if near is None or abs(near["y"] - y) > 10:
-            notes.append({"text": _join_runs(parts), "y": y})
+            notes.append({"text": _note_text(parts), "y": y})
             continue
         label = _join_runs([(x, t) for x, t in parts if x < _TIME_X])
-        he = "".join(t for x, t in sorted(parts, reverse=True) if x >= _HEB_X)
+        heb_col = [(x, t) for x, t in parts if x >= _HEB_X]
+        if any(re.search(r"[A-Za-z0-9]", t) for _, t in heb_col):
+            return None  # something other than Hebrew where a row's Hebrew goes: the layout changed
+        he = "".join(t for x, t in sorted(heb_col, reverse=True))
         if label:
             near["label"].append(label)
         if he.strip():
@@ -1659,18 +1678,43 @@ def todays_candles():
 
 
 def shul_due(n, cur, candles):
-    """Fetch when nothing is stored or a stored file is gone, and on Friday from
-    noon until candle lighting while the bulletin isn't this Shabbat's."""
+    """Fetch when nothing is stored or a stored file is gone; on Friday or any day
+    with candle lighting (Erev Yom Tov), from noon until candle lighting, while the
+    bulletin is dated before today; and 8:00-20:00 on weekdays while the chart is
+    more than 6 days old. Never on Saturday. The source runs at most hourly."""
     if not cur or any(not os.path.exists(os.path.join(SHUL_DIR, f)) for f in _shul_files(cur)):
         return True
-    if n.weekday() != 4 or n.hour < 12:
+    if n.weekday() == 5:
         return False
-    if n >= (candles or n.replace(hour=18, minute=0, second=0, microsecond=0)):
-        return False
-    return (cur.get("bulletin") or {}).get("shabbat") != upcoming_shabbat(n.date()).isoformat()
+    today = n.date().isoformat()
+    if (candles is not None or n.weekday() == 4) and n.hour >= 12 \
+            and n < (candles or n.replace(hour=18, minute=0, second=0, microsecond=0)):
+        shabbat = (cur.get("bulletin") or {}).get("shabbat")
+        if not shabbat or shabbat < today:
+            return True
+    week = (cur.get("chart") or {}).get("week_of")
+    return bool(week) and 8 <= n.hour < 20 and (n.date() - date.fromisoformat(week)).days > 6
 
 
-def fetch_shul(force=False):
+class ShulBusy(Exception):
+    pass
+
+
+_shul_lock = threading.Lock()
+
+
+def fetch_shul(force=False, wait=True):
+    """One fetch at a time: the source thread waits its turn, an update request
+    (wait=False) gets ShulBusy instead."""
+    if not _shul_lock.acquire(blocking=wait):
+        raise ShulBusy("already updating")
+    try:
+        return _fetch_shul(force)
+    finally:
+        _shul_lock.release()
+
+
+def _fetch_shul(force):
     cur = store.get("shul")
     n = now()
     if not force and not shul_due(n, cur, todays_candles()):
@@ -1777,6 +1821,15 @@ SOURCES = [
 ]
 
 
+# after a failure most sources retry sooner than their interval; the shul's site gets
+# at most one try an hour, even when it is refusing
+RETRY_FLOOR = {"shul": 3600}
+
+
+def retry_wait(key, retry, interval):
+    return max(RETRY_FLOOR.get(key, 0), min(retry, interval))
+
+
 def run_source(key, fn, every):
     retry = 60
     while True:
@@ -1787,8 +1840,7 @@ def run_source(key, fn, every):
         except Exception as e:  # noqa: BLE001 - keep last good data and retry
             store.fail(key, e)
             log(f"{key}: {e}")
-            interval = every() if callable(every) else every
-            wait = min(retry, interval)
+            wait = retry_wait(key, retry, every() if callable(every) else every)
             retry = min(retry * 2, 900)
         time.sleep(wait)
 
@@ -1860,9 +1912,12 @@ class Handler(BaseHTTPRequestHandler):
                                "application/json")
                     return
                 try:
-                    v = fetch_shul(force=True)
+                    v = fetch_shul(force=True, wait=False)
                     store.set("shul", v)
                     self._send(200, json.dumps({"ok": True, "summary": shul_summary(v)}), "application/json")
+                except ShulBusy:
+                    self._send(409, json.dumps({"ok": False, "error": "already updating; try again in a minute"}),
+                               "application/json")
                 except Exception as e:  # noqa: BLE001
                     store.fail("shul", e)
                     log(f"shul: {e}")

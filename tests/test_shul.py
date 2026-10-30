@@ -128,6 +128,24 @@ class ShabbatTimesTests(unittest.TestCase):
             (234, 376, "Journey"), (268, 376, ", Part II")]])))
         self.assertIn("Example Avraham’s Journey, Part II", [n["text"] for n in t["notes"]])
 
+    def test_next_column_kept_out_when_hebrew_is_short(self):
+        page = [r for r in box_page() if not 260 < r[0] < 315]  # Hebrew narrower: nothing past x 260
+        page += heb("מעריב", 260, 350)
+        t = server.shabbat_times(server.pdf_pages(make_pdf([page])))
+        self.assertIsNotNone(t)
+        everything = " ".join([r["label"] + r["he"] for r in t["rows"]] + [n["text"] for n in t["notes"]])
+        self.assertNotIn("Example", everything)
+
+    def test_latin_in_a_rows_hebrew_column_means_unreadable(self):
+        page = box_page() + [(240, 712, "Moved here")]
+        self.assertIsNone(server.shabbat_times(server.pdf_pages(make_pdf([page]))))
+
+    def test_row_without_a_clock_time_reads_as_a_note(self):
+        page = box_page() + [(19.6, 455, "Shalosh Seudos"), (184, 455, "Following")] + heb("שלש סעודות", 299, 455)
+        page = [r for r in page if r[1] not in (451,)]  # make room: drop the 4:15 row
+        notes = [n["text"] for n in server.shabbat_times(server.pdf_pages(make_pdf([page])))["notes"]]
+        self.assertIn("Shalosh Seudos Following שלש סעודות", notes)
+
     def test_right_column_ignored(self):
         t = self.times()
         everything = " ".join([r["label"] for r in t["rows"]] + [n["text"] for n in t["notes"]])
@@ -250,6 +268,36 @@ class ShulSourceTests(test_server.Isolated):
         os.remove(os.path.join(self.dir, "October2026.jpg"))
         self.assertTrue(server.shul_due(datetime(2026, 10, 28, 10, 0, tzinfo=TZ), current, candles))
 
+    def test_due_on_erev_yom_tov(self):
+        cur = server.fetch_shul(force=True)  # bulletin dated Oct 24
+        tue = lambda h: datetime(2026, 10, 27, h, 0, tzinfo=TZ)  # noqa: E731
+        candles = datetime(2026, 10, 27, 17, 40, tzinfo=TZ)
+        self.assertTrue(server.shul_due(tue(13), cur, candles))
+        self.assertFalse(server.shul_due(tue(13), cur, None))  # a plain Tuesday
+        newer = dict(cur, chart=dict(cur["chart"], week_of="2026-10-25"),
+                     bulletin=dict(cur["bulletin"], shabbat="2026-10-28"))
+        self.assertFalse(server.shul_due(tue(13), newer, candles))
+
+    def test_due_when_chart_is_a_week_old(self):
+        cur = server.fetch_shul(force=True)  # chart for the week of Oct 25
+        current = dict(cur, bulletin=dict(cur["bulletin"], shabbat="2026-10-31"))
+        at = lambda d, h: datetime(2026, 11, d, h, 0, tzinfo=TZ)  # noqa: E731
+        self.assertTrue(server.shul_due(at(1, 9), current, None))    # Sunday morning, chart from last week
+        self.assertFalse(server.shul_due(at(1, 7), current, None))   # too early
+        self.assertFalse(server.shul_due(at(1, 21), current, None))  # too late
+        self.assertFalse(server.shul_due(datetime(2026, 10, 31, 12, 0, tzinfo=TZ), current, None))  # Shabbat
+        self.assertFalse(server.shul_due(datetime(2026, 10, 30, 9, 0, tzinfo=TZ),
+                                         dict(current, chart=dict(cur["chart"], week_of="2026-10-25")), None))
+
+    def test_failed_fetch_retries_hourly(self):
+        self.assertEqual(server.retry_wait("shul", 60, 3600), 3600)
+        self.assertEqual(server.retry_wait("weather", 60, 600), 60)
+
+    def test_one_fetch_at_a_time(self):
+        with server._shul_lock:
+            with self.assertRaises(server.ShulBusy):
+                server.fetch_shul(force=True, wait=False)
+
     def test_refusal_keeps_old(self):
         stored = server.fetch_shul(force=True)
         server.store.data["shul"] = stored
@@ -314,7 +362,8 @@ class ShulRouteTests(test_server.RouteTests):
     def test_update_from_this_machine(self):
         v = {"chart": {"file": "a.png", "url": "u", "week_of": None},
              "bulletin": None, "calendars": [], "checked": "2026-10-30T13:00:00-04:00"}
-        with mock.patch.object(server, "fetch_shul", lambda force=False: v),                 mock.patch.object(server.store, "save", lambda: None):
+        with mock.patch.object(server, "fetch_shul", lambda force=False, wait=True: v), \
+                mock.patch.object(server.store, "save", lambda: None):
             with server.urllib.request.urlopen(self.base + "/api/shul-update", timeout=10) as r:
                 body = json.loads(r.read())
         self.assertTrue(body["ok"])

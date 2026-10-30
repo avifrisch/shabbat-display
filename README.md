@@ -40,11 +40,11 @@ It lasts for months. When it runs out, an NYT article shows only its first parag
 
 ## The Shul screen
 
-The shul posts its weekly davening chart, its Shabbat bulletin and a monthly calendar on bnaiyeshurun.org. The display fetches them itself every Friday from noon, once an hour until it has this week's bulletin, and stops at candle lighting. To fetch them now (say the shul posted something late), double-click `update-shul.bat` (`./update-shul.sh` on a Pi) on the display machine. It lists what it got.
+The shul posts its weekly davening chart, its Shabbat bulletin and a monthly calendar on bnaiyeshurun.org. The display fetches them itself every Friday (and the day before Yom Tov) from noon, once an hour until it has this week's bulletin, and stops at candle lighting. If the chart is more than a week old, it also checks once an hour during the day until the new one is up. To fetch them now (say the shul posted something late), double-click `update-shul.bat` (`./update-shul.sh` on a Pi) on the display machine. It lists what it got.
 
 - **Weekdays:** the chart fills the screen. Tap it to see it bigger, or tap **October calendar**, **November calendar** or **Bulletin**. On the PC the bulletin opens in the panel; on the iPad it opens in Safari's own viewer, so every page shows.
 - **Shabbat:** the Shabbat Times box, read from the bulletin and laid out like the rest of the display.
-- **Old information is marked:** if the chart is from an earlier week, or this week's bulletin isn't posted yet, the screen says so. If the bulletin's times can't be read, it shows candle lighting and havdalah from Hebcal and says to see the bulletin. It never guesses at times.
+- **Old information is marked:** if the chart is from an earlier week, or this week's bulletin isn't posted yet, the screen says so. On Shabbat, if this week's bulletin isn't in yet or its times can't be read, it shows candle lighting and havdalah from Hebcal and says to see the bulletin. It never shows last week's times as this week's.
 
 Every request names itself (`ShabbatDisplay/1.0 (personal home display)`) and only files that changed are downloaded. If the site ever refuses those requests, the display keeps the last files it has.
 

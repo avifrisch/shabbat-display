@@ -254,6 +254,7 @@ body{position:fixed;inset:0}
 .shul-foot{flex:none;display:flex;align-items:center;gap:1rem;font-size:1.1rem;color:var(--muted)}
 .shul-btn{padding:.45rem 1.1rem;border:1px solid var(--line);border-radius:2rem;color:var(--text);white-space:nowrap}
 .shul-stale{color:var(--warn);margin-left:auto;text-align:right}
+.st-wrap{flex:1;min-height:0;overflow:hidden}
 .st-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:2.6rem;min-height:0;align-content:start}
 .st-row{display:grid;grid-template-columns:minmax(0,1fr) auto 6.2rem;column-gap:1rem;align-items:baseline;padding:.36rem 0;border-top:1px solid var(--line)}
 .st-row .l{font-size:1.2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -725,14 +726,20 @@ const SCENES = {
           return ws ? "World Series" : "Around the majors"; }, tab: "MLB", render: sceneMLB},
   news: {title: () => "Headlines", tab: "Headlines", render: sceneNews},
   israel: {title: () => "Israel", tab: "Israel", render: sceneIsrael},
-  shul: {title: () => isHoly() ? "Shabbat times" : "Davening times", tab: "Shul", render: sceneShul},
+  shul: {title: () => !isHoly() ? "Davening times" : (holyState() || {}).ytNow ? "Yom Tov times" : "Shabbat times",
+         tab: "Shul", render: sceneShul},
 };
 const isHoly = () => document.body.classList.contains("holy");
 
 // ------------------------------------------------------------------ shul tab
 const shulSrc = (e) => e.src || "/shul/" + encodeURIComponent(e.file);
-const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-function upcomingShabbat() { const n = NOW(); return new Date(n.getFullYear(), n.getMonth(), n.getDate() + (6 - n.getDay())); }
+const day0 = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+// the bulletin is this Shabbat's or Yom Tov's if its date falls from the day of the
+// candle lighting that began it through the day of havdalah
+function bulletinCurrent(b) {
+  const h = holyState(), d = pd(b.shabbat);
+  return !!(h && h.lastMark && h.nextHav && d && d >= day0(h.lastMark.d) && d <= day0(h.nextHav.d));
+}
 function sceneShul() {
   const s = D("shul") || {};
   return isHoly() ? shulShabbat(s) : shulWeek(s);
@@ -752,16 +759,15 @@ function shulWeek(s) {
 }
 function shulShabbat(s) {
   const b = s.bulletin || {}, t = b.times;
-  const msg = [];
-  if (b.file && b.shabbat !== isoDay(upcomingShabbat())) {
-    const d = pd(b.shabbat);
-    msg.push(`Bulletin from ${d ? esc(short(d)) : "an earlier week"}. This week's isn't posted.`);
-  }
-  if (!t) {
+  // wrong times on Shabbat are worse than none: anything but this week's readable
+  // bulletin shows the calendar's candle lighting and havdalah instead
+  if (!t || !bulletinCurrent(b)) {
     const h = holyState();
     const rows = h ? [h.lastMark && h.lastMark.category === "candles" ? ["Candle lighting", h.lastMark.d] : null, h.nextHav ? ["Havdalah", h.nextHav.d] : null].filter(Boolean) : [];
-    return `<div class="st-msg">Shul times unavailable. See the bulletin.</div>${msg.map((m) => `<div class="st-msg">${m}</div>`).join("")}
-      <div class="st-cols"><div>${rows.map(([l, d]) => `<div class="st-row"><span class="l">${l}</span><span class="h"></span><span class="tm">${hmap(d)}</span></div>`).join("")}</div></div>`;
+    const why = !b.file ? "The shul's bulletin hasn't been fetched." : !pd(b.shabbat) ? "The bulletin's date isn't known, so its times aren't shown."
+      : !bulletinCurrent(b) ? `The newest bulletin is for ${esc(short(pd(b.shabbat)))}; this week's isn't posted.` : "The bulletin's times couldn't be read.";
+    return `<div class="st-msg">${why} Shul times unavailable. See the bulletin.</div>
+      <div class="st-wrap"><div class="st-cols"><div>${rows.map(([l, d]) => `<div class="st-row"><span class="l">${l}</span><span class="h"></span><span class="tm">${hmap(d)}</span></div>`).join("")}</div></div></div>`;
   }
   const items = [];
   t.rows.forEach((r, i) => {
@@ -770,8 +776,19 @@ function shulShabbat(s) {
   });
   t.notes.filter((nt) => nt.after >= t.rows.length).forEach((nt) => items.push(`<div class="st-note">${esc(nt.text)}</div>`));
   const half = Math.ceil(items.length / 2);
-  return `${msg.map((m) => `<div class="st-msg">${m}</div>`).join("")}
-    <div class="st-cols"><div>${items.slice(0, half).join("")}</div><div>${items.slice(half).join("")}</div></div>`;
+  return `<div class="st-wrap"><div class="st-cols"><div>${items.slice(0, half).join("")}</div><div>${items.slice(half).join("")}</div></div></div>`;
+}
+// a long Yom Tov sheet shrinks to fit rather than losing its last rows (Shabbat ends)
+function fitShabbat(layer) {
+  const w = layer.querySelector(".st-wrap"), c = w && w.firstElementChild;
+  if (!c) return;
+  const fits = () => c.getBoundingClientRect().height <= w.getBoundingClientRect().height + 1;
+  for (let z = 1; z >= .55; z -= .05) {
+    c.style.zoom = z;
+    if (fits()) return;
+  }
+  // still too long: say so (havdalah stays in the Shabbat box below)
+  w.insertAdjacentHTML("afterend", `<div class="st-msg">More times in the bulletin than fit here.</div>`);
 }
 
 function sceneTeam() {
@@ -865,6 +882,7 @@ function fitColumns(layer) {
 function paint(layerId, name) {
   $(layerId).innerHTML = SCENES[name].render();
   fitColumns($(layerId));
+  fitShabbat($(layerId));
 }
 function showScene(name, fade = true) {
   current = name;
