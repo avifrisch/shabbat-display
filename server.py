@@ -1514,6 +1514,79 @@ def pdf_pages(data):
     return [_pdf_page_runs(objs, objs[n]) for n in pages]
 
 
+# Where the bulletin's "Shabbat Times" box puts things, in PDF points, measured
+# on the real bulletin: labels left of 180, times 180-228, Hebrew from 228 to
+# the box's right edge (found from the gap before the page's next column).
+SHABBAT_TIME = re.compile(r"(\d{1,2}:\d{2}) ?([ap]m)", re.I)
+_TIME_X, _HEB_X = 180, 228
+
+
+def _join_runs(runs):
+    """Join a line's runs left to right. Word stores spaces as runs of their own,
+    except sometimes between a word and a time ("at" "9:15")."""
+    out = ""
+    for x, t in sorted(runs):
+        if out[-1:].isalpha() and t[:1].isdigit():
+            out += " "
+        out += t
+    return " ".join(out.split())
+
+
+def shabbat_times(pages):
+    """The bulletin's Shabbat Times box as {"rows": [{label, time, he}],
+    "notes": [{text, after}]} (after = rows above the note), or None when there is
+    no box that reads cleanly. Never a partial guess."""
+    for runs in pages:
+        head = next(((x, y) for x, y, t in runs if t.strip() == "Shabbat Times"), None)
+        if head:
+            break
+    else:
+        return None
+    top = head[1] - 3
+    # right edge: the first gap of more than 8 pt between run starts right of 280
+    xs = sorted({x for x, y, t in runs if x > 280 and y < top})
+    right = next((a + 8 for a, b in zip(xs, xs[1:]) if b - a > 8), float("inf"))
+    box = sorted(((x, y, t) for x, y, t in runs if y < top and x < right), key=lambda r: (-r[1], r[0]))
+    lines = []  # [y, [(x, text)], [y of each run]] top to bottom, runs within 3.5 pt of a line's first y
+    for x, y, t in box:
+        if lines and lines[-1][0] - y <= 3.5:
+            lines[-1][1].append((x, t))
+            lines[-1][2].append(y)
+        else:
+            lines.append([y, [(x, t)], [y]])
+    kept = []
+    for y, parts, ys in lines:
+        text = _join_runs(parts)
+        if text.startswith("Please park") or (kept and kept[-1][0] - y > 25):
+            break
+        if text:
+            kept.append((y, parts, ys))
+    anchors = []  # (y of the time itself, time)
+    for y, parts, ys in kept:
+        tcol = [(x, t, ry) for (x, t), ry in zip(parts, ys) if _TIME_X <= x < _HEB_X]
+        m = SHABBAT_TIME.fullmatch("".join(t for x, t, _ in sorted(tcol)).replace(" ", ""))
+        if m:
+            anchors.append((sum(ry for _, _, ry in tcol) / len(tcol), f"{m.group(1)} {m.group(2).lower()}"))
+    rows = [{"y": y, "time": t, "label": [], "he": []} for y, t in anchors]
+    notes = []
+    for y, parts, _ in kept:
+        near = min(rows, key=lambda r: abs(r["y"] - y), default=None)
+        if near is None or abs(near["y"] - y) > 10:
+            notes.append({"text": _join_runs(parts), "y": y})
+            continue
+        label = _join_runs([(x, t) for x, t in parts if x < _TIME_X])
+        he = "".join(t for x, t in sorted(parts, reverse=True) if x >= _HEB_X)
+        if label:
+            near["label"].append(label)
+        if he.strip():
+            near["he"].append(" ".join(he.split()))
+    out = [{"label": " ".join(r["label"]), "time": r["time"], "he": " ".join(r["he"])} for r in rows]
+    if not any("Candle" in r["label"] for r in out) or not any("Ends" in r["label"] for r in out):
+        return None
+    return {"rows": out,
+            "notes": [{"text": n["text"], "after": sum(1 for r in rows if r["y"] > n["y"])} for n in notes]}
+
+
 # ---------------------------------------------------------------- scheduler
 
 SOURCES = [
