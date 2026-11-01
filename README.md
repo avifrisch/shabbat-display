@@ -95,7 +95,7 @@ On a PC you sit at, the display can come up as a screen saver instead of running
 - **Changing the wait:** set `screensaver_minutes` in `settings.json`. It takes effect right away (the launcher reads its settings each time). If `settings.json` has a typo, every setting falls back to its default and `screensaver.log` says so.
 - **Not locking:** set `"screensaver_lock": false` in `settings.json`. It takes effect the next time the screen saver closes.
 - **A laptop with a monitor plugged in:** setup asks whether to use only the plugged-in monitor. With `"screensaver_screens": "external"` the display shows on the monitor and the laptop's own screen is turned all the way down while it shows (Windows can't switch off just one screen), then put back on any input. Without the monitor, it shows on the laptop screen.
-- **Keeping the PC awake:** with `"keep_pc_awake": true` (setup asks) the PC never goes to sleep while the screen saver is on, but the screens still turn off on the power plan's schedule. Closing a laptop's lid still does what the power plan says.
+- **Keeping the PC awake:** with `"keep_pc_awake": true` (setup asks) the PC never goes to sleep while the screen saver is on, and while the display shows its screens stay on (it dims itself overnight). Otherwise the screens turn off on the power plan's schedule. Closing a laptop's lid still does what the power plan says.
 - **Updating:** download the new zip, extract it, and run its `setup-windows.bat`. It offers to update the copy in `C:\ShabbatDisplay` and keeps its settings.
 - **Starting and stopping it by hand:** `start-screensaver.bat` turns it on and `stop-display.bat` turns it off.
 

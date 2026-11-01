@@ -53,6 +53,19 @@ class IdleTests(unittest.TestCase):
         self.assertEqual(launcher.idle_from(tick=100_000, last=100_016), 0.0)
 
 
+class AwakeFlagsTests(unittest.TestCase):
+    # ES_CONTINUOUS, ES_SYSTEM_REQUIRED, ES_DISPLAY_REQUIRED
+    def test_off_lets_windows_decide(self):
+        self.assertEqual(launcher.awake_flags(keep_pc=False, showing=True), 0x80000000)
+
+    def test_idle_pc_stays_awake_but_screens_may_turn_off(self):
+        self.assertEqual(launcher.awake_flags(keep_pc=True, showing=False), 0x80000001)
+
+    def test_showing_keeps_the_screens_on(self):
+        # on a modern-standby laptop, screens off means standby and a locked PC
+        self.assertEqual(launcher.awake_flags(keep_pc=True, showing=True), 0x80000003)
+
+
 class SettingsReadTests(unittest.TestCase):
     def test_bad_settings_file_is_logged(self):
         import tempfile

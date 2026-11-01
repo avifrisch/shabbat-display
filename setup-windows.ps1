@@ -259,7 +259,7 @@ if ($saver) {
     Write-Host "laptop's own screen all the way down while it shows (Windows can't switch off one screen)."
     $ext = Ask 'Show it only on a plugged-in monitor?' ($cur.screensaver_screens -eq 'external')
     Update-Setting 'screensaver_screens' $(if ($ext) { 'external' } else { $null })
-    $awake = Ask 'Keep this PC from going to sleep? (The screens still turn off on schedule.)' ([bool]$cur.keep_pc_awake)
+    $awake = Ask 'Keep this PC from going to sleep, and its screens on while the display shows?' ([bool]$cur.keep_pc_awake)
     Update-Setting 'keep_pc_awake' $(if ($awake) { $true } else { $null })
     # If the screen turns off before the display would appear, it opens on a dark screen.
     $minutes = 10

@@ -377,13 +377,22 @@ def restore_brightness():
         pass
 
 
-def keep_pc_awake():
-    """Screen saver mode with keep_pc_awake: the PC never sleeps, but its screens
-    still turn off when the power plan says (no ES_DISPLAY_REQUIRED)."""
+def awake_flags(keep_pc, showing):
+    """Screen saver mode with keep_pc_awake: the PC never sleeps, and while the display
+    shows its screens stay on too. On a modern-standby laptop, screens off means standby,
+    and waking from it locks Windows, so the display could not come back."""
+    ES_CONTINUOUS, ES_SYSTEM_REQUIRED, ES_DISPLAY_REQUIRED = 0x80000000, 0x00000001, 0x00000002
+    if not keep_pc:
+        return ES_CONTINUOUS
+    return ES_CONTINUOUS | ES_SYSTEM_REQUIRED | (ES_DISPLAY_REQUIRED if showing else 0)
+
+
+def keep_pc_awake(showing=False):
+    if not setting("keep_pc_awake", False):
+        return
     try:
         import ctypes
-        ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
-        ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+        ctypes.windll.kernel32.SetThreadExecutionState(awake_flags(True, showing))
     except (OSError, AttributeError) as e:
         log(f"keep-awake failed: {e}")
 
@@ -463,7 +472,7 @@ def saver_loop(browser_path, server):
     restore_brightness()  # in case the launcher stopped while the laptop screen was darkened
     if setting("keep_pc_awake", False):
         keep_pc_awake()
-        log("keeping the PC awake (the screens still turn off on schedule)")
+        log("keeping the PC awake, and the screens on while the display shows")
     showing, pids, noted, profiles = False, [], "", [PROFILE]
     while True:
         if not showing:
@@ -491,6 +500,7 @@ def saver_loop(browser_path, server):
                     dimmed = set_internal_brightness(0)
                     if dimmed is not None:
                         save_dimmed(dimmed)
+                keep_pc_awake(showing=True)
                 showing, pids = True, []
                 for _ in range(50):  # wait for the relaunched browsers, then remember their processes
                     if last_input() != shown_at or all(browser_running(p) for p in profiles):
@@ -504,6 +514,7 @@ def saver_loop(browser_path, server):
                 stop_browser(pids, profiles)
                 showing = False
                 restore_brightness()
+                keep_pc_awake()  # the screens may turn off on schedule again
                 if last_input() != shown_at:
                     lock = setting("screensaver_lock", True)
                     log("closed: input" + ("; locking" if lock else ""))
