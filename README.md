@@ -62,9 +62,21 @@ Every request names itself (`ShabbatDisplay/1.0 (personal home display)`) and on
 | Times of Israel | Times of Israel RSS, with a Google News backup | 10 min |
 | Agenda | The LPM calendar feed, or any calendar's private ICS link | 10 min |
 | Shul davening chart, bulletin, monthly calendar | bnaiyeshurun.org | Fridays from noon until this week's bulletin is in, or `update-shul` |
+| Other sports (NBA, WNBA, NFL, NHL, MLS, college basketball and football) | ESPN's public site API | 30 sec around your teams' games, 3 min otherwise, hourly out of season |
+| Market indices and your stocks (delayed) | CNBC's quote service, Yahoo as backup | 5 min while the market is open, once after the close |
+| Business headlines | NYT Business and CNBC RSS | 15 min |
 | Article text, box scores, detailed forecast, radar | The news sites, MLB Stats API, Open-Meteo (forecast and air quality), National Weather Service (forecast and Upton, NY radar) | Only when a panel is open |
 
 If a source fails, the screen keeps showing the last good data, notes how old it is, and the server keeps retrying. Everything is also saved to `cache.json`, so a restart comes back with data right away.
+
+## The Display Manager
+
+The Display Manager is a Windows app on Avi's PC that runs the whole house's display: which sports and teams, the stock watchlist, each screen's rotation, whether a PC shows the display all the time or as a screen saver, the shul's files, the server's health, and the NYT sign-in. It talks to the server on the always-on PC. Its settings live there in `household.json`, so the screens never need the app, including on Shabbat.
+
+- **Access code:** setup prints it at the end on the always-on PC (it's in `manage-key.txt`). The app asks for it once.
+- **Screens:** every PC's launcher checks in under its own name (the PC's name, or `screen_name` in `settings.json`). Until you save a screen in the app, it keeps doing what its own settings say. After a save, the change reaches it within a minute.
+- **Agenda:** only on screens where you turn it on. The others get no agenda data at all.
+- **The iPad:** add `?screen=iPad` to its address (`http://<ip>:8765/?screen=iPad`) so it gets its own rotation.
 
 ## Setup on a Windows PC or laptop
 
@@ -198,7 +210,10 @@ Edit `settings.json` (Notepad on Windows, or `nano settings.json` on the Pi), th
 - **Screen saver:** `screensaver_minutes`, the minutes without mouse or keyboard input before the display appears (screen saver mode only; default 10). `screensaver_lock` (default `true`) locks Windows when input closes it.
 - **NYT subscription:** `nyt_cookie`, for full NYT articles in the reading panel. See [Tapping and swiping](#tapping-and-swiping). Secret, like the agenda links.
 - **Other devices:** set `"bind": "0.0.0.0"` to view the dashboard from another device on your network, such as a tablet in another room, at `http://<computer-name-or-ip>:8765`.
-- **Team:** `team_id`, `team_abbr`, `division_id`, `division_name`, `league_id` (not in the example file; defaults are the Yankees and the AL East).
+- **Team:** `team_id`, `team_abbr`, `division_id`, `division_name`, `league_id` (not in the example file; defaults are the Yankees and the AL East). The Display Manager's MLB favorite overrides these.
+- **Screen name:** `screen_name`, this PC's name in the Display Manager (empty uses the PC's name).
+
+What the Display Manager sets (sports, stocks, rotations, screen modes, the NYT sign-in) is kept in `household.json` and overrides the same things here.
 
 ## Previewing and testing
 

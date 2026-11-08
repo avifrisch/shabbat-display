@@ -236,7 +236,9 @@ Step 'Testing the data sources (takes about a minute)'
 # request per site from PowerShell fetches whatever roots are missing.
 foreach ($site in 'https://lite.cnn.com/', 'https://api.open-meteo.com/', 'https://api.weather.gov/',
                   'https://www.hebcal.com/', 'https://statsapi.mlb.com/', 'https://www.mlb.com/',
-                  'https://rss.nytimes.com/', 'https://www.timesofisrael.com/', 'https://news.google.com/') {
+                  'https://rss.nytimes.com/', 'https://www.timesofisrael.com/', 'https://news.google.com/',
+                  'https://site.api.espn.com/', 'https://quote.cnbc.com/', 'https://www.cnbc.com/',
+                  'https://query1.finance.yahoo.com/') {
     try { Invoke-WebRequest $site -UseBasicParsing -Method Head -TimeoutSec 15 | Out-Null } catch {}
 }
 & $python server.py --check
@@ -318,6 +320,16 @@ Step 'Start'
 $startQ = if ($saver) { 'Turn on the screen saver now?' } else { 'Start the display now? (Alt+F4 closes the browser; it reopens within a minute)' }
 if (Ask $startQ) {
     Start-Process -FilePath $pythonw -ArgumentList $launchArgs -WorkingDirectory $Here
+}
+if ($isServer) {
+    # the Display Manager app's access code; the server makes it the first time it runs
+    & $python server.py --setting port | Out-Null
+    $keyFile = Join-Path $Here 'manage-key.txt'
+    if (Test-Path $keyFile) {
+        Write-Host ''
+        Write-Host "Display Manager access code: $((Get-Content $keyFile -Raw).Trim())" -ForegroundColor Cyan
+        Write-Host '(Type it into the Display Manager app once. Keep it private.)'
+    }
 }
 Write-Host ''
 Write-Host 'Setup finished.' -ForegroundColor Green

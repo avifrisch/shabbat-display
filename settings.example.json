@@ -29,6 +29,9 @@
   "screensaver_screens": "all",
   "keep_pc_awake": false,
 
+  "_screen_help": "The name this PC's screen has in the Display Manager app. Leave empty to use the PC's name.",
+  "screen_name": "",
+
   "bind": "127.0.0.1",
   "port": 8765
 }
