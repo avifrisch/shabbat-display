@@ -27,7 +27,15 @@ internal sealed class SaverSession
     public Task<CoreWebView2Environment> Browser()
     {
         Directory.CreateDirectory(WebFolder);
+        if (browser is { IsFaulted: true } or { IsCanceled: true }) browser = null;   // a failed start is tried again
         return browser ??= CoreWebView2Environment.CreateAsync(null, WebFolder);
+    }
+
+    /// <summary>The shared browser died: the next window to need one starts a new one. Every window reports
+    /// the same death, so only the browser that died is forgotten, not one already started in its place.</summary>
+    public void BrowserDied(CoreWebView2Environment dead)
+    {
+        if (browser is { IsCompletedSuccessfully: true } t && ReferenceEquals(t.Result, dead)) browser = null;
     }
 
     public void Start()

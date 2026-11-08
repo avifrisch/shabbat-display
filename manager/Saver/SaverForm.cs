@@ -1,3 +1,4 @@
+﻿using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 using WinScreen = System.Windows.Forms.Screen;
 
@@ -11,10 +12,11 @@ internal sealed class SaverForm : Form
     private readonly SaverSession session;
     private readonly int index;
     private readonly Rectangle bounds;
-    private readonly WebView2 web = new() { Dock = DockStyle.Fill, Visible = false, DefaultBackgroundColor = Navy };
     private readonly Fallback fallback = new() { Dock = DockStyle.Fill };
+    private WebView2? web;   // made again after its browser process dies
+    private CoreWebView2Environment? env;   // the browser it runs in
     private int sinceTry;
-    private bool webReady, showingWeb;
+    private bool webReady, starting, showingWeb;
 
     public SaverForm(SaverSession session, int index, WinScreen screen)
     {
@@ -28,7 +30,6 @@ internal sealed class SaverForm : Form
         ShowInTaskbar = false;
         BackColor = Navy;
         Text = "Shabbat Display";
-        Controls.Add(web);
         Controls.Add(fallback);
     }
 
@@ -37,10 +38,24 @@ internal sealed class SaverForm : Form
         base.OnShown(e);
         Bounds = bounds;   // again, now that the window is on its monitor (it may have another DPI)
         Native.KeepOnTop(Handle);
-        if (session.Config is null) { fallback.ShowWords = true; return; }
+        await StartWeb();
+        Navigate();
+    }
+
+    /// <summary>A browser in this window, unless one is ready or on its way.</summary>
+    private async Task StartWeb()
+    {
+        if (webReady || starting) return;
+        starting = true;
         try
         {
-            await web.EnsureCoreWebView2Async(await session.Browser());
+            if (web is null)
+            {
+                web = new WebView2 { Dock = DockStyle.Fill, Visible = false, DefaultBackgroundColor = Navy };
+                Controls.Add(web);
+            }
+            env = await session.Browser();
+            await web.EnsureCoreWebView2Async(env);
             var s = web.CoreWebView2.Settings;
             s.AreDefaultContextMenusEnabled = false;
             s.AreDevToolsEnabled = false;
@@ -51,14 +66,43 @@ internal sealed class SaverForm : Form
             {
                 if (a.IsSuccess) ShowWeb(); else ShowFallback();
             };
-            web.CoreWebView2.ProcessFailed += (_, _) => ShowFallback();
+            web.CoreWebView2.ProcessFailed += (_, a) => BrowserFailed(a.ProcessFailedKind);
             webReady = true;
-            Navigate();
         }
-        catch (Exception)   // no WebView2 runtime, or it couldn't start
+        catch (Exception)   // no WebView2 runtime, or it couldn't start: try again in 30 s
         {
+            DropWeb();
             fallback.ShowWords = true;
         }
+        finally
+        {
+            starting = false;
+        }
+    }
+
+    /// <summary>A page that crashed is loaded again on the next retry; a browser that died is replaced,
+    /// with a new browser process, so the display comes back without anyone touching it.</summary>
+    private void BrowserFailed(CoreWebView2ProcessFailedKind kind)
+    {
+        ShowFallback();
+        if (kind == CoreWebView2ProcessFailedKind.BrowserProcessExited) BrowserGone();
+    }
+
+    /// <summary>Forget this browser (a dead one can't be asked anything), so the next retry starts a new one.</summary>
+    private void BrowserGone()
+    {
+        if (env is not null) session.BrowserDied(env);
+        env = null;
+        DropWeb();
+    }
+
+    private void DropWeb()
+    {
+        webReady = false;
+        if (web is null) return;
+        Controls.Remove(web);
+        try { web.Dispose(); } catch (Exception) { }   // its browser is already gone
+        web = null;
     }
 
     protected override void OnDpiChanged(DpiChangedEventArgs e)
@@ -83,21 +127,32 @@ internal sealed class SaverForm : Form
         if (showingWeb) return;
         sinceTry++;
         if (sinceTry >= 10) fallback.ShowWords = true;
-        if (sinceTry >= 30) Navigate();
+        if (sinceTry >= 30) _ = Retry();
+    }
+
+    private async Task Retry()
+    {
+        sinceTry = 0;
+        await StartWeb();
+        Navigate();
     }
 
     private void Navigate()
     {
         sinceTry = 0;
-        if (!webReady || session.Config is not { } config) return;
+        if (!webReady || web is null || session.Config is not { } config) return;
         try { web.CoreWebView2.Navigate(config.PageUrl(index).AbsoluteUri); }
-        catch (Exception) { ShowFallback(); }
+        catch (Exception)   // its browser is gone, whether or not ProcessFailed said so
+        {
+            ShowFallback();
+            BrowserGone();
+        }
     }
 
     private void ShowWeb()
     {
         showingWeb = true;
-        web.Visible = true;
+        if (web is not null) web.Visible = true;
         fallback.Visible = false;
     }
 
@@ -106,7 +161,7 @@ internal sealed class SaverForm : Form
         showingWeb = false;
         fallback.ShowWords = true;
         fallback.Visible = true;
-        web.Visible = false;
+        if (web is not null) web.Visible = false;
     }
 
     /// <summary>The display's dark background with a clock, and a quiet line when it can't be reached.</summary>
