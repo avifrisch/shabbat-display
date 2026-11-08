@@ -22,7 +22,10 @@ internal static class Program
                 }
                 break;
             case SaverAction.Preview:
-                Application.Run(new PreviewWindow(launch.Parent));
+                Native.MatchDpiOf(launch.Parent);
+                var preview = new PreviewWindow(launch.Parent);
+                Application.Run();
+                GC.KeepAlive(preview);
                 break;
             default:
                 MessageBox.Show(ManagedHere, "Shabbat Display", MessageBoxButtons.OK, MessageBoxIcon.Information);

@@ -36,6 +36,25 @@ internal static class Native
     [DllImport("user32.dll")]
     public static extern bool IsWindow(nint hWnd);
 
+    [DllImport("user32.dll")]
+    private static extern nint SetParent(nint child, nint parent);
+
+    /// <summary>Put a child window inside another program's window.</summary>
+    public static void MoveInto(nint child, nint parent) => SetParent(child, parent);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetWindowDpiAwarenessContext(nint hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern nint SetThreadDpiAwarenessContext(nint context);
+
+    /// <summary>A child window in another program must share its DPI mode, or Windows won't host it.</summary>
+    public static void MatchDpiOf(nint window)
+    {
+        var context = GetWindowDpiAwarenessContext(window);
+        if (context != 0) SetThreadDpiAwarenessContext(context);
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left, Top, Right, Bottom; }
 
