@@ -178,5 +178,33 @@ class ManageTests(ManageCase):
         self.assertIsNone(st["problem"])
 
 
+NBA_TEAMS = [{"id": 18, "abbr": "NY", "name": "New York Knicks"}, {"id": 17, "abbr": "BKN", "name": "Brooklyn Nets"},
+             {"id": 2, "abbr": "BOS", "name": "Boston Celtics"}]
+
+
+class TeamSearchTests(ManageCase):
+    def test_team_search(self):
+        with mock.patch.object(server, "league_teams", return_value=sorted(NBA_TEAMS, key=lambda t: t["name"])):
+            self.assertEqual([t["id"] for t in server.team_search("nba", "kni")], [18])
+            self.assertEqual([t["id"] for t in server.team_search("nba", "n")], [17, 18])
+            self.assertEqual([t["id"] for t in server.team_search("nba", "BOS")], [2])
+            self.assertEqual(len(server.team_search("nba", "")), 3)
+            code, j = self.call("GET", "/api/manage/teams?league=nba&q=kni")
+        self.assertEqual((code, j["teams"][0]["name"]), (200, "New York Knicks"))
+        self.assertEqual(self.call("GET", "/api/manage/teams?league=xfl&q=a")[0], 400)
+
+    def test_league_teams_from_espn(self):
+        body = {"sports": [{"leagues": [{"teams": [{"team": {"id": "18", "abbreviation": "NY", "displayName": "New York Knicks"}},
+                                                   {"team": {"id": "2", "abbreviation": "BOS", "displayName": "Boston Celtics"}}]}]}]}
+        with mock.patch.object(server, "espn_json", return_value=body):
+            self.assertEqual(server.league_teams("nba"), [{"id": 2, "abbr": "BOS", "name": "Boston Celtics"},
+                                                          {"id": 18, "abbr": "NY", "name": "New York Knicks"}])
+
+    def test_league_teams_for_mlb(self):
+        body = {"teams": [{"id": 147, "abbreviation": "NYY", "name": "New York Yankees"}]}
+        with mock.patch.object(server, "get_json", return_value=body):
+            self.assertEqual(server.league_teams("mlb"), [{"id": 147, "abbr": "NYY", "name": "New York Yankees"}])
+
+
 if __name__ == "__main__":
     unittest.main()

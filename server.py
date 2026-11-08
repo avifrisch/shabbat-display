@@ -2553,6 +2553,42 @@ def _manage_status():
     return {"ok": True, "started": STARTED, "feeds": feeds, "shul": shul_status(), "screens": screens}
 
 
+def league_teams(league):
+    """Every team in a league, [{id, abbr, name}] sorted by name; looked up once a week."""
+    def get():
+        if league == "mlb":
+            raw = [{"id": t["id"], "abbr": t.get("abbreviation"), "name": t.get("name")}
+                   for t in get_json(f"{MLB}/teams?sportId=1").get("teams") or []]
+        else:
+            j = espn_json(f"{ESPN}/site/v2/sports/{LEAGUES[league]['path']}/teams?limit=1000")
+            raw = []
+            for lg in ((j.get("sports") or [{}])[0]).get("leagues") or []:
+                for t in lg.get("teams") or []:
+                    t = t.get("team") or {}
+                    try:
+                        raw.append({"id": int(t["id"]), "abbr": t.get("abbreviation"), "name": t.get("displayName")})
+                    except (KeyError, TypeError, ValueError):
+                        continue
+        return sorted((t for t in raw if t["name"]), key=lambda t: t["name"])
+    return cached(f"teams:{league}", 7 * 86400, get)
+
+
+def team_search(league, q):
+    """Up to 20 teams: abbreviation or word-start matches first, then any match."""
+    q = (q or "").strip().lower()
+    teams = league_teams(league)
+    if not q:
+        return teams[:20]
+    first, rest = [], []
+    for t in teams:
+        words = [(t["abbr"] or "").lower()] + t["name"].lower().split()
+        if any(w.startswith(q) for w in words):
+            first.append(t)
+        elif q in t["name"].lower():
+            rest.append(t)
+    return (first + rest)[:20]
+
+
 def _restart_soon():
     log("restart asked for by the Display Manager")
     threading.Timer(0.5, lambda: os._exit(0)).start()
@@ -2579,6 +2615,14 @@ def manage_route(method, path, query, key, body):
             except ValueError:
                 raise BadRequest("lines must be a number") from None
             return 200, json.dumps({"lines": log_tail(n)})
+        if method == "GET" and name == "teams":
+            league = (q.get("league") or [""])[0]
+            _need(league == "mlb" or league in LEAGUES, f"Unknown league: {league}")
+            try:
+                return 200, json.dumps({"teams": team_search(league, (q.get("q") or [""])[0])})
+            except Exception as e:  # noqa: BLE001
+                log(f"team search {league}: {e}")
+                return 503, json.dumps({"ok": False, "error": "The team list couldn't be loaded. Try again in a minute."})
         if method != "POST":
             return 404, json.dumps({"ok": False, "error": "not found"})
         try:
