@@ -45,6 +45,22 @@ class ScreenTests(ManageCase):
         self.assertEqual(code, 200)
         self.assertEqual(j["config"]["screen"], "Kitchen iPad")
 
+    def test_preview_shows_the_screen_without_checking_in(self):
+        server.store.data["agenda"] = {"days": []}
+        s = json.loads(server.state_json("DESKTOP-H72VKDJ", preview=True))
+        self.assertIn("agenda", [r["scene"] for r in s["config"]["rotation"]])
+        self.assertIn("agenda", s["data"])
+        self.assertNotIn("DESKTOP-H72VKDJ", server.seen)
+        json.loads(server.state_json("Somewhere New", preview=True))
+        self.assertNotIn("Somewhere New", server.household()["screens"])
+        self.assertNotIn("Somewhere New", server.seen)
+
+    def test_state_route_passes_preview(self):
+        code, j = self.get("/api/state?screen=Kitchen%20iPad&preview=1")
+        self.assertEqual((code, j["config"]["screen"]), (200, "Kitchen iPad"))
+        self.assertNotIn("Kitchen iPad", server.seen)
+        self.assertNotIn("Kitchen iPad", server.household()["screens"])
+
     def test_sports_config_for_leagues_switched_on(self):
         h = server.household()
         h["sports"]["nba"] = {"on": True, "teams": [{"id": 18, "abbr": "NY", "name": "New York Knicks"}], "favorite": 18}

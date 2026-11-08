@@ -2215,6 +2215,10 @@ def _fetch_shul(force):
         chart = dated(keep_or_get(chart, links["chart"])[0], "week_of")
     if links["bulletin"]:
         entry, data = keep_or_get(bulletin, links["bulletin"])
+        if data is None and entry.get("times") is None:
+            # kept, but never read (an older reader failed on it): read the stored file again
+            with open(os.path.join(SHUL_DIR, entry["file"]), "rb") as f:
+                data = f.read()
         if data is not None:
             try:
                 entry["times"] = shabbat_times(pdf_pages(data))
@@ -2528,21 +2532,22 @@ def sports_config(h):
     return out
 
 
-def state_json(screen=None):
+def state_json(screen=None, preview=False):
     """The page's data. With a valid screen name, that screen's rotation; the agenda only
-    goes to screens whose rotation has it. Never fails: with any problem in the household
+    goes to screens whose rotation has it. preview (the app's live view) shows a screen
+    without counting as its check-in. Never fails: with any problem in the household
     config it answers with the house defaults, so no screen falls back to preview data."""
     try:
-        return _state_json(screen)
+        return _state_json(screen, preview=preview)
     except Exception as e:  # noqa: BLE001
         log(f"state for screen {screen!r}: {e}; answering with the defaults")
         return _state_json(None, default_household())
 
 
-def _state_json(screen, fallback=None):
+def _state_json(screen, fallback=None, preview=False):
     if screen is not None and not valid_screen(screen):
         screen = None
-    if screen:
+    if screen and not preview:
         try:
             check_in(screen, False, None)
         except OSError as e:  # e.g. household.json held open by another program: still answer
@@ -2944,8 +2949,9 @@ class Handler(BaseHTTPRequestHandler):
                 with open(PAGE_FILE, "rb") as f:
                     self._send(200, f.read(), "text/html; charset=utf-8")
             elif path == "/api/state":
-                screen = (urllib.parse.parse_qs(parsed.query).get("screen") or [None])[0]
-                self._send(200, state_json(screen), "application/json")
+                q = urllib.parse.parse_qs(parsed.query)
+                screen = (q.get("screen") or [None])[0]
+                self._send(200, state_json(screen, preview=(q.get("preview") or [""])[0] == "1"), "application/json")
             elif path == "/api/screen-settings":
                 self._send(*screen_settings_route(parsed.query), "application/json")
             elif path == "/api/article":

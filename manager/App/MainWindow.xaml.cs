@@ -9,6 +9,7 @@ public sealed partial class MainWindow : Window
     private static readonly Dictionary<string, Type> PageTypes = new()
     {
         ["Status"] = typeof(StatusPage),
+        ["Live"] = typeof(LivePage),
         ["Sports"] = typeof(SportsPage),
         ["Business"] = typeof(BusinessPage),
         ["Screens"] = typeof(ScreensPage),

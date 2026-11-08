@@ -423,7 +423,7 @@ let S = null, DEMO = false, lastOk = 0;
 
 async function poll() {
   try {
-    const r = await fetch("/api/state" + (screenParam() ? "?screen=" + encodeURIComponent(screenParam()) : ""), {cache: "no-store"});
+    const r = await fetch("/api/state" + (screenParam() ? "?screen=" + encodeURIComponent(screenParam()) + (Q.get("preview") === "1" ? "&preview=1" : "") : ""), {cache: "no-store"});
     if (!r.ok) throw new Error(r.status);
     S = await r.json(); DEMO = false; lastOk = Date.now();
   } catch (e) {

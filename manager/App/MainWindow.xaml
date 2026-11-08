@@ -18,6 +18,7 @@
                         IsSettingsVisible="False" OpenPaneLength="200" SelectionChanged="Nav_SelectionChanged">
             <NavigationView.MenuItems>
                 <NavigationViewItem Content="Status" Tag="Status" Icon="Home" />
+                <NavigationViewItem Content="Live view" Tag="Live" Icon="Play" />
                 <NavigationViewItem Content="Sports" Tag="Sports" Icon="Favorite" />
                 <NavigationViewItem Content="Business" Tag="Business" Icon="Shop" />
                 <NavigationViewItem Content="Screens" Tag="Screens" Icon="TwoPage" />

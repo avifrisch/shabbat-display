@@ -337,6 +337,17 @@ class ShulSourceTests(test_server.Isolated):
         self.assertEqual(v["bulletin"]["shabbat"], "2026-10-24")
         self.assertEqual(v["chart"]["week_of"], "2026-10-25")
 
+    def test_stored_bulletin_without_times_is_read_again(self):
+        # an older reader failed on this bulletin; the file on disk reads fine now
+        stored = server.fetch_shul(force=True)
+        stored["bulletin"]["times"] = None
+        server.store.data["shul"] = stored
+        self.asked.clear()
+        v = server.fetch_shul(force=True)
+        self.assertTrue(v["bulletin"]["times"]["rows"])
+        self.assertNotIn(BULLETIN, self.asked)
+
+
 class ShulGetTests(unittest.TestCase):
     def test_requests_say_what_they_are(self):
         seen = []
