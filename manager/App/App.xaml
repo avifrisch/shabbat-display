@@ -1,0 +1,20 @@
+<Application
+    x:Class="ShabbatManager.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    RequestedTheme="Dark">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+            <Color x:Key="SystemAccentColor">#E5BA5E</Color>
+            <Color x:Key="SystemAccentColorLight1">#EBC97E</Color>
+            <Color x:Key="SystemAccentColorLight2">#F0D69B</Color>
+            <Color x:Key="SystemAccentColorLight3">#F6E5BF</Color>
+            <Color x:Key="SystemAccentColorDark1">#C99E43</Color>
+            <Color x:Key="SystemAccentColorDark2">#A8822F</Color>
+            <Color x:Key="SystemAccentColorDark3">#86661F</Color>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

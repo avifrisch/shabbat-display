@@ -23,3 +23,5 @@ household.json.bak.tmp
 household.json.bad-*
 screen-settings.json.tmp
 sec-tickers.json.tmp
+manager/**/bin/
+manager/**/obj/

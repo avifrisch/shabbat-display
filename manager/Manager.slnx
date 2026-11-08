@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/App/">
+    <Project Path="App/ShabbatManager.csproj">
+      <Platform Project="x64" />
+    </Project>
+  </Folder>
+  <Project Path="Manager.Core/Manager.Core.csproj" />
+  <Project Path="Manager.Tests/Manager.Tests.csproj" />
+</Solution>
