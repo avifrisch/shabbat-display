@@ -2000,12 +2000,91 @@ def start_sources():
         time.sleep(0.3)  # stagger startup requests
 
 
-def state_json():
+def check_in(name, launcher, local):
+    """Note that a screen asked for its page or settings. A new name joins the household with
+    the house rotation; until it's saved from the app, a launcher's own settings are kept."""
+    with _household_lock:
+        w = seen.setdefault(name, {"last": None, "launcher": False})
+        w["last"] = time.time()
+        w["launcher"] = w["launcher"] or launcher
+        h = household()
+        s = h["screens"].get(name)
+        changed = s is None
+        if s is None:
+            s = h["screens"][name] = _new_screen()
+        if launcher and not s.get("launcher"):
+            s["launcher"] = changed = True
+        if launcher and local is not None and not s.get("saved") and s.get("local") != local:
+            s["local"] = local
+            changed = True
+        if changed:
+            save_household(h)
+        return s
+
+
+def effective_rotation(name, h=None):
+    h = h or household()
+    s = h["screens"].get(name) if name else None
+    rot = (s or {}).get("rotation") or h["default_rotation"]
+    return [{"scene": r["scene"], "seconds": r["seconds"]} for r in rot if r.get("on", True)]
+
+
+def sports_config(h):
+    out = {}
+    names = {"mlb": "MLB", **{k: v["name"] for k, v in LEAGUES.items()}}
+    for k, v in h["sports"].items():
+        if k not in names or not v.get("on"):
+            continue
+        fav = next((t for t in v.get("teams") or [] if t["id"] == v.get("favorite")), None) or {}
+        out[k] = {"name": names[k], "favorite_abbr": fav.get("abbr"), "favorite_name": fav.get("name"),
+                  "teams": [t["id"] for t in v.get("teams") or []]}
+    return out
+
+
+def state_json(screen=None):
+    """The page's data. With a valid screen name, that screen's rotation; the agenda only
+    goes to screens whose rotation has it."""
+    if screen is not None and not valid_screen(screen):
+        screen = None
+    if screen:
+        check_in(screen, False, None)
+    h = household()
+    rot = effective_rotation(screen, h)
     snap = store.snapshot()
+    data = snap["data"]
+    if "agenda" not in [r["scene"] for r in rot]:
+        data = {k: v for k, v in data.items() if k != "agenda"}
     cfg = {k: CONFIG[k] for k in ("location_name", "team_abbr", "division_name", "zmanim_labels",
                                   "dim_start", "dim_end", "dim_level", "rotation_seconds")}
+    cfg.update(rotation=rot, screen=screen, sports=sports_config(h),
+               business_news=dict(h["business"].get("news") or {}))
     return json.dumps({"now": now().isoformat(timespec="seconds"), "config": cfg,
-                       "data": snap["data"], "meta": snap["meta"]})
+                       "data": data, "meta": snap["meta"]})
+
+
+def _flag(v, default):
+    return default if v is None else v in ("1", "true", "yes", "on")
+
+
+def screen_settings_route(query):
+    """/api/screen-settings: a launcher checks in with its own settings and gets back the
+    ones to follow. No access code; nothing secret in it."""
+    q = {k: v[0] for k, v in urllib.parse.parse_qs(query).items()}
+    name = q.get("screen", "")
+    if not valid_screen(name):
+        return 400, json.dumps({"ok": False, "error": "bad screen name"})
+    try:
+        minutes = max(0.25, min(240.0, float(q.get("minutes", 10))))
+    except ValueError:
+        minutes = 10
+    local = {"mode": "saver" if q.get("mode") == "saver" else "always",
+             "saver": {"minutes": minutes, "lock": _flag(q.get("lock"), True),
+                       "screens": "external" if q.get("screens") == "external" else "all",
+                       "keep_awake": _flag(q.get("awake"), False)}}
+    s = check_in(name, True, local)
+    src = s if s.get("saved") else (s.get("local") or local)
+    return 200, json.dumps({"ok": True, "screen": name, "mode": src.get("mode", "always"),
+                            "saver": src.get("saver") or default_saver(), "saved": bool(s.get("saved"))})
 
 
 # ---------------------------------------------------------------- management API
@@ -2312,7 +2391,10 @@ class Handler(BaseHTTPRequestHandler):
                 with open(PAGE_FILE, "rb") as f:
                     self._send(200, f.read(), "text/html; charset=utf-8")
             elif path == "/api/state":
-                self._send(200, state_json(), "application/json")
+                screen = (urllib.parse.parse_qs(parsed.query).get("screen") or [None])[0]
+                self._send(200, state_json(screen), "application/json")
+            elif path == "/api/screen-settings":
+                self._send(*screen_settings_route(parsed.query), "application/json")
             elif path == "/api/article":
                 self._send(*article_route(parsed.query), "application/json")
             elif path == "/api/game":
