@@ -6,4 +6,5 @@
   </Folder>
   <Project Path="Manager.Core/Manager.Core.csproj" />
   <Project Path="Manager.Tests/Manager.Tests.csproj" />
+  <Project Path="Saver/ShabbatSaver.csproj" />
 </Solution>
