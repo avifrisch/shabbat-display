@@ -13,3 +13,8 @@ __pycache__/
 shul/
 dist/
 brightness-before-saver.txt
+household.json
+household.json.tmp
+manage-key.txt
+screen-settings.json
+sec-tickers.json

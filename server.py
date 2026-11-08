@@ -15,6 +15,7 @@ Runs on Windows, macOS and Linux (including Raspberry Pi OS).
 """
 
 import calendar as cal_mod
+import copy
 import html
 import json
 import os
@@ -262,6 +263,140 @@ class Store:
 
 
 store = Store()
+
+# ---------------------------------------------------------------- household
+# What the Display Manager app sets: leagues and teams, the stock watchlist, each screen's
+# rotation and mode, and the NYT sign-in. Kept in household.json, written only by this
+# server and read again whenever the file changes. It overrides settings.json, which
+# stays the machine's own setup and is never written here.
+
+HOUSEHOLD_FILE = os.path.join(HERE, "household.json")
+KEY_FILE = os.path.join(HERE, "manage-key.txt")
+SCENE_SECONDS_RANGE = (5, 300)
+# leagues other than MLB, all from ESPN's public site API; MLB stays on statsapi.mlb.com
+LEAGUES = {
+    "nba":   {"name": "NBA", "sport": "basketball", "path": "basketball/nba", "groups": None},
+    "wnba":  {"name": "WNBA", "sport": "basketball", "path": "basketball/wnba", "groups": None},
+    "nfl":   {"name": "NFL", "sport": "football", "path": "football/nfl", "groups": None},
+    "nhl":   {"name": "NHL", "sport": "hockey", "path": "hockey/nhl", "groups": None},
+    "mls":   {"name": "MLS", "sport": "soccer", "path": "soccer/usa.1", "groups": None},
+    "ncaam": {"name": "Men's college basketball", "sport": "basketball",
+              "path": "basketball/mens-college-basketball", "groups": 50},
+    "ncaaw": {"name": "Women's college basketball", "sport": "basketball",
+              "path": "basketball/womens-college-basketball", "groups": 50},
+    "ncaaf": {"name": "College football", "sport": "football", "path": "football/college-football", "groups": 80},
+}
+SERVER_PC = "DESKTOP-H72VKDJ"  # the always-on display; the only screen that keeps the agenda at first
+
+_household_lock = threading.RLock()
+_household_cache = None
+_household_mtime = None
+_household_noted = None
+seen = {}  # screen name -> {"last": epoch seconds, "launcher": bool}, in memory only
+
+
+def default_household():
+    """Today's display, as the household config it becomes on first start."""
+    secs = CONFIG["rotation_seconds"]
+    rot = [{"scene": s, "seconds": int(secs.get(s, 30)), "on": True}
+           for s in ("shul", "yankees", "mlb", "news", "israel", "business")]
+    sports = {"mlb": {"on": True, "favorite": CONFIG["team_id"],
+                      "teams": [{"id": CONFIG["team_id"], "abbr": CONFIG["team_abbr"], "name": "New York Yankees"}
+                                if CONFIG["team_id"] == 147 else
+                                {"id": CONFIG["team_id"], "abbr": CONFIG["team_abbr"], "name": CONFIG["team_abbr"]}]}}
+    sports.update({k: {"on": False, "teams": [], "favorite": None} for k in LEAGUES})
+    agenda = {"scene": "agenda", "seconds": int(secs.get("agenda", 25)), "on": True}
+    return {
+        "version": 1,
+        "sports": sports,
+        "business": {"on": True, "watchlist": [], "news": {"biz_nyt": True, "biz_cnbc": True}},
+        "default_rotation": rot,
+        "screens": {SERVER_PC: {"rotation": [agenda] + copy.deepcopy(rot), "launcher": True, "saved": False,
+                                "mode": "always", "saver": default_saver(), "local": None}},
+        "secrets": {"nyt_cookie": ""},
+    }
+
+
+def default_saver():
+    return {"minutes": 10, "lock": True, "screens": "all", "keep_awake": False}
+
+
+def _fill_household(h):
+    """Add whatever an older or hand-trimmed file is missing."""
+    d = default_household()
+    for k, v in d.items():
+        if k != "screens" and not isinstance(h.get(k), type(v)):
+            h[k] = v
+    h.setdefault("screens", {})
+    for k, v in d["sports"].items():
+        if not isinstance(h["sports"].get(k), dict):
+            h["sports"][k] = v
+    h["secrets"].setdefault("nyt_cookie", "")
+    return h
+
+
+def household():
+    """The household config (a copy, safe to change and pass to save_household())."""
+    global _household_cache, _household_mtime, _household_noted
+    with _household_lock:
+        try:
+            mtime = os.path.getmtime(HOUSEHOLD_FILE)
+        except OSError:
+            mtime = None
+        if mtime is None:
+            if _household_cache is None:
+                _household_cache = default_household()
+                save_household(_household_cache)
+                log("household.json created from the current settings")
+        elif mtime != _household_mtime:
+            try:
+                with open(HOUSEHOLD_FILE, encoding="utf-8") as f:
+                    h = json.load(f)
+                if not isinstance(h, dict):
+                    raise ValueError("not a JSON object")
+                _household_cache, _household_mtime = _fill_household(h), mtime
+            except (OSError, ValueError) as e:
+                if _household_noted != mtime:
+                    _household_noted = mtime
+                    log(f"household.json can't be read ({e}); using the last good copy")
+                if _household_cache is None:
+                    return default_household()
+        return copy.deepcopy(_household_cache)
+
+
+def save_household(h):
+    global _household_cache, _household_mtime
+    with _household_lock:
+        tmp = HOUSEHOLD_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(h, f, indent=1)
+        os.replace(tmp, HOUSEHOLD_FILE)
+        _household_cache = _fill_household(copy.deepcopy(h))
+        try:
+            _household_mtime = os.path.getmtime(HOUSEHOLD_FILE)
+        except OSError:
+            _household_mtime = None
+
+
+def manage_key():
+    """The Display Manager's access code, made on first start. Secret: never logged or returned."""
+    try:
+        with open(KEY_FILE, encoding="utf-8") as f:
+            k = f.read().strip()
+        if k:
+            return k
+    except OSError:
+        pass
+    import secrets
+    k = secrets.token_urlsafe(24)
+    with open(KEY_FILE, "w", encoding="utf-8") as f:
+        f.write(k + "\n")
+    return k
+
+
+def nyt_cookie():
+    """The NYT sign-in cookie: the one set from the app, else settings.json's. Secret."""
+    return (household()["secrets"].get("nyt_cookie") or CONFIG.get("nyt_cookie") or "").strip()
 
 # ---------------------------------------------------------------- weather
 
@@ -1075,8 +1210,8 @@ def is_nyt(url):
 
 def article_headers(url):
     headers = {"Accept": "text/html"}
-    cookie = (CONFIG.get("nyt_cookie") or "").strip()
-    if cookie and is_nyt(url):
+    cookie = nyt_cookie() if is_nyt(url) else ""
+    if cookie:
         headers["Cookie"] = cookie if "=" in cookie else "NYT-S=" + cookie
     return headers
 
@@ -1970,6 +2105,7 @@ def check():
 
 def main():
     load_settings()
+    manage_key()
     if "--setting" in sys.argv:  # used by the setup scripts
         print(CONFIG.get(sys.argv[sys.argv.index("--setting") + 1], ""))
         return
@@ -1978,6 +2114,7 @@ def main():
         return
     if "--update-shul" in sys.argv:
         sys.exit(update_shul())
+    household()  # creates household.json from today's settings on first start
     try:
         server = ThreadingHTTPServer((CONFIG["bind"], CONFIG["port"]), Handler)
     except OSError as e:
