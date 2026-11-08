@@ -11,6 +11,7 @@ public sealed partial class MainWindow : Window
         ["Status"] = typeof(StatusPage),
         ["Sports"] = typeof(SportsPage),
         ["Business"] = typeof(BusinessPage),
+        ["Screens"] = typeof(ScreensPage),
     };
 
     public MainWindow()

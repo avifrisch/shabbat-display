@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 
 namespace Manager.Core;
 
@@ -16,7 +17,17 @@ public class ManageClient(HttpClient http, Uri baseUri, string key)
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
         PropertyNameCaseInsensitive = true,
+        Converters = { new LenientInt() },
     };
+
+    /// <summary>Reads 10.0 (how Python writes a float setting) as 10.</summary>
+    private sealed class LenientInt : JsonConverter<int>
+    {
+        public override int Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+            reader.TryGetInt32(out var i) ? i : (int)Math.Round(reader.GetDouble());
+
+        public override void Write(Utf8JsonWriter writer, int value, JsonSerializerOptions options) => writer.WriteNumberValue(value);
+    }
 
     public Uri BaseUri => baseUri;
 

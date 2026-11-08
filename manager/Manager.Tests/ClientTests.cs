@@ -53,6 +53,17 @@ public class ClientTests
     }
 
     [Fact]
+    public async Task Whole_numbers_written_as_floats_still_parse()
+    {
+        // Python writes a float minutes setting as 10.0
+        var json = "{\"sports\":{},\"business\":{\"on\":true,\"watchlist\":[],\"news\":{}},\"default_rotation\":[{\"scene\":\"shul\",\"seconds\":30.0,\"on\":true}],\"screens\":{\"Den\":{\"rotation\":null,\"launcher\":true,\"saved\":false,\"mode\":\"saver\",\"saver\":{\"minutes\":10.0,\"lock\":true,\"screens\":\"all\",\"keep_awake\":false}}},\"nyt_signed_in\":false,\"agenda_set\":false,\"leagues\":{},\"scenes\":[]}";
+        var r = await Client(new FakeHandler(json)).GetHouseholdAsync();
+        Assert.Null(r.Error);
+        Assert.Equal(10, r.Value!.Screens["Den"].Saver.Minutes);
+        Assert.Equal(30, r.Value.DefaultRotation[0].Seconds);
+    }
+
+    [Fact]
     public async Task Saves_send_snake_case_bodies()
     {
         var h = new FakeHandler("{\"ok\":true}"); var c = Client(h);
