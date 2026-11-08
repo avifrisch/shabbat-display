@@ -108,6 +108,19 @@ class WindowsSaverTests(unittest.TestCase):
                     launcher.windows_saver_loop(None, "saver")
         self.assertEqual(len(checks), 2)
 
+    def test_a_change_that_wont_stick_is_logged_once(self):
+        # at the lock screen Windows refuses the change, so the launcher tries again every 30 s
+        import ctypes
+        from unittest import mock
+        logged = []
+        fake = mock.Mock()
+        with mock.patch.object(ctypes, "windll", fake, create=True), mock.patch.object(launcher, "log", logged.append):
+            launcher.apply_registry_changes({"ScreenSaverIsSecure": "0"})
+            launcher.apply_registry_changes({"ScreenSaverIsSecure": "0"})
+            launcher.apply_registry_changes({"ScreenSaverIsSecure": "1"})
+        self.assertEqual(len(logged), 2)
+        self.assertEqual(fake.user32.SystemParametersInfoW.call_count, 3)
+
     def test_screen_off_raised_only_when_too_soon(self):
         self.assertEqual(launcher.screen_off_target(10, 10), 30)
         self.assertIsNone(launcher.screen_off_target(0, 10))    # never turns off

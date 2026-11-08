@@ -480,8 +480,13 @@ def read_saver_registry():
     return out
 
 
+_registry_noted = None
+
+
 def apply_registry_changes(changes):
-    """Write them the way Control Panel does, so Windows picks them up at once."""
+    """Write them the way Control Panel does, so Windows picks them up at once. At the lock screen
+    Windows refuses them; they're tried again every pass but logged once."""
+    global _registry_noted
     import ctypes
     import winreg
     spi = {"ScreenSaveTimeOut": 0x000F, "ScreenSaveActive": 0x0011, "ScreenSaverIsSecure": 0x0077}
@@ -494,7 +499,10 @@ def apply_registry_changes(changes):
             if name in changes:
                 ctypes.windll.user32.SystemParametersInfoW(action, int(changes[name]), None,
                                                            SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
-        log("Windows screen saver: " + ", ".join(f"{k}={v}" for k, v in changes.items()))
+        note = "Windows screen saver: " + ", ".join(f"{k}={v}" for k, v in changes.items())
+        if note != _registry_noted:
+            _registry_noted = note
+            log(note)
     except (OSError, ValueError) as e:
         log(f"couldn't change the Windows screen saver settings: {e}")
 
