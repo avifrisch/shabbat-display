@@ -1,0 +1,20 @@
+<Page
+    x:Class="ShabbatManager.Pages.StatusPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer>
+        <StackPanel Spacing="8" MaxWidth="900" HorizontalAlignment="Left" Padding="0,0,24,24">
+            <Grid>
+                <TextBlock Text="Status" Style="{StaticResource TitleTextBlockStyle}" />
+                <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right">
+                    <ProgressRing x:Name="Busy" IsActive="False" Width="20" Height="20" />
+                    <Button Content="Refresh" Click="Refresh_Click" />
+                </StackPanel>
+            </Grid>
+            <InfoBar x:Name="Message" IsClosable="True" />
+            <TextBlock x:Name="Headline" Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,8,0,4" />
+            <StackPanel x:Name="Problems" Spacing="8" />
+            <StackPanel x:Name="Details" Spacing="4" />
+        </StackPanel>
+    </ScrollViewer>
+</Page>

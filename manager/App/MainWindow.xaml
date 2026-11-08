@@ -6,17 +6,37 @@
     <Window.SystemBackdrop>
         <MicaBackdrop />
     </Window.SystemBackdrop>
-    <NavigationView x:Name="Nav" PaneDisplayMode="Left" IsBackButtonVisible="Collapsed"
-                    IsSettingsVisible="False" OpenPaneLength="200" SelectionChanged="Nav_SelectionChanged">
-        <NavigationView.MenuItems>
-            <NavigationViewItem Content="Status" Tag="Status" Icon="Home" />
-            <NavigationViewItem Content="Sports" Tag="Sports" Icon="Favorite" />
-            <NavigationViewItem Content="Business" Tag="Business" Icon="Shop" />
-            <NavigationViewItem Content="Screens" Tag="Screens" Icon="TwoPage" />
-            <NavigationViewItem Content="Shul" Tag="Shul" Icon="Calendar" />
-            <NavigationViewItem Content="NYT" Tag="NYT" Icon="Contact" />
-            <NavigationViewItem Content="Server" Tag="Server" Icon="Setting" />
-        </NavigationView.MenuItems>
-        <Frame x:Name="ContentFrame" Padding="32,24" />
-    </NavigationView>
+    <Grid x:Name="Root" Loaded="Root_Loaded">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="40" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Grid x:Name="AppTitleBar" Padding="16,0,0,0">
+            <TextBlock Text="Shabbat Display Manager" VerticalAlignment="Center" Style="{StaticResource CaptionTextBlockStyle}" />
+        </Grid>
+        <NavigationView x:Name="Nav" Grid.Row="1" PaneDisplayMode="Left" IsBackButtonVisible="Collapsed"
+                        IsSettingsVisible="False" OpenPaneLength="200" SelectionChanged="Nav_SelectionChanged">
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="Status" Tag="Status" Icon="Home" />
+                <NavigationViewItem Content="Sports" Tag="Sports" Icon="Favorite" />
+                <NavigationViewItem Content="Business" Tag="Business" Icon="Shop" />
+                <NavigationViewItem Content="Screens" Tag="Screens" Icon="TwoPage" />
+                <NavigationViewItem Content="Shul" Tag="Shul" Icon="Calendar" />
+                <NavigationViewItem Content="NYT" Tag="NYT" Icon="Contact" />
+                <NavigationViewItem Content="Server" Tag="Server" Icon="Setting" />
+            </NavigationView.MenuItems>
+            <Grid Padding="32,16,8,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <InfoBar x:Name="ConnectionBar" Severity="Warning" IsClosable="False" Margin="0,0,24,12">
+                    <InfoBar.ActionButton>
+                        <Button Content="Try again" Click="TryAgain_Click" />
+                    </InfoBar.ActionButton>
+                </InfoBar>
+                <Frame x:Name="ContentFrame" Grid.Row="1" />
+            </Grid>
+        </NavigationView>
+    </Grid>
 </Window>
