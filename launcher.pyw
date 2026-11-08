@@ -436,7 +436,7 @@ def _short_path(path):
 def scr_registry_path(path, shorten=None):
     """The .scr's path for SCRNSAVE.EXE, with Windows separators: Windows may not start a screen saver
     whose path has a space, so that gets the short (8.3) form."""
-    path = os.path.normpath(path)
+    path = path.replace("/", "\\")  # not normpath: MSYS2 Python normalizes to /
     if " " not in path:
         return path
     return (shorten or _short_path)(path) or path
