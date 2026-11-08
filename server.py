@@ -585,9 +585,42 @@ def schedule(params):
     return games
 
 
+def mlb_team_info(team_id):
+    """An MLB team's abbreviation, division and league, looked up once a week."""
+    def get():
+        t = get_json(f"{MLB}/teams/{int(team_id)}?hydrate=division")["teams"][0]
+        div = (t.get("division") or {}).get("name") or ""
+        short = div.replace("American League", "AL").replace("National League", "NL")
+        return {"id": t["id"], "abbr": t.get("abbreviation"), "name": t.get("teamName") or t.get("name"),
+                "division_id": (t.get("division") or {}).get("id"), "division_name": short,
+                "league_id": (t.get("league") or {}).get("id")}
+    return cached(f"mlbteam:{int(team_id)}", 7 * 86400, get)
+
+
+def mlb_favorite():
+    """The favorite MLB team chosen in the app; the Yankees (CONFIG) if none or the lookup fails."""
+    own = {"id": CONFIG["team_id"], "abbr": CONFIG["team_abbr"], "name": None,
+           "division_id": CONFIG["division_id"], "division_name": CONFIG["division_name"],
+           "league_id": CONFIG["league_id"]}
+    fav = household()["sports"]["mlb"].get("favorite")
+    if not fav or fav == CONFIG["team_id"]:
+        return own
+    try:
+        return mlb_team_info(fav)
+    except Exception as e:  # noqa: BLE001
+        log(f"MLB team {fav} lookup failed ({e}); showing team {CONFIG['team_id']}")
+        return own
+
+
+def mlb_on():
+    return bool(household()["sports"]["mlb"].get("on", True))
+
+
 def fetch_team():
+    if not mlb_on():
+        return {"off": True}
     bd = baseball_day()
-    games = schedule({"teamId": CONFIG["team_id"],
+    games = schedule({"teamId": mlb_favorite()["id"],
                       "startDate": (bd - timedelta(days=60)).isoformat(),
                       "endDate": (bd + timedelta(days=21)).isoformat()})
     n = now()
@@ -616,11 +649,14 @@ def team_poll_seconds():
 
 
 def fetch_standings():
+    if not mlb_on():
+        return {"off": True}
+    fav = mlb_favorite()
     j = get_json(f"{MLB}/standings?" + qs({
-        "leagueId": CONFIG["league_id"], "season": season_year(),
+        "leagueId": fav["league_id"], "season": season_year(),
         "standingsTypes": "regularSeason", "hydrate": "team"}))
     for rec in j.get("records", []):
-        if (rec.get("division") or {}).get("id") != CONFIG["division_id"]:
+        if (rec.get("division") or {}).get("id") != fav["division_id"]:
             continue
         teams = []
         for tr in rec.get("teamRecords", []):
@@ -630,7 +666,7 @@ def fetch_standings():
                 "w": tr.get("wins"), "l": tr.get("losses"), "gb": tr.get("gamesBack"),
                 "pct": tr.get("winningPercentage"),
                 "streak": (tr.get("streak") or {}).get("streakCode"),
-                "rank": tr.get("divisionRank"), "is_team": t.get("id") == CONFIG["team_id"],
+                "rank": tr.get("divisionRank"), "is_team": t.get("id") == fav["id"],
             })
         teams.sort(key=lambda x: int(x["rank"] or 99))
         return {"season": season_year(), "teams": teams}
@@ -665,10 +701,13 @@ def _transactions(params):
 
 
 def fetch_transactions():
+    if not mlb_on():
+        return {"off": True}
     today = now().date()
+    team_id = mlb_favorite()["id"]
     team_name = None
     team = []
-    for t in _transactions({"teamId": CONFIG["team_id"],
+    for t in _transactions({"teamId": team_id,
                             "startDate": (today - timedelta(days=45)).isoformat(),
                             "endDate": today.isoformat()}):
         desc = t.get("description") or ""
@@ -677,7 +716,7 @@ def fetch_transactions():
             continue
         if not team_name:
             for side in ("toTeam", "fromTeam"):
-                if (t.get(side) or {}).get("id") == CONFIG["team_id"]:
+                if (t.get(side) or {}).get("id") == team_id:
                     team_name = t[side]["name"]
         if team_name and desc.startswith(team_name + " "):
             rest = desc[len(team_name) + 1:]
@@ -1358,7 +1397,7 @@ def norm_boxscore(feed):
         return {
             "abbr": gt.get("abbreviation"), "name": gt.get("teamName") or gt.get("name"),
             "r": line.get("runs"), "h": line.get("hits"), "e": line.get("errors"),
-            "is_team": gt.get("id") == CONFIG["team_id"],
+            "is_team": gt.get("id") == mlb_favorite()["id"],
             "probable": (gd.get("probablePitchers", {}).get(which) or {}).get("fullName"),
             "batters": [{"name": name(p), "pos": p["position"]["abbreviation"].upper(),
                          "sub": not str(p["battingOrder"]).endswith("00"),
@@ -2056,6 +2095,8 @@ def state_json(screen=None):
         data = {k: v for k, v in data.items() if k != "agenda"}
     cfg = {k: CONFIG[k] for k in ("location_name", "team_abbr", "division_name", "zmanim_labels",
                                   "dim_start", "dim_end", "dim_level", "rotation_seconds")}
+    fav = mlb_favorite()
+    cfg.update(team_abbr=fav["abbr"], division_name=fav["division_name"])
     cfg.update(rotation=rot, screen=screen, sports=sports_config(h),
                business_news=dict(h["business"].get("news") or {}))
     return json.dumps({"now": now().isoformat(timespec="seconds"), "config": cfg,
