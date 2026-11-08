@@ -154,8 +154,13 @@ def load_settings():
 
 # ---------------------------------------------------------------- helpers
 
-def http_get(url, accept="*/*", timeout=20):
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": accept})
+# Our own name, for every new source: never a browser's. The shul's site, ESPN, CNBC, Yahoo
+# and the business feeds all answer it.
+OWN_UA = "ShabbatDisplay/1.0 (personal home display)"
+
+
+def http_get(url, accept="*/*", timeout=20, ua=UA):
+    req = urllib.request.Request(url, headers={"User-Agent": ua, "Accept": accept})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         raw = r.read()
         charset = r.headers.get_content_charset() or "utf-8"
@@ -742,6 +747,206 @@ def fetch_transactions():
     return {"team": team[:10], "league": league[:10]}
 
 
+# ---------------------------------------------------------------- other leagues (ESPN)
+# Every league but MLB, from ESPN's public site API (unofficial, like statsapi). Asked with
+# our own User-Agent. A date range in ?dates= answers 400, so each request is one day.
+
+ESPN = "https://site.api.espn.com/apis"
+STANDING_COLS = {
+    "basketball": [("W", "wins"), ("L", "losses"), ("GB", "gamesBehind"), ("Strk", "streak")],
+    "football": [("W", "wins"), ("L", "losses"), ("T", "ties"), ("Strk", "streak")],
+    "hockey": [("W", "wins"), ("L", "losses"), ("OTL", "otLosses"), ("PTS", "points")],
+    "soccer": [("W", "wins"), ("D", "ties"), ("L", "losses"), ("PTS", "points")],
+}
+ESPN_STATE = {"pre": "Preview", "in": "Live", "post": "Final"}
+
+
+def espn_json(url):
+    return json.loads(http_get(url, accept="application/json", ua=OWN_UA))
+
+
+def _espn_score(v):
+    if isinstance(v, dict):
+        v = v.get("value", v.get("displayValue"))
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return None
+
+
+def norm_espn_game(ev, chosen):
+    """An ESPN event (from the scoreboard or a team schedule) in the page's game shape."""
+    co = (ev.get("competitions") or [{}])[0]
+    st = ev.get("status") or co.get("status") or {}
+    ty = st.get("type") or {}
+    state = ESPN_STATE.get(ty.get("state"), "Preview")
+    if any(w in (ty.get("name") or "") for w in ("POSTPONED", "CANCELED", "SUSPENDED")):
+        state = "Off"
+    sides = {}
+    for c in co.get("competitors") or []:
+        t = c.get("team") or {}
+        try:
+            tid = int(t.get("id"))
+        except (TypeError, ValueError):
+            tid = None
+        rec = (c.get("records") or c.get("record") or [{}])[0]
+        lines = [_espn_score(x) for x in c.get("linescores") or []]
+        sides[c.get("homeAway")] = {
+            "id": tid, "abbr": t.get("abbreviation") or "TBD", "name": t.get("shortDisplayName") or t.get("name") or "TBD",
+            "full": t.get("displayName"), "score": _espn_score(c.get("score")),
+            "record": rec.get("summary") or rec.get("displayValue"),
+            "winner": c.get("winner"), "lines": [x for x in lines if x is not None]}
+
+    def blank():
+        return {"id": None, "abbr": "TBD", "name": "TBD", "full": None, "score": None, "record": None,
+                "winner": None, "lines": []}
+    away, home = sides.get("away") or blank(), sides.get("home") or blank()
+    return {"id": str(ev["id"]) if ev.get("id") is not None else None, "start": ev.get("date"),
+            "state": state, "detail": ty.get("shortDetail") or ty.get("detail") or "",
+            "period": st.get("period"), "clock": st.get("displayClock"),
+            "venue": (co.get("venue") or {}).get("fullName"), "away": away, "home": home,
+            "chosen": bool({away["id"], home["id"]} & set(chosen))}
+
+
+def espn_in_season(calendar, today):
+    """Any game day, or week that isn't the off-season, from 3 days back to 7 ahead."""
+    lo, hi = today - timedelta(days=3), today + timedelta(days=7)
+
+    def day(x):
+        p = parse_dt(x) if isinstance(x, str) else None
+        return p.date() if p else None
+
+    for c in calendar or []:
+        if isinstance(c, str):
+            d = day(c)
+            if d and lo <= d <= hi:
+                return True
+        elif isinstance(c, dict) and "off season" not in (c.get("label") or "").lower():
+            for e in c.get("entries") or [c]:
+                a, b = day(e.get("startDate")), day(e.get("endDate"))
+                if a and b and a <= hi and b >= lo:
+                    return True
+    return False
+
+
+def norm_espn_standings(j, sport, favorite):
+    """The favorite's group (the deepest one listing it, else the first) as a small table."""
+    groups = []
+
+    def walk(g, depth):
+        if (g.get("standings") or {}).get("entries"):
+            groups.append((depth, g))
+        for c in g.get("children") or []:
+            walk(c, depth + 1)
+    walk(j or {}, 0)
+    if not groups:
+        return None
+
+    def has_fav(g):
+        return any(str((e.get("team") or {}).get("id")) == str(favorite) for e in g["standings"]["entries"])
+    mine = [x for x in groups if favorite is not None and has_fav(x[1])]
+    g = max(mine, key=lambda x: x[0])[1] if mine else groups[0][1]
+    cols = STANDING_COLS.get(sport, STANDING_COLS["basketball"])
+    rows = []
+    for e in g["standings"]["entries"]:
+        t = e.get("team") or {}
+        stats = {x.get("name"): x.get("displayValue") for x in e.get("stats") or []}
+        rows.append({"abbr": t.get("abbreviation"), "name": t.get("shortDisplayName") or t.get("name"),
+                     "vals": [stats.get(k, "") for _, k in cols],
+                     "is_team": favorite is not None and str(t.get("id")) == str(favorite)})
+    return {"group": g.get("name"), "cols": [c for c, _ in cols], "rows": rows}
+
+
+def _espn_news(path, team=None):
+    url = f"{ESPN}/site/v2/sports/{path}/news" + (f"?team={int(team)}" if team else "")
+    items = []
+    for a in espn_json(url).get("articles") or []:
+        link = ((a.get("links") or {}).get("web") or {}).get("href")
+        if a.get("headline") and link:
+            items.append({"title": clean_text(a["headline"]), "summary": clean_text(a.get("description"), 300),
+                          "link": link, "time": a.get("published"), "source": "espn"})
+    return {"items": items[:12]}
+
+
+def league_settings(key):
+    return household()["sports"].get(key) or {"on": False, "teams": [], "favorite": None}
+
+
+def fetch_league(key):
+    """One league: today's scores (yesterday's if none), the favorite's live/last/next game,
+    its standings group, and news. {"off": True} while the league is switched off."""
+    lg, cfg = LEAGUES[key], league_settings(key)
+    if not cfg.get("on"):
+        return {"off": True}
+    path = lg["path"]
+    chosen = {t["id"] for t in cfg.get("teams") or []}
+    fav = cfg.get("favorite")
+    grp = f"&groups={lg['groups']}" if lg["groups"] else ""
+    n = now()
+    today = n.date()
+    board = espn_json(f"{ESPN}/site/v2/sports/{path}/scoreboard?dates={today:%Y%m%d}{grp}")
+    calendar = ((board.get("leagues") or [{}])[0]).get("calendar") or []
+    games, label = [norm_espn_game(e, chosen) for e in board.get("events") or []], "Today"
+    if not games:
+        y = espn_json(f"{ESPN}/site/v2/sports/{path}/scoreboard?dates={today - timedelta(days=1):%Y%m%d}{grp}")
+        games = [norm_espn_game(e, chosen) for e in y.get("events") or []]
+        label = "Yesterday" if games else label
+    team = None
+    for tid in sorted(chosen, key=lambda t: t != fav):
+        sched = [norm_espn_game(e, chosen) for e in
+                 espn_json(f"{ESPN}/site/v2/sports/{path}/teams/{int(tid)}/schedule").get("events") or []]
+        have = {g["id"] for g in games}
+        games += [g for g in sched if g["id"] not in have and (parse_dt(g["start"]) or n).astimezone().date() == today]
+        if tid == fav:
+            live = next((g for g in sched if g["state"] == "Live"), None)
+            upcoming = [g for g in sched if g["state"] == "Preview"
+                        and (parse_dt(g["start"]) or n) > n - timedelta(hours=4)]
+            finals = [g for g in sched if g["state"] == "Final"]
+            team = {"live": live, "next": upcoming[0] if upcoming else None,
+                    "last": finals[-1] if finals else None, "recent": finals[-5:]}
+    order = {"Live": 0, "Preview": 1, "Final": 2, "Off": 3}
+    games.sort(key=lambda g: (not g["chosen"], order.get(g["state"], 4), g["start"] or ""))
+    try:
+        standings = cached(f"espnstand:{key}:{fav}", 3600, lambda: norm_espn_standings(
+            espn_json(f"{ESPN}/v2/sports/{path}/standings"), lg["sport"], fav))
+    except Exception as e:  # noqa: BLE001 - the scores still show without the table
+        log(f"sport_{key} standings: {e}")
+        standings = None
+    news = cached(f"espnnews:{key}", 900, lambda: _espn_news(path))
+    team_news = cached(f"espnnews:{key}:{fav}", 900, lambda: _espn_news(path, fav)) if fav else {"items": []}
+    soon = bool(team and (team["live"] or (team["next"] and
+                                           (parse_dt(team["next"]["start"]) or n) - n < timedelta(days=7))))
+    return {"on": True, "in_season": espn_in_season(calendar, today) or soon,
+            "team": team, "scores": {"label": label, "games": games}, "standings": standings,
+            "team_news": team_news, "news": news}
+
+
+def league_poll_seconds(key):
+    """Every 30 s while a chosen team plays or starts within 15 minutes; hourly out of season."""
+    if not league_settings(key).get("on"):
+        return 600
+    v = store.get("sport_" + key) or {}
+    if not v.get("on"):
+        return 180
+    t = v.get("team") or {}
+    if t.get("live") or any(g.get("chosen") and g.get("state") == "Live"
+                            for g in (v.get("scores") or {}).get("games") or []):
+        return 30
+    nxt = t.get("next")
+    start = parse_dt(nxt["start"]) if nxt else None
+    if start and start - now() < timedelta(minutes=15):
+        return 30
+    return 180 if v.get("in_season") else 3600
+
+
+def league_fetcher(key):
+    return lambda: fetch_league(key)
+
+
+def league_poller(key):
+    return lambda: league_poll_seconds(key)
+
+
 # ---------------------------------------------------------------- news
 
 def _child(el, *names):
@@ -1228,7 +1433,7 @@ def http_get_with(url, headers, timeout=15, limit=3_000_000):
 
 ARTICLE_FEEDS = ("nyt", "cnn", "toi", "yankees_news", "mlb_news")
 ARTICLE_SOURCES = {"nyt": "New York Times", "cnn": "CNN", "toi": "Times of Israel",
-                   "yankees_news": "Yankees news", "mlb_news": "MLB news"}
+                   "yankees_news": "Yankees news", "mlb_news": "MLB news", "espn": "ESPN"}
 ARTICLE_FAILED = "The full article couldn't be loaded."
 
 
@@ -1239,6 +1444,12 @@ def feed_item_for(url):
         for it in (store.get(key) or {}).get("items", []):
             if it.get("link") and it["link"] == url:
                 return it
+    for key in LEAGUES:
+        v = store.get("sport_" + key) or {}
+        for part in ("news", "team_news"):
+            for it in (v.get(part) or {}).get("items", []):
+                if it.get("link") and it["link"] == url:
+                    return it
     return None
 
 
@@ -1249,6 +1460,9 @@ def is_nyt(url):
 
 def article_headers(url):
     headers = {"Accept": "text/html"}
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    if host == "espn.com" or host.endswith(".espn.com"):
+        headers["User-Agent"] = OWN_UA
     cookie = nyt_cookie() if is_nyt(url) else ""
     if cookie:
         headers["Cookie"] = cookie if "=" in cookie else "NYT-S=" + cookie
@@ -1707,7 +1921,7 @@ SHUL_SITE = "https://www.bnaiyeshurun.org"
 SHUL_FILES = "https://images.shulcloud.com/"
 # The shul's site turns away generic tools but answers a request that says what it is.
 # Never swap this for a browser's User-Agent to get past a refusal.
-SHUL_UA = "ShabbatDisplay/1.0 (personal home display)"
+SHUL_UA = OWN_UA
 _MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
 
 
@@ -2005,7 +2219,7 @@ SOURCES = [
     ("toi",           feed_fetcher("toi"),          600),
     ("agenda",        fetch_agenda,                 600),
     ("shul",          fetch_shul,                   3600),  # fetches only when shul_due()
-]
+] + [("sport_" + k, league_fetcher(k), league_poller(k)) for k in LEAGUES]  # each sleeps while switched off
 
 
 # after a failure most sources retry sooner than their interval; the shul's site gets
@@ -2515,6 +2729,10 @@ def check():
         try:
             val = fn()
             store.set(key, val)
+            if val == {"off": True}:
+                print(f"  off   {key:<14} switched off in the Display Manager")
+                ok += 1
+                continue
             size = len(val.get("items", [])) if isinstance(val, dict) and "items" in val else ""
             print(f"  OK    {key:<14} {time.time() - t:4.1f}s  {size}")
             ok += 1
