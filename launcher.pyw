@@ -597,8 +597,9 @@ def windows_saver_loop(server, mode):
             if saver_policy():
                 once("policy", "a Windows policy controls the screen saver on this PC, so these settings may not apply")
             write_saver_config(URL, screen_name(), shabbat, spans)
-            if shabbat and raised_for != minutes:
-                raised_for = minutes
+            # once a day and on each new wait: Windows Update can put the power plan back mid-week
+            if shabbat and raised_for != (minutes, now.date()):
+                raised_for = (minutes, now.date())
                 target = screen_off_target(screen_off_seconds() / 60, minutes)
                 if target:
                     subprocess.run(["powercfg", "/change", "monitor-timeout-ac", str(target)],

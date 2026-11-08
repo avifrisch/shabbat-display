@@ -72,6 +72,42 @@ class WindowsSaverTests(unittest.TestCase):
         self.assertFalse(launcher.holy_now(bad + [], at("2026-11-13T16:30:00-05:00")))
         self.assertTrue(launcher.holy_now(bad + SPANS, at("2026-11-13T16:30:00-05:00")))
 
+    def test_screen_off_checked_again_each_day(self):
+        # a power plan reset mid-week (Windows Update) must still be caught before Shabbat
+        import tempfile
+        from unittest import mock
+
+        class Stop(Exception):
+            pass
+
+        days = iter([datetime.fromisoformat("2026-11-10T23:59:30-05:00"), datetime.fromisoformat("2026-11-11T00:00:10-05:00")])
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return next(days)
+
+        checks = []
+        with tempfile.TemporaryDirectory() as d:
+            cache = os.path.join(d, "screen-settings.json")
+            with open(cache, "w") as f:
+                f.write('{"mode": "saver", "saver": {"minutes": 10, "lock": true, "shabbat": true}, "holy": []}')
+            with mock.patch.object(launcher, "SETTINGS_CACHE", cache), \
+                    mock.patch.object(launcher, "SAVER_CONFIG", os.path.join(d, "saver.json")), \
+                    mock.patch.object(launcher, "datetime", Clock), \
+                    mock.patch.object(launcher, "fetch_screen_settings", lambda: None), \
+                    mock.patch.object(launcher, "read_saver_registry", lambda: {}), \
+                    mock.patch.object(launcher, "apply_registry_changes", lambda c: None), \
+                    mock.patch.object(launcher, "restore_brightness", lambda: None), \
+                    mock.patch.object(launcher, "set_awake", lambda pc: None), \
+                    mock.patch.object(launcher, "screen_off_seconds", lambda: checks.append(1) or 0), \
+                    mock.patch.object(launcher, "REMOTE", True), \
+                    mock.patch.object(launcher, "log", lambda m: None), \
+                    mock.patch.object(launcher.time, "sleep", mock.Mock(side_effect=[None, Stop])):
+                with self.assertRaises(Stop):
+                    launcher.windows_saver_loop(None, "saver")
+        self.assertEqual(len(checks), 2)
+
     def test_screen_off_raised_only_when_too_soon(self):
         self.assertEqual(launcher.screen_off_target(10, 10), 30)
         self.assertIsNone(launcher.screen_off_target(0, 10))    # never turns off
