@@ -2008,6 +2008,290 @@ def state_json():
                        "data": snap["data"], "meta": snap["meta"]})
 
 
+# ---------------------------------------------------------------- management API
+# For the Display Manager app. Every request carries the access code from manage-key.txt
+# in X-Manage-Key. Nothing here returns a secret, only whether one is set.
+
+STARTED = time.time()
+BUILTIN_SCENES = [("agenda", "Agenda (private)"), ("shul", "Shul"), ("yankees", "MLB team"), ("mlb", "Around the majors"),
+                  ("news", "Headlines"), ("israel", "Israel"), ("business", "Business")]
+TICKER = re.compile(r"[A-Z][A-Z0-9.\-]{0,9}")
+
+
+class BadRequest(Exception):
+    """A request the app should fix; the message is shown to Avi as is."""
+
+
+def scene_catalog():
+    out = [{"scene": s, "label": label} for s, label in BUILTIN_SCENES]
+    for k, lg in LEAGUES.items():
+        out += [{"scene": k + "_team", "label": lg["name"] + " team"},
+                {"scene": k, "label": "Around the " + lg["name"]}]
+    return out
+
+
+def league_pair(league):
+    return ["yankees", "mlb"] if league == "mlb" else [league + "_team", league]
+
+
+def shul_status():
+    """What the display has from the shul this week, in the app's terms."""
+    v = store.get("shul") or {}
+    m = store.meta.get("shul") or {}
+    n = now()
+    today = n.date()
+    sat = upcoming_shabbat(today).isoformat()
+    ch, b = v.get("chart"), v.get("bulletin")
+    chart = bulletin = None
+    if ch:
+        week = ch.get("week_of")
+        chart = {"file": ch.get("file"), "date": week,
+                 "this_week": bool(week) and 0 <= (today - date.fromisoformat(week)).days <= 6}
+    if b:
+        times = b.get("times")
+        bulletin = {"file": b.get("file"), "date": b.get("shabbat"), "this_shabbat": b.get("shabbat") == sat,
+                    "rows": len(times["rows"]) if times else None}
+    month = MONTH_NAMES[today.month - 1]
+    calendars = [{"file": c.get("file"), "this_month": month in (c.get("file") or "").lower()}
+                 for c in v.get("calendars") or []]
+    problem = None
+    candles = todays_candles()
+    friday_afternoon = (candles is not None or n.weekday() == 4) and n.hour >= 12
+    if not v:
+        problem = "The shul's files haven't been downloaded yet."
+    elif bulletin and bulletin["rows"] is None:
+        problem = ("This week's bulletin downloaded, but its Shabbat times couldn't be read." if bulletin["this_shabbat"]
+                   else "The bulletin's Shabbat times couldn't be read.")
+    elif friday_afternoon and not (bulletin and bulletin["this_shabbat"]):
+        problem = "This week's bulletin hasn't come in yet."
+    elif chart and not chart["this_week"] and chart["date"] and (today - date.fromisoformat(chart["date"])).days > 6:
+        problem = "The weekly davening chart is more than a week old."
+    elif m.get("ok") is False:
+        problem = f"The last check of the shul's site failed: {m.get('error')}"
+    return {"chart": chart, "bulletin": bulletin, "calendars": calendars,
+            "meta": {"ok": m.get("ok"), "updated": m.get("updated"), "error": m.get("error")}, "problem": problem}
+
+
+MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august",
+               "september", "october", "november", "december"]
+
+
+def log_tail(n):
+    try:
+        with open(LOG_FILE, encoding="utf-8", errors="replace") as f:
+            return [line.rstrip("\n") for line in f.readlines()[-n:]]
+    except OSError:
+        return []
+
+
+def _need(cond, msg):
+    if not cond:
+        raise BadRequest(msg)
+
+
+def _check_rotation(rot):
+    _need(isinstance(rot, list) and rot, "A rotation needs at least one scene.")
+    known = {s["scene"] for s in scene_catalog()}
+    lo, hi = SCENE_SECONDS_RANGE
+    out = []
+    for r in rot:
+        _need(isinstance(r, dict), "Each rotation item needs a scene, seconds and on.")
+        _need(r.get("scene") in known, f"Unknown scene: {r.get('scene')}")
+        sec = r.get("seconds")
+        _need(isinstance(sec, int) and not isinstance(sec, bool) and lo <= sec <= hi,
+              f"Seconds for {r['scene']} must be between {lo} and {hi}.")
+        out.append({"scene": r["scene"], "seconds": sec, "on": bool(r.get("on", True))})
+    _need(len({r["scene"] for r in out}) == len(out), "A scene appears twice in the rotation.")
+    _need(any(r["on"] for r in out), "Choose at least one scene.")
+    return out
+
+
+def _check_team(t):
+    _need(isinstance(t, dict) and isinstance(t.get("id"), int) and not isinstance(t.get("id"), bool),
+          "Each team needs an id, abbr and name.")
+    return {"id": t["id"], "abbr": str(t.get("abbr") or "")[:6], "name": str(t.get("name") or "")[:60]}
+
+
+def _save_sports(h, body):
+    _need(isinstance(body, dict) and body, "Nothing to save.")
+    for league, v in body.items():
+        _need(league == "mlb" or league in LEAGUES, f"Unknown league: {league}")
+        _need(isinstance(v, dict), f"Settings for {league} are missing.")
+        teams = v.get("teams") or []
+        _need(isinstance(teams, list) and len(teams) <= 10, "At most 10 teams per league.")
+        teams = [_check_team(t) for t in teams]
+        fav = v.get("favorite")
+        _need(fav is None or fav in [t["id"] for t in teams], "The favorite team must be one of the chosen teams.")
+        if fav is None and teams:
+            fav = teams[0]["id"]
+        was_on = h["sports"][league]["on"]
+        on = bool(v.get("on"))
+        h["sports"][league] = {"on": on, "teams": teams, "favorite": fav}
+        if on and not was_on:
+            pair = league_pair(league)
+            rot = h["default_rotation"]
+            have = {r["scene"] for r in rot}
+            at = next((i for i, r in enumerate(rot) if r["scene"] == "business"), len(rot))
+            rot[at:at] = [{"scene": s, "seconds": 30, "on": True} for s in pair if s not in have]
+            for s in h["screens"].values():
+                if s.get("rotation"):
+                    have = {r["scene"] for r in s["rotation"]}
+                    s["rotation"] += [{"scene": p, "seconds": 30, "on": False} for p in pair if p not in have]
+
+
+def _save_business(h, body):
+    _need(isinstance(body, dict), "Nothing to save.")
+    wl = body.get("watchlist") or []
+    _need(isinstance(wl, list) and len(wl) <= 30, "At most 30 stocks.")
+    out = []
+    for s in wl:
+        sym = (s.get("symbol") if isinstance(s, dict) else None) or ""
+        _need(TICKER.fullmatch(sym), f"Not a ticker: {sym}")
+        if sym not in [x["symbol"] for x in out]:
+            out.append({"symbol": sym, "name": str(s.get("name") or sym)[:80]})
+    news = dict(h["business"].get("news") or {})
+    for k, v in (body.get("news") or {}).items():
+        _need(k in ("biz_nyt", "biz_cnbc"), f"Unknown news source: {k}")
+        news[k] = bool(v)
+    h["business"] = {"on": bool(body.get("on", True)), "watchlist": out, "news": news}
+
+
+def _new_screen():
+    return {"rotation": None, "launcher": False, "saved": False, "mode": "always", "saver": default_saver(), "local": None}
+
+
+def _save_rotation(h, body):
+    _need(isinstance(body, dict), "Nothing to save.")
+    name, rot = body.get("screen"), body.get("rotation")
+    if name is None:
+        _need(rot is not None, "The house rotation can't be empty.")
+        h["default_rotation"] = _check_rotation(rot)
+        return
+    _need(isinstance(name, str) and valid_screen(name), "That screen name isn't allowed.")
+    s = h["screens"].setdefault(name, _new_screen())
+    s["rotation"] = None if rot is None else _check_rotation(rot)
+
+
+def _save_screen(h, body):
+    _need(isinstance(body, dict), "Nothing to save.")
+    name = body.get("name")
+    _need(isinstance(name, str) and valid_screen(name), "That screen name isn't allowed.")
+    mode = body.get("mode")
+    _need(mode in ("always", "saver"), "The mode must be always on or screen saver.")
+    sv = body.get("saver") or {}
+    _need(isinstance(sv, dict), "Screen saver options are missing.")
+    if mode == "saver" or sv:
+        mins = sv.get("minutes")
+        _need(isinstance(mins, (int, float)) and not isinstance(mins, bool) and 1 <= mins <= 240,
+              "Idle minutes must be between 1 and 240.")
+        _need(sv.get("screens", "all") in ("all", "external"), "The monitor must be all screens or the plugged-in monitor.")
+        sv = {"minutes": mins, "lock": bool(sv.get("lock", True)), "screens": sv.get("screens", "all"),
+              "keep_awake": bool(sv.get("keep_awake", False))}
+    s = h["screens"].setdefault(name, _new_screen())
+    s.update(mode=mode, saved=True)
+    if sv:
+        s["saver"] = sv
+
+
+def valid_screen(name):
+    return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._'-]{0,39}", name or ""))
+
+
+def _public_household(h):
+    out = {k: v for k, v in h.items() if k != "secrets"}
+    out["nyt_signed_in"] = bool(nyt_cookie())
+    out["agenda_set"] = bool(CONFIG.get("agenda_ics"))
+    out["leagues"] = {k: v["name"] for k, v in LEAGUES.items()}
+    out["scenes"] = scene_catalog()
+    return out
+
+
+def _manage_status():
+    snap = store.snapshot()
+    h = household()
+    feeds = {k: {"ok": m.get("ok"), "updated": m.get("updated"), "error": m.get("error"), "failed_at": m.get("failed_at")}
+             for k, m in snap["meta"].items()}
+    screens = []
+    for name in sorted(set(h["screens"]) | set(seen)):
+        s, w = h["screens"].get(name) or {}, seen.get(name) or {}
+        screens.append({"name": name, "last": w.get("last"), "launcher": bool(s.get("launcher") or w.get("launcher")),
+                        "mode": s.get("mode"), "saved": bool(s.get("saved"))})
+    return {"ok": True, "started": STARTED, "feeds": feeds, "shul": shul_status(), "screens": screens}
+
+
+def _restart_soon():
+    log("restart asked for by the Display Manager")
+    threading.Timer(0.5, lambda: os._exit(0)).start()
+
+
+SAVERS = {"sports": _save_sports, "business": _save_business, "rotation": _save_rotation, "screen": _save_screen}
+
+
+def manage_route(method, path, query, key, body):
+    """(status, JSON text) for /api/manage/..."""
+    import hmac
+    if not key or not hmac.compare_digest(key.encode(), manage_key().encode()):
+        return 401, json.dumps({"ok": False, "error": "access code needed"})
+    name = path[len("/api/manage/"):]
+    q = urllib.parse.parse_qs(query)
+    try:
+        if method == "GET" and name == "status":
+            return 200, json.dumps(_manage_status())
+        if method == "GET" and name == "household":
+            return 200, json.dumps(_public_household(household()))
+        if method == "GET" and name == "log":
+            try:
+                n = max(1, min(500, int((q.get("lines") or ["200"])[0])))
+            except ValueError:
+                raise BadRequest("lines must be a number") from None
+            return 200, json.dumps({"lines": log_tail(n)})
+        if method != "POST":
+            return 404, json.dumps({"ok": False, "error": "not found"})
+        try:
+            data = json.loads(body or b"{}")
+        except ValueError:
+            raise BadRequest("The request wasn't valid JSON.") from None
+        if name in SAVERS:
+            with _household_lock:
+                h = household()
+                SAVERS[name](h, data)
+                save_household(h)
+            return 200, json.dumps({"ok": True})
+        if name == "nyt":
+            cookie = data.get("cookie") if isinstance(data, dict) else None
+            _need(isinstance(cookie, str) and len(cookie) < 8000, "The cookie is missing.")
+            with _household_lock:
+                h = household()
+                h["secrets"]["nyt_cookie"] = cookie.strip()
+                save_household(h)
+            _cache.clear()  # articles fetched signed out (or in) are fetched again
+            return 200, json.dumps({"ok": True, "nyt_signed_in": bool(nyt_cookie())})
+        if name == "shul-update":
+            code, out = shul_update_now()
+            out["shul"] = shul_status()
+            return code, json.dumps(out)
+        if name == "restart":
+            _restart_soon()
+            return 200, json.dumps({"ok": True})
+        return 404, json.dumps({"ok": False, "error": "not found"})
+    except BadRequest as e:
+        return 400, json.dumps({"ok": False, "error": str(e)})
+
+
+def shul_update_now():
+    """A forced shul fetch, for /api/shul-update and the app: (status, body dict)."""
+    try:
+        v = fetch_shul(force=True, wait=False)
+        store.set("shul", v)
+        return 200, {"ok": True, "summary": shul_summary(v)}
+    except ShulBusy:
+        return 409, {"ok": False, "error": "already updating; try again in a minute"}
+    except Exception as e:  # noqa: BLE001
+        store.fail("shul", e)
+        log(f"shul: {e}")
+        return 503, {"ok": False, "error": str(e)[:200]}
+
+
 # ---------------------------------------------------------------- http
 
 class Handler(BaseHTTPRequestHandler):
@@ -2059,17 +2343,11 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(403, json.dumps({"ok": False, "error": "only from this machine"}),
                                "application/json")
                     return
-                try:
-                    v = fetch_shul(force=True, wait=False)
-                    store.set("shul", v)
-                    self._send(200, json.dumps({"ok": True, "summary": shul_summary(v)}), "application/json")
-                except ShulBusy:
-                    self._send(409, json.dumps({"ok": False, "error": "already updating; try again in a minute"}),
-                               "application/json")
-                except Exception as e:  # noqa: BLE001
-                    store.fail("shul", e)
-                    log(f"shul: {e}")
-                    self._send(503, json.dumps({"ok": False, "error": str(e)[:200]}), "application/json")
+                code, out = shul_update_now()
+                self._send(code, json.dumps(out), "application/json")
+            elif path.startswith("/api/manage/"):
+                self._send(*manage_route("GET", path, parsed.query, self.headers.get("X-Manage-Key"), b""),
+                           "application/json")
             elif path == "/health":
                 self._send(200, "ok", "text/plain")
             elif path.startswith("/fonts/") and ".." not in path:
@@ -2083,6 +2361,25 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, "not found", "text/plain")
             except OSError:
                 pass
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        try:
+            if not parsed.path.startswith("/api/manage/"):
+                self._send(404, "not found", "text/plain")
+                return
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                n = -1
+            if not 0 <= n <= 65536:
+                self._send(413, json.dumps({"ok": False, "error": "request too large"}), "application/json")
+                return
+            body = self.rfile.read(n) if n else b""
+            self._send(*manage_route("POST", parsed.path, parsed.query, self.headers.get("X-Manage-Key"), body),
+                       "application/json")
+        except (OSError, ConnectionError):
+            pass
 
     def log_message(self, *args):
         pass
