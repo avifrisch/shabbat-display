@@ -1433,10 +1433,19 @@ def _pdf_tounicode(objs, font_num):
             width = len(a) // 2
             mp[int(a, 16)] = bytes.fromhex(u.decode()).decode("utf-16-be", "replace")
     for blk in re.findall(rb"beginbfrange(.*?)endbfrange", cm, re.S):
-        for a, b, u in re.findall(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", blk):
-            width, base = len(a) // 2, int(u, 16)
-            for i, c in enumerate(range(int(a, 16), int(b, 16) + 1)):
-                mp[c] = chr(base + i)
+        for a, b, u, arr in re.findall(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(?:<([0-9A-Fa-f]+)>|\[([^\]]*)\])", blk):
+            width, lo, hi = len(a) // 2, int(a, 16), int(b, 16)
+            if hi - lo > 0xFFFF:  # a real range stays within 256 codes; never list millions
+                continue
+            if not u:  # [<target> <target> ...]: one per code, e.g. pointed Hebrew letters
+                for c, t in zip(range(lo, hi + 1), re.findall(rb"<([0-9A-Fa-f]+)>", arr)):
+                    mp[c] = bytes.fromhex(t.decode()).decode("utf-16-be", "replace")
+                continue
+            # the target is UTF-16 (maybe a surrogate pair); the range counts up its last unit
+            dst = bytes.fromhex(u.decode())
+            head, last = dst[:-2], int.from_bytes(dst[-2:], "big")
+            for i, c in enumerate(range(lo, hi + 1)):
+                mp[c] = (head + ((last + i) & 0xFFFF).to_bytes(2, "big")).decode("utf-16-be", "replace")
     return mp, width
 
 

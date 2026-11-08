@@ -31,6 +31,28 @@ class PdfTests(unittest.TestCase):
         self.assertEqual(len(pages), 2)
         self.assertEqual([t for _, _, t in pages[1]], ["second (2)"])
 
+    def test_tounicode_range_to_characters_beyond_16_bits(self):
+        # Chayei Sarah 5787's bulletin: a range whose target is a UTF-16 surrogate pair
+        cmap = b"1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n" \
+               b"2 beginbfrange\n<0010> <0011> <D835DC00>\n<0020> <0021> <0041>\nendbfrange\n"
+        objs = {7: b"<</Type/Font/ToUnicode 8 0 R>>", 8: b"<</Length 1>>\nstream\n" + cmap + b"\nendstream"}
+        mp, width = server._pdf_tounicode(objs, 7)
+        self.assertEqual((mp[0x10], mp[0x11], mp[0x20], mp[0x21], width), ("\U0001D400", "\U0001D401", "A", "B", 2))
+
+    def test_tounicode_range_with_a_list_of_targets(self):
+        # Chayei Sarah 5787's bulletin: pointed Hebrew letters, one target each
+        cmap = b"2 beginbfrange\n<0005> <0007> [<05D105BC> <05D405BC> <05E905C1>]\n<0010> <0011> <05D0>\nendbfrange\n"
+        objs = {7: b"<</Type/Font/ToUnicode 8 0 R>>", 8: b"<</Length 1>>\nstream\n" + cmap + b"\nendstream"}
+        mp, _ = server._pdf_tounicode(objs, 7)
+        self.assertEqual(mp, {5: "בּ", 6: "הּ", 7: "שׁ", 0x10: "א", 0x11: "ב"})
+
+    def test_tounicode_huge_range_is_skipped(self):
+        # a range over all 4-byte codes must not be listed code by code
+        cmap = b"1 beginbfrange\n<00000000> <FFFFFFFF> <0041>\nendbfrange\n1 beginbfchar\n<00000005> <05D0>\nendbfchar\n"
+        objs = {7: b"<</Type/Font/ToUnicode 8 0 R>>", 8: b"<</Length 1>>\nstream\n" + cmap + b"\nendstream"}
+        mp, width = server._pdf_tounicode(objs, 7)
+        self.assertEqual((mp, width), ({5: "א"}, 4))
+
     def test_garbage_raises(self):
         with self.assertRaises(ValueError):
             server.pdf_pages(b"not a pdf")
