@@ -1,0 +1,37 @@
+<Page
+    x:Class="ShabbatManager.Pages.ServerPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid RowSpacing="8" Padding="0,0,24,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Grid>
+            <TextBlock Text="Server" Style="{StaticResource TitleTextBlockStyle}" />
+            <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right">
+                <ProgressRing x:Name="Busy" IsActive="False" Width="20" Height="20" />
+                <Button Content="Refresh" Click="Refresh_Click" />
+                <Button x:Name="RestartButton" Content="Restart server" Click="Restart_Click" />
+            </StackPanel>
+        </Grid>
+        <InfoBar x:Name="Message" Grid.Row="1" IsClosable="True" />
+        <TextBlock x:Name="Where" Grid.Row="2" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+        <Expander Grid.Row="3" Header="Feeds" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+            <Grid x:Name="Feeds" ColumnSpacing="24" RowSpacing="4" />
+        </Expander>
+        <Grid Grid.Row="4" RowSpacing="4">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <TextBlock Text="Log (last 200 lines)" Style="{StaticResource SubtitleTextBlockStyle}" />
+            <TextBox x:Name="Log" Grid.Row="1" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
+                     FontFamily="Consolas" FontSize="12" ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto" />
+        </Grid>
+    </Grid>
+</Page>

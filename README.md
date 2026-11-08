@@ -78,6 +78,20 @@ The Display Manager is a Windows app on Avi's PC that runs the whole house's dis
 - **Agenda:** only on screens where you turn it on. The others get no agenda data at all.
 - **The iPad:** add `?screen=iPad` to its address (`http://<ip>:8765/?screen=iPad`) so it gets its own rotation.
 
+### Building and using the app
+
+Run `build-manager.bat` in `C:\ShabbatDisplay`. It runs the app's tests, builds it into `dist\manager` (with its own copy of .NET, so nothing else needs installing), and adds **Shabbat Display Manager** to the Start menu. It needs the .NET SDK (8 or later), which is already on Avi's PC.
+
+On first start the app looks for the server: the address that worked last time, then Tailscale (100.98.145.119), then DESKTOP-H72VKDJ, then 192.168.4.109. It then asks for the access code once and keeps it in Windows Credential Manager (`ShabbatDisplayManager`). Nothing changes on the screens until you press a page's **Save**. After a save the screens catch up within a minute.
+
+- **Status:** "Everything is working", or each problem in a sentence (a feed failing for half an hour, the bulletin unreadable, a PC that stopped checking in), then every feed, the shul's files and every screen.
+- **Sports:** each league on or off, its teams, and the favorite (★) whose games get their own scene. Switching a league on adds it to the house rotation.
+- **Business:** the business scene on or off, the watchlist (search by ticker or company), and which headlines it shows.
+- **Screens:** the house rotation, and for each screen either the house rotation or its own: which scenes, in what order, for how many seconds. For a PC, also always-on or screen saver and the screen-saver options.
+- **Shul:** whether this week's chart, bulletin (and how many Shabbat times were read) and calendar came in. **Update now** checks the shul's site once.
+- **NYT:** sign in on the NYT's own page inside the app, or paste the `NYT-S` cookie if that page doesn't work. Sign out removes it.
+- **Server:** the feeds, the last 200 log lines, and **Restart server**.
+
 ## Setup on a Windows PC or laptop
 
 1. **Copy this folder** somewhere permanent, such as `C:\ShabbatDisplay`. Not Downloads, and not inside the zip.
@@ -237,6 +251,7 @@ The server's on-demand and shul code has automated tests (standard library only)
 | `check-feeds.*` | Tests every data source once. |
 | `update-shul.*` | Fetches the shul's chart, bulletin and calendar now. |
 | `make-installer.bat` | Builds `dist\ShabbatDisplay.zip`, the download for another PC in the house. |
+| `build-manager.bat`, `manager/` | Builds the Display Manager app into `dist\manager` (Avi's PC only; not in the installer zip). |
 | `settings.example.json` | Template for `settings.json`, your settings. |
 | `server.py` | Data server. Uses only the Python standard library; nothing to install. |
 | `index.html` | The dashboard page. |
