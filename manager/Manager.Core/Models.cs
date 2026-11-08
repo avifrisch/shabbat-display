@@ -12,7 +12,8 @@ public record Business(bool On, List<Stock> Watchlist, Dictionary<string, bool> 
 
 public record RotationItem(string Scene, int Seconds, bool On);
 
-public record SaverOptions(int Minutes, bool Lock, string Screens, bool KeepAwake);
+/// <summary>Windows' screen saver on a PC: its wait, whether Windows locks when it closes, and the Shabbat switch.</summary>
+public record SaverOptions(int Minutes, bool Lock, bool Shabbat);
 
 /// <summary>What a PC's own settings.json says, sent by its launcher.</summary>
 public record LocalSettings(string? Mode, SaverOptions? Saver);
