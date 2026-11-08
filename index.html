@@ -1436,7 +1436,9 @@ function renderAll() {
   $("badge").textContent = DEMO ? "Preview data. Run server.py for live feeds." : "";
   if (!current) {
     order = buildOrder();
-    const start = Q.get("scene"); idx = Math.max(0, order.indexOf(start));
+    // ?shift=N starts N scenes in, so each screen-saver monitor shows a different scene
+    const start = order.indexOf(Q.get("scene")), shift = parseInt(Q.get("shift"), 10);
+    idx = start >= 0 ? start : (shift > 0 ? shift % order.length : 0);
     showScene(order[idx], false); sceneStart = Date.now();
   } else if (current === "agenda" && !agendaOn() && !HOLD) {
     advance();  // Shabbat started: move off the agenda right away

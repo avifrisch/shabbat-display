@@ -13,3 +13,5 @@ CLAUDE.md export-ignore
 make-installer.* export-ignore
 manager/ export-ignore
 build-manager.bat export-ignore
+build-saver.bat export-ignore
+dotnet-sdk.bat export-ignore

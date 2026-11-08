@@ -10,7 +10,7 @@
 #   5. Makes the display start when you sign in.
 #   6. Starts it.
 #
-# Or, on a PC you work at, sets the display up as a screen saver instead (no power changes).
+# Or, on a PC you work at, makes the display its Windows screen saver instead (no power changes).
 
 $ErrorActionPreference = 'Continue'
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -76,6 +76,8 @@ if ($Here -like "$env:TEMP*" -or $Here -like '*\Downloads\*') {
             Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.CommandLine -like "*$target\launcher.pyw*" -or
                 $_.CommandLine -like "*$target\server.py*" -or $_.CommandLine -like "*$target\browser-profile*") } |
                 ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+            # a screen saver that's showing holds its file open
+            Get-Process ShabbatDisplay* -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
             Start-Sleep 2
             Copy-Item (Join-Path $Here '*') $target -Recurse -Force -Exclude 'settings.json'
             Write-Host "Updated $target. Setup continues there."
@@ -126,8 +128,8 @@ function Get-Tailscale {
 # ------------------------------------------------------------------ Mode
 Step 'How will this PC show the display?'
 Write-Host ' 1. Full time: a spare PC or laptop that shows the display all day and through Shabbat.'
-Write-Host ' 2. Screen saver: a PC you work at. The display appears after some minutes without'
-Write-Host '    mouse or keyboard input, and any input closes it and locks the PC.'
+Write-Host ' 2. Screen saver: a PC you work at. The display becomes its Windows screen saver, on'
+Write-Host '    every screen; any input closes it, except over Shabbat and Yom Tov.'
 $saver = (Read-Host 'Enter 1 or 2 [1]') -eq '2'
 $launchArgs = if ($saver) { "`"$Here\launcher.pyw`" --screensaver" } else { "`"$Here\launcher.pyw`"" }
 
@@ -248,21 +250,23 @@ Write-Host 'One or two failures are usually a slow connection. The display retri
 # ------------------------------------------------------------------ Power
 if ($saver) {
     Step 'Windows screen saver'
-    Write-Host 'The display takes the place of the Windows screen saver; your power settings stay as they are,'
-    Write-Host 'so the screen still turns off when your power plan says.'
-    Write-Host 'To change how long before it appears, set "screensaver_minutes" in settings.json (default 10).'
-    if (Ask 'Turn off the Windows screen saver so the two do not overlap?') {
-        Set-ItemProperty 'HKCU:\Control Panel\Desktop' -Name ScreenSaveActive -Value '0'
-        Write-Host 'Done.'
+    Write-Host 'The Shabbat Display becomes this PC''s Windows screen saver. Change it from the Display Manager app.'
+    if (-not (Test-Path (Join-Path $Here 'saver\ShabbatDisplay.scr'))) {
+        Write-Host 'This copy has no screen saver file; download the latest ShabbatDisplay.zip.' -ForegroundColor Yellow
+    }
+    $policy = Get-ItemProperty 'HKCU:\Software\Policies\Microsoft\Windows\Control Panel\Desktop' -ErrorAction SilentlyContinue
+    if ($policy -and ($policy.PSObject.Properties.Name | Where-Object { $_ -like 'ScreenSave*' -or $_ -eq 'SCRNSAVE.EXE' })) {
+        Write-Host 'A work or school policy controls the screen saver on this PC, so it may not use this one.' -ForegroundColor Yellow
     }
     $cur = Read-Settings
-    Write-Host ''
-    Write-Host 'On a laptop with a monitor plugged in, the display can use just the monitor and turn the'
-    Write-Host "laptop's own screen all the way down while it shows (Windows can't switch off one screen)."
-    $ext = Ask 'Show it only on a plugged-in monitor?' ($cur.screensaver_screens -eq 'external')
-    Update-Setting 'screensaver_screens' $(if ($ext) { 'external' } else { $null })
-    $awake = Ask 'Keep this PC from going to sleep, and its screens on while the display shows?' ([bool]$cur.keep_pc_awake)
+    $awake = Ask 'Keep the screens on over Shabbat and Yom Tov?' ([bool]$cur.keep_pc_awake)
     Update-Setting 'keep_pc_awake' $(if ($awake) { $true } else { $null })
+    $lock = Ask 'Lock Windows when the screen saver closes?' ($cur.screensaver_lock -ne $false)
+    Update-Setting 'screensaver_lock' $(if ($lock) { $null } else { $false })
+    Update-Setting 'screensaver_screens' $null
+    if ($awake) {
+        Write-Host "Don't lock this PC (Win+L) on Erev Shabbat: the screen saver can't show over the lock screen." -ForegroundColor Yellow
+    }
     # If the screen turns off before the display would appear, it opens on a dark screen.
     $minutes = 10
     try { $m = (Get-Content 'settings.json' -Raw | ConvertFrom-Json).screensaver_minutes; if ($m) { $minutes = [double]$m } } catch {}

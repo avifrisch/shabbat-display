@@ -326,8 +326,43 @@ def default_household():
     }
 
 
+MODES = ("always", "saver", "off")  # full time, Windows' screen saver, or neither
+
+
 def default_saver():
-    return {"minutes": 10, "lock": True, "screens": "all", "keep_awake": False}
+    return {"minutes": 10, "lock": True, "shabbat": False}
+
+
+def _fix_saver(sv):
+    """A screen's screen-saver options: whole minutes 1-240, lock, and the Shabbat switch.
+    Anything else is dropped; the old launcher saver's keep_awake becomes the Shabbat switch."""
+    sv = sv if isinstance(sv, dict) else {}
+    try:
+        minutes = max(1, min(240, round(float(sv.get("minutes", 10)))))
+    except (TypeError, ValueError):
+        minutes = 10
+    return {"minutes": minutes, "lock": bool(sv.get("lock", True)),
+            "shabbat": bool(sv.get("shabbat", sv.get("keep_awake", False)))}
+
+
+def holy_spans(items=None, n=None):
+    """Shabbat and Yom Tov still to come or under way: from a candle lighting to the next
+    havdalah (a second night's candles stay in the same span), as Hebcal gave the times."""
+    if items is None:
+        items = (store.get("calendar") or {}).get("items", [])
+    n = n or now()
+    marks = sorted(((parse_dt(it.get("date")), it) for it in items
+                    if it.get("category") in ("candles", "havdalah") and parse_dt(it.get("date"))),
+                   key=lambda m: m[0])
+    spans, start = [], None
+    for when, it in marks:
+        if it["category"] == "candles":
+            start = start or it
+        elif start:
+            if when > n:
+                spans.append({"start": start["date"], "end": it["date"]})
+            start = None
+    return spans
 
 
 def _rotation_items(rot):
@@ -368,9 +403,10 @@ def _fill_household(h):
             continue
         fixed = {**_new_screen(), **s}
         fixed["rotation"] = _rotation_items(s.get("rotation")) or None
-        if not isinstance(fixed["saver"], dict):
-            fixed["saver"] = default_saver()
-        if fixed["mode"] not in ("always", "saver"):
+        fixed["saver"] = _fix_saver(fixed["saver"])
+        if isinstance(fixed.get("local"), dict):
+            fixed["local"] = {**fixed["local"], "saver": _fix_saver(fixed["local"].get("saver"))}
+        if fixed["mode"] not in MODES:
             fixed["mode"] = "always"
         h["screens"][name] = fixed
     if not isinstance(h.get("secrets"), dict):
@@ -2579,18 +2615,15 @@ def screen_settings_route(query):
     name = q.get("screen", "")
     if not valid_screen(name):
         return 400, json.dumps({"ok": False, "error": "bad screen name"})
-    try:
-        minutes = max(0.25, min(240.0, float(q.get("minutes", 10))))
-    except ValueError:
-        minutes = 10
-    local = {"mode": "saver" if q.get("mode") == "saver" else "always",
-             "saver": {"minutes": minutes, "lock": _flag(q.get("lock"), True),
-                       "screens": "external" if q.get("screens") == "external" else "all",
-                       "keep_awake": _flag(q.get("awake"), False)}}
+    shabbat = q.get("shabbat", q.get("awake"))  # an older launcher sends awake
+    local = {"mode": q.get("mode") if q.get("mode") in MODES else "always",
+             "saver": _fix_saver({"minutes": q.get("minutes", 10), "lock": _flag(q.get("lock"), True),
+                                  "shabbat": _flag(shabbat, False)})}
     s = check_in(name, True, local)
     src = s if s.get("saved") else (s.get("local") or local)
     return 200, json.dumps({"ok": True, "screen": name, "mode": src.get("mode", "always"),
-                            "saver": src.get("saver") or default_saver(), "saved": bool(s.get("saved"))})
+                            "saver": _fix_saver(src.get("saver")), "saved": bool(s.get("saved")),
+                            "holy": holy_spans()})
 
 
 # ---------------------------------------------------------------- management API
@@ -2765,16 +2798,14 @@ def _save_screen(h, body):
     name = body.get("name")
     _need(isinstance(name, str) and valid_screen(name), "That screen name isn't allowed.")
     mode = body.get("mode")
-    _need(mode in ("always", "saver"), "The mode must be always on or screen saver.")
+    _need(mode in MODES, "The mode must be always on, screen saver or off.")
     sv = body.get("saver") or {}
     _need(isinstance(sv, dict), "Screen saver options are missing.")
     if mode == "saver" or sv:
         mins = sv.get("minutes")
-        _need(isinstance(mins, (int, float)) and not isinstance(mins, bool) and 1 <= mins <= 240,
-              "Idle minutes must be between 1 and 240.")
-        _need(sv.get("screens", "all") in ("all", "external"), "The monitor must be all screens or the plugged-in monitor.")
-        sv = {"minutes": mins, "lock": bool(sv.get("lock", True)), "screens": sv.get("screens", "all"),
-              "keep_awake": bool(sv.get("keep_awake", False))}
+        _need(isinstance(mins, int) and not isinstance(mins, bool) and 1 <= mins <= 240,
+              "Idle minutes must be a whole number between 1 and 240.")
+        sv = {"minutes": mins, "lock": bool(sv.get("lock", True)), "shabbat": bool(sv.get("shabbat", False))}
     s = h["screens"].setdefault(name, _new_screen())
     s.update(mode=mode, saved=True)
     if sv:

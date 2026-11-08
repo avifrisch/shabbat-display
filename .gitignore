@@ -25,3 +25,4 @@ screen-settings.json.tmp
 sec-tickers.json.tmp
 manager/**/bin/
 manager/**/obj/
+/saver/

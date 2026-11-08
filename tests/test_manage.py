@@ -105,7 +105,7 @@ class ManageTests(ManageCase):
 
     def test_screen_save_marks_saved(self):
         self.call("POST", "/api/manage/screen", {"name": "Ariela", "mode": "saver",
-                                                 "saver": {"minutes": 15, "lock": True, "screens": "external", "keep_awake": True}})
+                                                 "saver": {"minutes": 15, "lock": True, "shabbat": True}})
         s = server.household()["screens"]["Ariela"]
         self.assertTrue(s["saved"])
         self.assertEqual(s["mode"], "saver")
@@ -114,7 +114,7 @@ class ManageTests(ManageCase):
     def test_bad_screen_settings_are_400(self):
         self.assertEqual(self.call("POST", "/api/manage/screen", {"name": "Ariela", "mode": "blink", "saver": {}})[0], 400)
         self.assertEqual(self.call("POST", "/api/manage/screen", {"name": "Ariela", "mode": "saver",
-                                                                  "saver": {"minutes": 0, "lock": True, "screens": "all", "keep_awake": False}})[0], 400)
+                                                                  "saver": {"minutes": 0, "lock": True, "shabbat": False}})[0], 400)
 
     def test_bad_json_is_400(self):
         req = server.urllib.request.Request(self.base + "/api/manage/sports", data=b"{nope",

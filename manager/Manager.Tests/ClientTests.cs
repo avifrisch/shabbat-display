@@ -1,4 +1,4 @@
-using Manager.Core;
+﻿using Manager.Core;
 
 namespace Manager.Tests;
 
@@ -45,10 +45,10 @@ public class ClientTests
     [Fact]
     public async Task Household_parses_snake_case()
     {
-        var json = "{\"sports\":{\"nba\":{\"on\":true,\"teams\":[{\"id\":18,\"abbr\":\"NY\",\"name\":\"New York Knicks\"}],\"favorite\":18}},\"business\":{\"on\":true,\"watchlist\":[],\"news\":{}},\"default_rotation\":[{\"scene\":\"shul\",\"seconds\":30,\"on\":true}],\"screens\":{\"Den\":{\"rotation\":null,\"launcher\":true,\"saved\":false,\"mode\":\"saver\",\"saver\":{\"minutes\":10,\"lock\":true,\"screens\":\"all\",\"keep_awake\":true}}},\"nyt_signed_in\":false,\"agenda_set\":true,\"leagues\":{},\"scenes\":[]}";
+        var json = "{\"sports\":{\"nba\":{\"on\":true,\"teams\":[{\"id\":18,\"abbr\":\"NY\",\"name\":\"New York Knicks\"}],\"favorite\":18}},\"business\":{\"on\":true,\"watchlist\":[],\"news\":{}},\"default_rotation\":[{\"scene\":\"shul\",\"seconds\":30,\"on\":true}],\"screens\":{\"Den\":{\"rotation\":null,\"launcher\":true,\"saved\":false,\"mode\":\"saver\",\"saver\":{\"minutes\":10,\"lock\":true,\"shabbat\":true}}},\"nyt_signed_in\":false,\"agenda_set\":true,\"leagues\":{},\"scenes\":[]}";
         var h = (await Client(new FakeHandler(json)).GetHouseholdAsync()).Value!;
         Assert.Equal(18, h.Sports["nba"].Favorite); Assert.Equal(30, h.DefaultRotation[0].Seconds);
-        Assert.True(h.Screens["Den"].Saver.KeepAwake); Assert.Null(h.Screens["Den"].Rotation);
+        Assert.True(h.Screens["Den"].Saver.Shabbat); Assert.Null(h.Screens["Den"].Rotation);
         Assert.True(h.AgendaSet);
     }
 
@@ -56,7 +56,7 @@ public class ClientTests
     public async Task Whole_numbers_written_as_floats_still_parse()
     {
         // Python writes a float minutes setting as 10.0
-        var json = "{\"sports\":{},\"business\":{\"on\":true,\"watchlist\":[],\"news\":{}},\"default_rotation\":[{\"scene\":\"shul\",\"seconds\":30.0,\"on\":true}],\"screens\":{\"Den\":{\"rotation\":null,\"launcher\":true,\"saved\":false,\"mode\":\"saver\",\"saver\":{\"minutes\":10.0,\"lock\":true,\"screens\":\"all\",\"keep_awake\":false}}},\"nyt_signed_in\":false,\"agenda_set\":false,\"leagues\":{},\"scenes\":[]}";
+        var json = "{\"sports\":{},\"business\":{\"on\":true,\"watchlist\":[],\"news\":{}},\"default_rotation\":[{\"scene\":\"shul\",\"seconds\":30.0,\"on\":true}],\"screens\":{\"Den\":{\"rotation\":null,\"launcher\":true,\"saved\":false,\"mode\":\"saver\",\"saver\":{\"minutes\":10.0,\"lock\":true,\"shabbat\":false}}},\"nyt_signed_in\":false,\"agenda_set\":false,\"leagues\":{},\"scenes\":[]}";
         var r = await Client(new FakeHandler(json)).GetHouseholdAsync();
         Assert.Null(r.Error);
         Assert.Equal(10, r.Value!.Screens["Den"].Saver.Minutes);
@@ -66,16 +66,16 @@ public class ClientTests
     [Fact]
     public async Task Unsaved_screen_carries_the_pcs_own_settings()
     {
-        var json = "{\"sports\":{},\"business\":{\"on\":true,\"watchlist\":[],\"news\":{}},\"default_rotation\":[],\"screens\":{\"Acer\":{\"rotation\":null,\"launcher\":true,\"saved\":false,\"mode\":\"always\",\"saver\":{\"minutes\":10,\"lock\":true,\"screens\":\"all\",\"keep_awake\":false},\"local\":{\"mode\":\"saver\",\"saver\":{\"minutes\":15.0,\"lock\":false,\"screens\":\"external\",\"keep_awake\":true}}}},\"nyt_signed_in\":false,\"agenda_set\":false,\"leagues\":{},\"scenes\":[]}";
+        var json = "{\"sports\":{},\"business\":{\"on\":true,\"watchlist\":[],\"news\":{}},\"default_rotation\":[],\"screens\":{\"Acer\":{\"rotation\":null,\"launcher\":true,\"saved\":false,\"mode\":\"always\",\"saver\":{\"minutes\":10,\"lock\":true,\"shabbat\":false},\"local\":{\"mode\":\"saver\",\"saver\":{\"minutes\":15.0,\"lock\":false,\"shabbat\":true}}}},\"nyt_signed_in\":false,\"agenda_set\":false,\"leagues\":{},\"scenes\":[]}";
         var acer = (await Client(new FakeHandler(json)).GetHouseholdAsync()).Value!.Screens["Acer"];
         Assert.Equal("saver", acer.Effective.Mode);
-        Assert.Equal(new SaverOptions(15, false, "external", true), acer.Effective.Saver);
+        Assert.Equal(new SaverOptions(15, false, true), acer.Effective.Saver);
     }
 
     [Fact]
     public void Saved_screen_uses_its_saved_settings()
     {
-        var s = new Screen(null, true, true, "always", new SaverOptions(10, true, "all", false), new LocalSettings("saver", new SaverOptions(5, true, "all", false)));
+        var s = new Screen(null, true, true, "always", new SaverOptions(10, true, false), new LocalSettings("saver", new SaverOptions(5, true, false)));
         Assert.Equal("always", s.Effective.Mode);
     }
 
@@ -91,10 +91,10 @@ public class ClientTests
     public async Task Saves_send_snake_case_bodies()
     {
         var h = new FakeHandler("{\"ok\":true}"); var c = Client(h);
-        var r = await c.SaveScreenAsync("Den", "saver", new SaverOptions(15, true, "external", true));
+        var r = await c.SaveScreenAsync("Den", "saver", new SaverOptions(15, true, true));
         Assert.Null(r.Error);
         Assert.Equal(HttpMethod.Post, h.Last!.Method);
-        Assert.Contains("\"keep_awake\":true", h.LastBody);
+        Assert.Contains("\"saver\":{\"minutes\":15,\"lock\":true,\"shabbat\":true}", h.LastBody);
         Assert.Contains("\"name\":\"Den\"", h.LastBody);
         await c.SaveRotationAsync("Den", null);
         Assert.Contains("\"rotation\":null", h.LastBody);
