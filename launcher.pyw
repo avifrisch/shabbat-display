@@ -7,9 +7,9 @@ both running: if either one closes or crashes, it is started again.
     Windows:  double-click start-display.bat
     Pi/Linux: ./start-display.sh   (setup-pi.sh makes it start at login)
 
-With --screensaver (Windows only; start-screensaver.bat) it acts as a screen saver
-instead: the server stays running in the background, the browser opens after
-screensaver_minutes without mouse or keyboard input, and any input closes it.
+With --screensaver (Windows only; start-screensaver.bat) it sets Windows' own screen
+saver to the Shabbat Display (saver\ShabbatDisplay.scr) instead of opening a browser.
+The Display Manager app can switch a PC between always on, screen saver and off.
 
 With "server_url" in settings.json it starts no server and shows that machine's
 display instead (a second screen in the house; setup-windows.ps1 finds the server).
@@ -24,6 +24,7 @@ import socket
 import time
 import urllib.parse
 import urllib.request
+from datetime import datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SAVER = "--screensaver" in sys.argv
@@ -31,6 +32,11 @@ PROFILE = os.path.join(HERE, "browser-profile-saver" if SAVER else "browser-prof
 # what the server last said this screen should do (mode, screen-saver options), kept for when it can't be reached
 SETTINGS_CACHE = os.path.join(HERE, "screen-settings.json")
 LOG_FILE = os.path.join(HERE, "screensaver.log" if SAVER else "launcher.log")
+# the Windows screen saver, and what it shows (written here; nothing secret in it)
+SAVER_DIR = os.path.join(HERE, "saver")
+SCR = os.path.join(SAVER_DIR, "ShabbatDisplay.scr")
+SAVER_CONFIG = os.path.join(SAVER_DIR, "saver.json")
+MODES = ("always", "saver", "off")
 WINDOWS = os.name == "nt"
 NO_WINDOW = 0x08000000 if WINDOWS else 0
 
@@ -106,8 +112,7 @@ def screen_name():
 
 
 # screen-settings.json keys -> settings.json keys, for when the server has never answered
-LOCAL_KEYS = {"minutes": "screensaver_minutes", "lock": "screensaver_lock", "screens": "screensaver_screens",
-              "keep_awake": "keep_pc_awake"}
+LOCAL_KEYS = {"minutes": "screensaver_minutes", "lock": "screensaver_lock", "shabbat": "keep_pc_awake"}
 _cache_problem = None
 
 
@@ -130,12 +135,15 @@ def _cached_settings():
 
 
 def screen_setting(key, default):
-    """mode, minutes, lock, screens or keep_awake: what the server said last, else settings.json,
+    """mode, minutes, lock or shabbat: what the server said last, else settings.json,
     else (mode) the flag the launcher was started with."""
     c = _cached_settings()
-    v = c.get("mode") if key == "mode" else (c.get("saver") or {}).get(key)
+    saver = c.get("saver") if isinstance(c.get("saver"), dict) else {}
+    v = c.get("mode") if key == "mode" else saver.get(key)
     if key == "mode":
-        return v if v in ("always", "saver") else ("saver" if SAVER else "always")
+        return v if v in MODES else ("saver" if SAVER else "always")
+    if key == "shabbat" and v is None:
+        v = saver.get("keep_awake")  # an answer from before the Shabbat switch
     if v is None:
         return setting(LOCAL_KEYS[key], default)
     try:
@@ -146,10 +154,9 @@ def screen_setting(key, default):
 
 def local_report():
     """This PC's own settings, sent on each check-in; the server keeps them until the screen is saved in the app."""
-    minutes = setting("screensaver_minutes", 10.0)
-    return {"mode": "saver" if SAVER else "always", "minutes": f"{minutes:g}",
-            "lock": int(setting("screensaver_lock", True)), "screens": setting("screensaver_screens", "all"),
-            "awake": int(setting("keep_pc_awake", False))}
+    minutes = max(1, round(setting("screensaver_minutes", 10.0)))
+    return {"mode": "saver" if SAVER else "always", "minutes": str(minutes),
+            "lock": int(setting("screensaver_lock", True)), "shabbat": int(setting("keep_pc_awake", False))}
 
 
 _fetch_problem = None
@@ -162,7 +169,7 @@ def fetch_screen_settings():
     try:
         with urllib.request.urlopen(url, timeout=5) as r:
             data = json.loads(r.read())
-        if data.get("mode") not in ("always", "saver"):
+        if data.get("mode") not in MODES:
             raise ValueError("no mode in the answer")
         tmp = SETTINGS_CACHE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -315,146 +322,7 @@ def single_instance():
     return f
 
 
-def last_input():
-    """Tick count (ms) of the last mouse or keyboard input anywhere in this session."""
-    import ctypes
-
-    class LASTINPUTINFO(ctypes.Structure):
-        _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
-
-    info = LASTINPUTINFO(ctypes.sizeof(LASTINPUTINFO), 0)
-    ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info))
-    return info.dwTime
-
-
-def idle_from(tick, last):
-    """Seconds since the last input, from two 32-bit millisecond tick counts. Input
-    newer than the clock reading (it arrived between the two reads) counts as none."""
-    d = (tick - last) & 0xFFFFFFFF
-    return 0.0 if d >= 0x80000000 else d / 1000
-
-
-def idle_seconds():
-    import ctypes
-    last = last_input()  # the last input first, then the clock
-    get_tick = ctypes.windll.kernel32.GetTickCount
-    get_tick.restype = ctypes.c_uint32
-    return idle_from(get_tick(), last)
-
-
-# SHQueryUserNotificationState: Windows' own test for "don't interrupt now", the one it
-# uses to hold back notifications. A maximized window doesn't count; a slideshow does.
-BUSY_STATES = {1: "locked or away", 2: "a full-screen app is in front", 3: "a full-screen game or video is in front",
-               4: "presentation mode is on"}
-
-
-def screen_busy():
-    """Why the screen saver shouldn't appear now (locked, slideshow, video call...), or ''."""
-    import ctypes
-    state = ctypes.c_int(0)
-    try:
-        if ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(state)) != 0:
-            return ""
-    except (OSError, AttributeError):
-        return ""
-    return BUSY_STATES.get(state.value, "")
-
-
-def internal_displays():
-    """GDI names (\\\\.\\DISPLAY1 ...) of built-in panels, such as a laptop's own screen."""
-    import ctypes
-    from ctypes import wintypes
-
-    class LUID(ctypes.Structure):
-        _fields_ = [("low", wintypes.DWORD), ("high", wintypes.LONG)]
-
-    class PathSource(ctypes.Structure):
-        _fields_ = [("adapter", LUID), ("id", ctypes.c_uint32), ("mode", ctypes.c_uint32), ("flags", ctypes.c_uint32)]
-
-    class PathTarget(ctypes.Structure):
-        _fields_ = [("adapter", LUID), ("id", ctypes.c_uint32), ("mode", ctypes.c_uint32),
-                    ("tech", ctypes.c_uint32), ("rotation", ctypes.c_uint32), ("scaling", ctypes.c_uint32),
-                    ("refresh", ctypes.c_uint32 * 2), ("scanline", ctypes.c_uint32),
-                    ("available", wintypes.BOOL), ("flags", ctypes.c_uint32)]
-
-    class Path(ctypes.Structure):
-        _fields_ = [("source", PathSource), ("target", PathTarget), ("flags", ctypes.c_uint32)]
-
-    class Mode(ctypes.Structure):
-        _fields_ = [("raw", ctypes.c_byte * 64)]
-
-    class SourceName(ctypes.Structure):
-        _fields_ = [("type", ctypes.c_uint32), ("size", ctypes.c_uint32), ("adapter", LUID),
-                    ("id", ctypes.c_uint32), ("name", ctypes.c_wchar * 32)]
-
-    INTERNAL = {0x80000000, 11, 13}  # internal, embedded DisplayPort, embedded UDI
-    names = set()
-    try:
-        user32 = ctypes.windll.user32
-        n_paths, n_modes = ctypes.c_uint32(), ctypes.c_uint32()
-        if user32.GetDisplayConfigBufferSizes(2, ctypes.byref(n_paths), ctypes.byref(n_modes)):  # active paths
-            return names
-        paths, modes = (Path * n_paths.value)(), (Mode * n_modes.value)()
-        if user32.QueryDisplayConfig(2, ctypes.byref(n_paths), paths, ctypes.byref(n_modes), modes, None):
-            return names
-        for p in paths[:n_paths.value]:
-            if p.target.tech not in INTERNAL:
-                continue
-            src = SourceName(type=1, size=ctypes.sizeof(SourceName), adapter=p.source.adapter, id=p.source.id)
-            if user32.DisplayConfigGetDeviceInfo(ctypes.byref(src)) == 0:
-                names.add(src.name)
-    except (OSError, AttributeError):
-        pass
-    return names
-
-
-def screens():
-    """Each monitor as {"pos": a point just inside its top-left corner, "internal": built-in panel},
-    the primary one first."""
-    import ctypes
-    from ctypes import wintypes
-
-    class MonitorInfo(ctypes.Structure):
-        _fields_ = [("size", wintypes.DWORD), ("monitor", wintypes.RECT), ("work", wintypes.RECT),
-                    ("flags", wintypes.DWORD), ("device", ctypes.c_wchar * 32)]
-
-    inside = internal_displays()
-    found = []
-    proc = ctypes.WINFUNCTYPE(ctypes.c_int, wintypes.HMONITOR, wintypes.HDC, ctypes.POINTER(wintypes.RECT),
-                              wintypes.LPARAM)
-
-    def each(mon, _dc, rect, _data):
-        r = rect.contents
-        info = MonitorInfo(size=ctypes.sizeof(MonitorInfo))
-        ctypes.windll.user32.GetMonitorInfoW(mon, ctypes.byref(info))
-        found.append({"primary": bool(info.flags & 1), "pos": (r.left + 50, r.top + 50),
-                      "internal": info.device in inside})
-        return 1
-
-    try:
-        ctypes.windll.user32.EnumDisplayMonitors(None, None, proc(each), 0)
-    except (OSError, AttributeError):
-        pass
-    return sorted(found, key=lambda s: not s["primary"])
-
-
-def pick_screens(found, which):
-    """Positions to open on. "external": plugged-in monitors only, or every screen when
-    there are none (a laptop on its own). Anything else: every screen."""
-    if which == "external" and any(not s["internal"] for s in found):
-        found = [s for s in found if not s["internal"]]
-    return [s["pos"] for s in found]
-
-
 DIM_FILE = os.path.join(HERE, "brightness-before-saver.txt")
-
-
-def save_dimmed(level):
-    try:
-        with open(DIM_FILE, "w") as f:
-            f.write(str(level))
-    except OSError:
-        pass
 
 
 def restore_brightness():
@@ -471,25 +339,6 @@ def restore_brightness():
         pass
 
 
-def awake_flags(keep_pc, showing):
-    """Screen saver mode with keep_pc_awake: the PC never sleeps, and while the display
-    shows its screens stay on too. On a modern-standby laptop, screens off means standby,
-    and waking from it locks Windows, so the display could not come back."""
-    ES_CONTINUOUS, ES_SYSTEM_REQUIRED, ES_DISPLAY_REQUIRED = 0x80000000, 0x00000001, 0x00000002
-    if not keep_pc:
-        return ES_CONTINUOUS
-    return ES_CONTINUOUS | ES_SYSTEM_REQUIRED | (ES_DISPLAY_REQUIRED if showing else 0)
-
-
-def keep_pc_awake(showing=False):
-    on = screen_setting("keep_awake", False)
-    try:
-        import ctypes
-        ctypes.windll.kernel32.SetThreadExecutionState(awake_flags(on, showing))
-    except (OSError, AttributeError) as e:
-        log(f"keep-awake failed: {e}")
-
-
 def set_internal_brightness(level):
     """Set the built-in panel's brightness (0-100) and return what it was, or None if
     this PC has no adjustable built-in panel. Windows can't switch off one screen,
@@ -504,17 +353,6 @@ def set_internal_brightness(level):
         return int(out[0]) if out and out[0].isdigit() else None
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
-
-
-def saver_profiles(count):
-    """One profile per monitor: a second window in the same profile would open on the first window's monitor."""
-    first = profile_for("saver")
-    return [first] + [f"{first}-{i}" for i in range(2, count + 1)]
-
-
-def lock_screen():
-    import ctypes
-    ctypes.windll.user32.LockWorkStation()
 
 
 def browser_pids(profile=None):
@@ -564,83 +402,216 @@ def screen_off_seconds():
         return 0
 
 
-def saver_loop(browser_path, server):
-    """The screen saver. Returns (with the browser closed) when the server switches this screen to always on."""
-    wait = max(0.25, screen_setting("minutes", 10.0)) * 60
-    log(f"screen saver on: opens after {wait / 60:g} minutes idle")
-    off = screen_off_seconds()
-    if off and off <= wait:
-        log(f"warning: the power plan turns the screen off after {off / 60:g} minutes, before the screen saver"
-            " opens. Raise 'Turn off my screen after' in Settings > System > Power, or run setup again.")
-    restore_brightness()  # in case the launcher stopped while the laptop screen was darkened
-    keep_pc_awake()
-    if screen_setting("keep_awake", False):
-        log("keeping the PC awake, and the screens on while the display shows")
-    showing, pids, noted, profiles = False, [], "", [profile_for("saver")]
-    checked = time.time()
+def cached_holy():
+    """Shabbat and Yom Tov spans from the server's last answer; kept while it can't be reached."""
+    holy = _cached_settings().get("holy")
+    return [h for h in holy if isinstance(h, dict)] if isinstance(holy, list) else []
+
+
+def _spans(spans):
+    for h in spans:
+        try:
+            start, end = datetime.fromisoformat(h["start"]), datetime.fromisoformat(h["end"])
+            yield (start if start.tzinfo else start.astimezone()), (end if end.tzinfo else end.astimezone())
+        except (TypeError, KeyError, ValueError):
+            continue
+
+
+def holy_now(spans, now):
+    """Between a candle lighting and its havdalah."""
+    return any(start <= now < end for start, end in _spans(spans))
+
+
+def shabbat_day(spans, now):
+    """From midnight of the candle-lighting day until havdalah: the PC must not sleep."""
+    return any(start.replace(hour=0, minute=0, second=0, microsecond=0) <= now < end for start, end in _spans(spans))
+
+
+def _short_path(path):
+    import ctypes
+    buf = ctypes.create_unicode_buffer(1024)
+    return buf.value if ctypes.windll.kernel32.GetShortPathNameW(path, buf, 1024) else ""
+
+
+def scr_registry_path(path, shorten=None):
+    """The .scr's path for SCRNSAVE.EXE, with Windows separators: Windows may not start a screen saver
+    whose path has a space, so that gets the short (8.3) form."""
+    path = os.path.normpath(path)
+    if " " not in path:
+        return path
+    return (shorten or _short_path)(path) or path
+
+
+def saver_registry(mode, minutes, lock, holy, scr):
+    """Windows' screen-saver values (HKCU\\Control Panel\\Desktop) for this mode. Over Shabbat nothing locks."""
+    if mode != "saver":
+        return {"ScreenSaveActive": "0"}
+    return {"SCRNSAVE.EXE": scr, "ScreenSaveActive": "1", "ScreenSaveTimeOut": str(int(minutes) * 60),
+            "ScreenSaverIsSecure": "0" if holy else ("1" if lock else "0")}
+
+
+def _same_path(a, b):
+    return bool(a) and os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
+def registry_changes(desired, current, mode, scr):
+    """Only the values that differ. Out of screen-saver mode, someone else's screen saver is left alone."""
+    if mode != "saver" and not _same_path(current.get("SCRNSAVE.EXE"), scr):
+        return {}
+    return {k: v for k, v in desired.items() if current.get(k) != v}
+
+
+DESKTOP_KEY = r"Control Panel\Desktop"
+SAVER_VALUES = ("SCRNSAVE.EXE", "ScreenSaveActive", "ScreenSaveTimeOut", "ScreenSaverIsSecure")
+
+
+def read_saver_registry():
+    import winreg
+    out = {}
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, DESKTOP_KEY) as k:
+            for name in SAVER_VALUES:
+                try:
+                    out[name] = str(winreg.QueryValueEx(k, name)[0])
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return out
+
+
+def apply_registry_changes(changes):
+    """Write them the way Control Panel does, so Windows picks them up at once."""
+    import ctypes
+    import winreg
+    spi = {"ScreenSaveTimeOut": 0x000F, "ScreenSaveActive": 0x0011, "ScreenSaverIsSecure": 0x0077}
+    SPIF_UPDATEINIFILE, SPIF_SENDCHANGE = 0x01, 0x02
+    try:
+        if "SCRNSAVE.EXE" in changes:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, DESKTOP_KEY, 0, winreg.KEY_SET_VALUE) as k:
+                winreg.SetValueEx(k, "SCRNSAVE.EXE", 0, winreg.REG_SZ, changes["SCRNSAVE.EXE"])
+        for name, action in spi.items():
+            if name in changes:
+                ctypes.windll.user32.SystemParametersInfoW(action, int(changes[name]), None,
+                                                           SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
+        log("Windows screen saver: " + ", ".join(f"{k}={v}" for k, v in changes.items()))
+    except (OSError, ValueError) as e:
+        log(f"couldn't change the Windows screen saver settings: {e}")
+
+
+def saver_policy():
+    """Screen-saver values set by a policy (a work or school PC); Windows then ignores ours."""
+    import winreg
+    found = []
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Policies\Microsoft\Windows\Control Panel\Desktop") as k:
+            i = 0
+            while True:
+                try:
+                    name = winreg.EnumValue(k, i)[0]
+                except OSError:
+                    break
+                if name.lower().startswith("screensave") or name.upper() == "SCRNSAVE.EXE":
+                    found.append(name)
+                i += 1
+    except OSError:
+        pass
+    return found
+
+
+def write_saver_config(url, screen, shabbat, holy):
+    """saver.json for the .scr, rewritten only when it changes. Returns whether it was written."""
+    text = json.dumps({"url": url, "screen": screen, "shabbat": bool(shabbat), "holy": holy}, indent=1)
+    try:
+        with open(SAVER_CONFIG, encoding="utf-8") as f:
+            if f.read() == text:
+                return False
+    except OSError:
+        pass
+    try:
+        os.makedirs(os.path.dirname(SAVER_CONFIG), exist_ok=True)
+        tmp = SAVER_CONFIG + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, SAVER_CONFIG)
+        return True
+    except OSError as e:
+        log(f"couldn't write saver.json: {e}")
+        return False
+
+
+def screen_off_target(off_minutes, wait_minutes):
+    """A new plugged-in screen-off time when the screen would turn off before the screen saver starts."""
+    return wait_minutes + 20 if 0 < off_minutes <= wait_minutes else None
+
+
+def set_awake(pc):
+    """Keep the PC from sleeping, or let Windows decide. Never the screens: holding them on would
+    stop Windows from ever starting the screen saver (it holds them on itself over Shabbat)."""
+    ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if pc else 0))
+    except (OSError, AttributeError) as e:
+        log(f"keep-awake failed: {e}")
+
+
+def undo_our_saver():
+    """Leaving screen-saver mode: Windows' screen saver off, if it is ours."""
+    scr = scr_registry_path(SCR)
+    changes = registry_changes(saver_registry("off", 10, True, False, scr), read_saver_registry(), "off", scr)
+    if changes:
+        apply_registry_changes(changes)
+
+
+def windows_saver_loop(server, mode):
+    """Mode saver: Windows' own screen saver is the Shabbat Display, set and kept that way here.
+    Mode off: no screen saver of ours. No browser either way. Returns when the mode changes."""
+    restore_brightness()  # the old screen saver may have left the laptop screen dark
+    log("mode: " + ("screen saver" if mode == "saver" else "off"))
+    noted, checked, raised_for = set(), 0.0, None
+
+    def once(key, msg):
+        if key not in noted:
+            noted.add(key)
+            log(msg)
+
     while True:
-        if time.time() - checked >= 60:
+        if time.time() - checked >= 55:
             checked = time.time()
             fetch_screen_settings()
-            if screen_setting("mode", None) != "saver":
-                if showing:
-                    stop_browser(pids, profiles)
-                    restore_brightness()
+            if screen_setting("mode", None) != mode:
+                set_awake(False)
                 return server
-        if not showing:
-            time.sleep(2)
-            # settings are read as they're needed, so an edit to settings.json counts right away
-            wait = max(0.25, screen_setting("minutes", 10.0)) * 60
-            idle = idle_seconds()
-            busy = screen_busy() if idle >= wait else ""
-            if idle >= wait and not busy and REMOTE and not server_up():
-                busy = f"the display server at {URL} isn't answering"
-            if busy != noted:  # log each reason once, so screensaver.log shows why it didn't appear
-                if busy:
-                    log(f"not opening: {busy}")
-                noted = busy
-            if idle >= wait and not busy:
-                found = screens()  # looked up each time, in case a monitor was plugged in or out
-                chosen = pick_screens(found, screen_setting("screens", "all")) or [None]
-                profiles = saver_profiles(len(chosen))
-                log(f"opening on {len(chosen)} screen{'s' if len(chosen) > 1 else ''} after {idle / 60:.1f} minutes idle")
-                shown_at = last_input()
-                for profile, position in zip(profiles, chosen):
-                    start_browser(browser_path, profile, position if len(found) > 1 else None)
-                # plugged-in monitor only: darken the laptop's own screen while it shows
-                if len(chosen) < len(found) and any(s["internal"] for s in found):
-                    dimmed = set_internal_brightness(0)
-                    if dimmed is not None:
-                        save_dimmed(dimmed)
-                keep_pc_awake(showing=True)
-                showing, pids = True, []
-                for _ in range(50):  # wait for the relaunched browsers, then remember their processes
-                    if last_input() != shown_at or all(browser_running(p) for p in profiles):
-                        break
-                    time.sleep(0.1)
-        else:
-            time.sleep(0.2)
-            if not pids and last_input() == shown_at:
-                pids = browser_pids()
-            if last_input() != shown_at or not any(browser_running(p) for p in profiles):
-                stop_browser(pids, profiles)
-                showing = False
-                restore_brightness()
-                keep_pc_awake()  # the screens may turn off on schedule again
-                if last_input() != shown_at:
-                    lock = screen_setting("lock", True)
-                    log("closed: input" + ("; locking" if lock else ""))
-                    if lock:
-                        lock_screen()
-                else:
-                    log("closed: browser exited")
-        if REMOTE:
-            continue
-        if server is not None and server.poll() is not None:
-            log(f"server exited with code {server.returncode}; restarting")
-            server = start_server()
-        elif server is None and not server_up():
-            server = start_server()
+        minutes = max(1, min(240, round(screen_setting("minutes", 10.0))))
+        shabbat = mode == "saver" and screen_setting("shabbat", False)
+        spans, now = cached_holy(), datetime.now().astimezone()
+        scr = scr_registry_path(SCR)
+        want = saver_registry(mode, minutes, screen_setting("lock", True), shabbat and holy_now(spans, now), scr)
+        changes = registry_changes(want, read_saver_registry(), mode, scr)
+        if changes:
+            apply_registry_changes(changes)
+        if mode == "saver":
+            if not os.path.exists(SCR):
+                once("missing", "saver\\ShabbatDisplay.scr is missing; rebuild it (build-saver.bat) or reinstall")
+            if saver_policy():
+                once("policy", "a Windows policy controls the screen saver on this PC, so these settings may not apply")
+            write_saver_config(URL, screen_name(), shabbat, spans)
+            if shabbat and raised_for != minutes:
+                raised_for = minutes
+                target = screen_off_target(screen_off_seconds() / 60, minutes)
+                if target:
+                    subprocess.run(["powercfg", "/change", "monitor-timeout-ac", str(target)],
+                                   creationflags=NO_WINDOW, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    log(f"the screen turned off before the screen saver would start; it now turns off after {target} minutes")
+        set_awake(shabbat and shabbat_day(spans, now))
+        if not REMOTE:
+            if server is not None and server.poll() is not None:
+                log(f"server exited with code {server.returncode}; restarting")
+                server = start_server()
+            elif server is None and not server_up():
+                server = start_server()
+        time.sleep(30)
 
 
 def main():
@@ -667,10 +638,11 @@ def main():
     log(f"this screen is \"{screen_name()}\" in the Display Manager")
     while True:
         mode = screen_setting("mode", None)
-        if mode == "saver" and WINDOWS:
-            log("mode: screen saver")
-            server = saver_loop(browser_path, server)
+        if mode in ("saver", "off") and WINDOWS:
+            server = windows_saver_loop(server, mode)
         else:
+            if mode != "always":
+                log(f"mode {mode} is for Windows; showing the display full time")
             log("mode: always on")
             server = always_loop(browser_path, server)
 
@@ -678,6 +650,8 @@ def main():
 def always_loop(browser_path, server):
     """The display full time. Returns (with the browser closed) when the server switches this screen to the screen saver."""
     profile = profile_for("always")
+    if WINDOWS:
+        undo_our_saver()
     keep_awake()
     if not browser_running(profile) and (not REMOTE or server_up()):
         start_browser(browser_path, profile)
@@ -687,7 +661,7 @@ def always_loop(browser_path, server):
         if time.time() - checked >= 55:
             checked = time.time()
             fetch_screen_settings()
-            if screen_setting("mode", None) == "saver" and WINDOWS:
+            if screen_setting("mode", None) in ("saver", "off") and WINDOWS:
                 stop_browser(browser_pids(profile), [profile])
                 return server
         keep_awake()

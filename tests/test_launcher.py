@@ -2,6 +2,7 @@ import importlib.machinery
 import importlib.util
 import os
 import unittest
+from datetime import datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _loader = importlib.machinery.SourceFileLoader("launcher", os.path.join(ROOT, "launcher.pyw"))
@@ -23,47 +24,58 @@ class DisplayUrlTests(unittest.TestCase):
         self.assertEqual(launcher.display_url(" 192.168.4.109:9000 ", 8765), "http://192.168.4.109:9000/")
 
 
-LAPTOP = {"pos": (50, 50), "internal": True}
-MONITOR = {"pos": (1970, 50), "internal": False}
+SPANS = [{"start": "2026-11-13T16:17:00-05:00", "end": "2026-11-14T17:20:00-05:00"}]
+SCR = r"C:\ShabbatDisplay\saver\ShabbatDisplay.scr"
 
 
-class ScreenChoiceTests(unittest.TestCase):
-    def test_all_screens_by_default(self):
-        self.assertEqual(launcher.pick_screens([LAPTOP, MONITOR], "all"), [(50, 50), (1970, 50)])
-
-    def test_external_only(self):
-        self.assertEqual(launcher.pick_screens([LAPTOP, MONITOR], "external"), [(1970, 50)])
-
-    def test_external_falls_back_to_the_laptop_alone(self):
-        self.assertEqual(launcher.pick_screens([LAPTOP], "external"), [(50, 50)])
-
-    def test_unknown_value_means_all(self):
-        self.assertEqual(launcher.pick_screens([LAPTOP, MONITOR], "both"), [(50, 50), (1970, 50)])
+def at(s):
+    return datetime.fromisoformat(s)
 
 
-class IdleTests(unittest.TestCase):
-    def test_idle_time(self):
-        self.assertEqual(launcher.idle_from(tick=100_000, last=40_000), 60.0)
+class WindowsSaverTests(unittest.TestCase):
+    def test_saver_registry_points_windows_at_the_scr(self):
+        self.assertEqual(launcher.saver_registry("saver", 10, True, False, SCR),
+                         {"SCRNSAVE.EXE": SCR, "ScreenSaveActive": "1", "ScreenSaveTimeOut": "600", "ScreenSaverIsSecure": "1"})
 
-    def test_tick_counter_wrapping(self):
-        self.assertEqual(launcher.idle_from(tick=5_000, last=2**32 - 5_000), 10.0)
+    def test_holy_turns_lock_off(self):
+        self.assertEqual(launcher.saver_registry("saver", 10, True, True, SCR)["ScreenSaverIsSecure"], "0")
 
-    def test_input_newer_than_now_is_not_idle(self):
-        # input that lands between reading the clock and reading the last input
-        self.assertEqual(launcher.idle_from(tick=100_000, last=100_016), 0.0)
+    def test_only_changed_values_are_written(self):
+        want = launcher.saver_registry("saver", 10, True, False, SCR)
+        self.assertEqual(launcher.registry_changes(want, dict(want, ScreenSaveTimeOut="300"), "saver", SCR), {"ScreenSaveTimeOut": "600"})
+        self.assertEqual(launcher.registry_changes(want, want, "saver", SCR), {})
 
+    def test_off_only_undoes_our_own_saver(self):
+        off = launcher.saver_registry("off", 10, True, False, SCR)
+        mystify = {"SCRNSAVE.EXE": r"C:\Windows\system32\Mystify.scr", "ScreenSaveActive": "1"}
+        self.assertEqual(launcher.registry_changes(off, mystify, "off", SCR), {})
+        ours = {"SCRNSAVE.EXE": SCR.lower(), "ScreenSaveActive": "1"}
+        self.assertEqual(launcher.registry_changes(off, ours, "off", SCR), {"ScreenSaveActive": "0"})
 
-class AwakeFlagsTests(unittest.TestCase):
-    # ES_CONTINUOUS, ES_SYSTEM_REQUIRED, ES_DISPLAY_REQUIRED
-    def test_off_lets_windows_decide(self):
-        self.assertEqual(launcher.awake_flags(keep_pc=False, showing=True), 0x80000000)
+    def test_scr_path_with_spaces_uses_short_path(self):
+        self.assertEqual(launcher.scr_registry_path(SCR, shorten=lambda p: "X"), SCR)
+        self.assertEqual(launcher.scr_registry_path(r"C:\dev\shabbat display\saver\ShabbatDisplay.scr",
+                                                    shorten=lambda p: r"C:\dev\SHABBA~1\saver\SHABBA~1.SCR"),
+                         r"C:\dev\SHABBA~1\saver\SHABBA~1.SCR")
 
-    def test_idle_pc_stays_awake_but_screens_may_turn_off(self):
-        self.assertEqual(launcher.awake_flags(keep_pc=True, showing=False), 0x80000001)
+    def test_scr_path_uses_windows_separators(self):
+        self.assertEqual(launcher.scr_registry_path("C:/ShabbatDisplay/saver/ShabbatDisplay.scr"), SCR)
 
-    def test_showing_keeps_the_screens_on(self):
-        # on a modern-standby laptop, screens off means standby and a locked PC
-        self.assertEqual(launcher.awake_flags(keep_pc=True, showing=True), 0x80000003)
+    def test_holy_now_and_shabbat_day(self):
+        cases = {"2026-11-12T23:00:00-05:00": (False, False), "2026-11-13T09:00:00-05:00": (False, True),
+                 "2026-11-13T16:30:00-05:00": (True, True), "2026-11-14T17:30:00-05:00": (False, False)}
+        for t, (holy, day) in cases.items():
+            self.assertEqual((launcher.holy_now(SPANS, at(t)), launcher.shabbat_day(SPANS, at(t))), (holy, day), t)
+
+    def test_bad_spans_are_skipped(self):
+        bad = [{"start": "soon", "end": "later"}, "x", {"start": "2026-11-13T16:17:00-05:00"}]
+        self.assertFalse(launcher.holy_now(bad + [], at("2026-11-13T16:30:00-05:00")))
+        self.assertTrue(launcher.holy_now(bad + SPANS, at("2026-11-13T16:30:00-05:00")))
+
+    def test_screen_off_raised_only_when_too_soon(self):
+        self.assertEqual(launcher.screen_off_target(10, 10), 30)
+        self.assertIsNone(launcher.screen_off_target(0, 10))    # never turns off
+        self.assertIsNone(launcher.screen_off_target(45, 10))
 
 
 class SettingsReadTests(unittest.TestCase):
@@ -124,11 +136,46 @@ class ScreenSettingsTests(unittest.TestCase):
 
     def test_server_answer_overrides_settings(self):
         self.write_settings({"screensaver_minutes": 10, "keep_pc_awake": False})
-        self.write_cache({"mode": "saver", "saver": {"minutes": 20, "lock": True, "screens": "external", "keep_awake": True}})
+        self.write_cache({"mode": "saver", "saver": {"minutes": 20, "lock": False, "shabbat": True}})
         self.assertEqual(launcher.screen_setting("minutes", 10.0), 20.0)
-        self.assertTrue(launcher.screen_setting("keep_awake", False))
-        self.assertEqual(launcher.screen_setting("screens", "all"), "external")
+        self.assertTrue(launcher.screen_setting("shabbat", False))
+        self.assertFalse(launcher.screen_setting("lock", True))
         self.assertEqual(launcher.screen_setting("mode", None), "saver")
+
+    def test_off_mode_from_the_server(self):
+        self.write_cache({"mode": "off", "saver": {}})
+        self.assertEqual(launcher.screen_setting("mode", None), "off")
+
+    def test_old_cache_keep_awake_means_shabbat(self):
+        self.write_cache({"mode": "saver", "saver": {"minutes": 10, "lock": True, "screens": "all", "keep_awake": True}})
+        self.assertTrue(launcher.screen_setting("shabbat", False))
+
+    def test_shabbat_falls_back_to_keep_pc_awake(self):
+        self.write_settings({"keep_pc_awake": True})
+        self.assertTrue(launcher.screen_setting("shabbat", False))
+
+    def test_holy_spans_survive_unreachable_server(self):
+        self.write_cache({"mode": "saver", "saver": {}, "holy": SPANS})
+        with self.mock.patch.object(launcher.urllib.request, "urlopen", side_effect=OSError("down")):
+            self.assertIsNone(launcher.fetch_screen_settings())
+        self.assertEqual(launcher.cached_holy(), SPANS)
+
+    def test_write_saver_config_only_when_changed(self):
+        import json
+        path = os.path.join(self._dir.name, "saver", "saver.json")
+        with self.mock.patch.object(launcher, "SAVER_CONFIG", path):
+            self.assertTrue(launcher.write_saver_config("http://100.98.145.119:8765/", "Ariela's Acer", True, SPANS))
+            self.assertFalse(launcher.write_saver_config("http://100.98.145.119:8765/", "Ariela's Acer", True, SPANS))
+            self.assertTrue(launcher.write_saver_config("http://100.98.145.119:8765/", "Ariela's Acer", False, SPANS))
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {"url": "http://100.98.145.119:8765/", "screen": "Ariela's Acer",
+                                            "shabbat": False, "holy": SPANS})
+
+    def test_local_report_sends_shabbat(self):
+        self.write_settings({"screensaver_minutes": 12.0, "keep_pc_awake": True})
+        r = launcher.local_report()
+        self.assertEqual(set(r), {"mode", "minutes", "lock", "shabbat"})
+        self.assertEqual((r["minutes"], r["shabbat"]), ("12", 1))
 
     def test_corrupt_cache_falls_back_to_settings(self):
         self.write_settings({"screensaver_minutes": 12})
@@ -151,7 +198,7 @@ class ScreenSettingsTests(unittest.TestCase):
     def test_fetch_writes_cache_and_reports_local_settings(self):
         import io
         import json
-        self.write_settings({"screen_name": "Den", "screensaver_minutes": 15, "screensaver_screens": "external", "keep_pc_awake": True})
+        self.write_settings({"screen_name": "Den", "screensaver_minutes": 15, "keep_pc_awake": True})
         seen = []
 
         class Answer(io.BytesIO):
@@ -172,8 +219,7 @@ class ScreenSettingsTests(unittest.TestCase):
         self.assertEqual(got["mode"], "always")
         self.assertEqual(launcher.screen_setting("mode", None), "always")
         self.assertIn("api/screen-settings?screen=Den&mode=saver&minutes=15", seen[0])
-        self.assertIn("screens=external", seen[0])
-        self.assertIn("awake=1", seen[0])
+        self.assertIn("shabbat=1", seen[0])
 
     def test_page_url_carries_screen(self):
         self.write_settings({"screen_name": "Den"})
