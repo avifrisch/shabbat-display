@@ -80,5 +80,110 @@ class SettingsReadTests(unittest.TestCase):
         self.assertIn("settings.json", logged[0])
 
 
+class ScreenSettingsTests(unittest.TestCase):
+    """The launcher's own name, and the mode and screen-saver options it takes from the server."""
+
+    def setUp(self):
+        import tempfile
+        from unittest import mock
+        self.mock = mock
+        self._dir = tempfile.TemporaryDirectory()
+        self._patches = [mock.patch.object(launcher, "HERE", self._dir.name),
+                         mock.patch.object(launcher, "SETTINGS_CACHE", os.path.join(self._dir.name, "screen-settings.json")),
+                         mock.patch.object(launcher, "log", lambda m: None)]
+        for p in self._patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self._patches:
+            p.stop()
+        self._dir.cleanup()
+
+    def write_settings(self, d):
+        import json
+        with open(os.path.join(self._dir.name, "settings.json"), "w", encoding="utf-8") as f:
+            json.dump(d, f)
+
+    def write_cache(self, d):
+        import json
+        with open(launcher.SETTINGS_CACHE, "w", encoding="utf-8") as f:
+            json.dump(d, f)
+
+    def test_screen_name_from_settings_or_pc(self):
+        self.write_settings({"screen_name": "Ariela's Acer"})
+        self.assertEqual(launcher.screen_name(), "Ariela's Acer")
+        self.write_settings({})
+        with self.mock.patch.dict(os.environ, {"COMPUTERNAME": "ARIELA-ACER"}):
+            self.assertEqual(launcher.screen_name(), "ARIELA-ACER")
+
+    def test_screen_name_is_made_safe(self):
+        self.write_settings({"screen_name": "Den / TV 😀" + "x" * 50})
+        name = launcher.screen_name()
+        self.assertLessEqual(len(name), 40)
+        self.assertRegex(name, r"^[A-Za-z0-9][A-Za-z0-9 ._'-]*$")
+
+    def test_server_answer_overrides_settings(self):
+        self.write_settings({"screensaver_minutes": 10, "keep_pc_awake": False})
+        self.write_cache({"mode": "saver", "saver": {"minutes": 20, "lock": True, "screens": "external", "keep_awake": True}})
+        self.assertEqual(launcher.screen_setting("minutes", 10.0), 20.0)
+        self.assertTrue(launcher.screen_setting("keep_awake", False))
+        self.assertEqual(launcher.screen_setting("screens", "all"), "external")
+        self.assertEqual(launcher.screen_setting("mode", None), "saver")
+
+    def test_corrupt_cache_falls_back_to_settings(self):
+        self.write_settings({"screensaver_minutes": 12})
+        with open(launcher.SETTINGS_CACHE, "w") as f:
+            f.write("{not json")
+        self.assertEqual(launcher.screen_setting("minutes", 10.0), 12.0)
+
+    def test_no_answer_ever_uses_startup_flag(self):
+        with self.mock.patch.object(launcher, "SAVER", True):
+            self.assertEqual(launcher.screen_setting("mode", None), "saver")
+        with self.mock.patch.object(launcher, "SAVER", False):
+            self.assertEqual(launcher.screen_setting("mode", None), "always")
+
+    def test_unreachable_server_keeps_cache(self):
+        self.write_cache({"mode": "always", "saver": {}})
+        with self.mock.patch.object(launcher.urllib.request, "urlopen", side_effect=OSError("down")):
+            self.assertIsNone(launcher.fetch_screen_settings())
+        self.assertEqual(launcher.screen_setting("mode", None), "always")
+
+    def test_fetch_writes_cache_and_reports_local_settings(self):
+        import io
+        import json
+        self.write_settings({"screen_name": "Den", "screensaver_minutes": 15, "screensaver_screens": "external", "keep_pc_awake": True})
+        seen = []
+
+        class Answer(io.BytesIO):
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake(url, timeout=None):
+            seen.append(url)
+            return Answer(json.dumps({"ok": True, "screen": "Den", "mode": "always", "saver": {"minutes": 15}, "saved": True}).encode())
+        with self.mock.patch.object(launcher.urllib.request, "urlopen", fake), \
+                self.mock.patch.object(launcher, "SAVER", True):
+            got = launcher.fetch_screen_settings()
+        self.assertEqual(got["mode"], "always")
+        self.assertEqual(launcher.screen_setting("mode", None), "always")
+        self.assertIn("api/screen-settings?screen=Den&mode=saver&minutes=15", seen[0])
+        self.assertIn("screens=external", seen[0])
+        self.assertIn("awake=1", seen[0])
+
+    def test_page_url_carries_screen(self):
+        self.write_settings({"screen_name": "Den"})
+        self.assertTrue(launcher.page_url(True).endswith("?screen=Den&saver=1"))
+        self.assertTrue(launcher.page_url(False).endswith("?screen=Den"))
+
+    def test_profile_per_mode(self):
+        self.assertTrue(launcher.profile_for("saver").endswith("browser-profile-saver"))
+        self.assertTrue(launcher.profile_for("always").endswith("browser-profile"))
+
+
 if __name__ == "__main__":
     unittest.main()

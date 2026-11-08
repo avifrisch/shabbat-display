@@ -20,12 +20,16 @@ import re
 import shutil
 import subprocess
 import sys
+import socket
 import time
+import urllib.parse
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SAVER = "--screensaver" in sys.argv
 PROFILE = os.path.join(HERE, "browser-profile-saver" if SAVER else "browser-profile")
+# what the server last said this screen should do (mode, screen-saver options), kept for when it can't be reached
+SETTINGS_CACHE = os.path.join(HERE, "screen-settings.json")
 LOG_FILE = os.path.join(HERE, "screensaver.log" if SAVER else "launcher.log")
 WINDOWS = os.name == "nt"
 NO_WINDOW = 0x08000000 if WINDOWS else 0
@@ -86,6 +90,96 @@ def display_url(server_url, port):
     if not re.search(r":\d+$", s.split("://", 1)[1]):
         s += f":{port}"
     return s + "/"
+
+
+def profile_for(mode):
+    return os.path.join(HERE, "browser-profile-saver" if mode == "saver" else "browser-profile")
+
+
+def screen_name():
+    """This screen's name in the Display Manager: screen_name in settings.json, else the PC's name."""
+    name = setting("screen_name", "").strip() or os.environ.get("COMPUTERNAME") or socket.gethostname()
+    name = re.sub(r"[^A-Za-z0-9 ._'-]", "-", name)[:40].strip()
+    if not name or not name[0].isalnum():
+        name = ("PC-" + name)[:40]
+    return name
+
+
+# screen-settings.json keys -> settings.json keys, for when the server has never answered
+LOCAL_KEYS = {"minutes": "screensaver_minutes", "lock": "screensaver_lock", "screens": "screensaver_screens",
+              "keep_awake": "keep_pc_awake"}
+_cache_problem = None
+
+
+def _cached_settings():
+    global _cache_problem
+    try:
+        with open(SETTINGS_CACHE, encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("not a JSON object")
+        _cache_problem = None
+        return data
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as e:
+        if str(e) != _cache_problem:
+            _cache_problem = str(e)
+            log(f"screen-settings.json can't be read ({e}); using settings.json")
+        return {}
+
+
+def screen_setting(key, default):
+    """mode, minutes, lock, screens or keep_awake: what the server said last, else settings.json,
+    else (mode) the flag the launcher was started with."""
+    c = _cached_settings()
+    v = c.get("mode") if key == "mode" else (c.get("saver") or {}).get(key)
+    if key == "mode":
+        return v if v in ("always", "saver") else ("saver" if SAVER else "always")
+    if v is None:
+        return setting(LOCAL_KEYS[key], default)
+    try:
+        return type(default)(v) if default is not None else v
+    except (TypeError, ValueError):
+        return default
+
+
+def local_report():
+    """This PC's own settings, sent on each check-in; the server keeps them until the screen is saved in the app."""
+    minutes = setting("screensaver_minutes", 10.0)
+    return {"mode": "saver" if SAVER else "always", "minutes": f"{minutes:g}",
+            "lock": int(setting("screensaver_lock", True)), "screens": setting("screensaver_screens", "all"),
+            "awake": int(setting("keep_pc_awake", False))}
+
+
+_fetch_problem = None
+
+
+def fetch_screen_settings():
+    """Ask the server what this screen should do, and remember the answer. None when it can't be reached."""
+    global _fetch_problem
+    url = URL + "api/screen-settings?" + urllib.parse.urlencode({"screen": screen_name(), **local_report()})
+    try:
+        with urllib.request.urlopen(url, timeout=5) as r:
+            data = json.loads(r.read())
+        if data.get("mode") not in ("always", "saver"):
+            raise ValueError("no mode in the answer")
+        tmp = SETTINGS_CACHE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(tmp, SETTINGS_CACHE)
+        _fetch_problem = None
+        return data
+    except Exception as e:  # noqa: BLE001 - keep the last answer
+        if str(e) != _fetch_problem:
+            _fetch_problem = str(e)
+            log(f"couldn't get this screen's settings from the server ({e}); keeping the last ones")
+        return None
+
+
+def page_url(saver):
+    """The display page, with this screen's name; ?saver=1 lets the power plan still turn the screen off."""
+    return URL + "?" + urllib.parse.urlencode({"screen": screen_name(), **({"saver": 1} if saver else {})})
 
 
 # With "server_url" in settings.json this PC only shows the display; the data
@@ -154,7 +248,7 @@ def browser_running(profile=PROFILE):
             return True
         return False
     try:  # a symlink to "hostname-pid"
-        pid = int(os.readlink(os.path.join(PROFILE, "SingletonLock")).rsplit("-", 1)[1])
+        pid = int(os.readlink(os.path.join(profile, "SingletonLock")).rsplit("-", 1)[1])
         os.kill(pid, 0)
         return True
     except PermissionError:
@@ -181,7 +275,7 @@ def mark_clean_exit(profile=PROFILE):
     if not WINDOWS:
         for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
             try:
-                os.unlink(os.path.join(PROFILE, name))
+                os.unlink(os.path.join(profile, name))
             except OSError:
                 pass
 
@@ -189,8 +283,8 @@ def mark_clean_exit(profile=PROFILE):
 def start_browser(path, profile=PROFILE, position=None):
     log(f"starting browser {path}" + (f" at {position[0]},{position[1]}" if position else ""))
     mark_clean_exit(profile)
-    # ?saver=1: the page skips its wake lock, so the power plan can still turn the screen off.
-    args = [path, "--kiosk", URL + ("?saver=1" if SAVER else ""), f"--user-data-dir={profile}", "--no-first-run",
+    saver = os.path.basename(profile).startswith("browser-profile-saver")
+    args = [path, "--kiosk", page_url(saver), f"--user-data-dir={profile}", "--no-first-run",
             "--noerrdialogs", "--disable-session-crashed-bubble", "--disable-infobars",
             "--disable-features=Translate,TranslateUI", "--autoplay-policy=no-user-gesture-required",
             "--overscroll-history-navigation=0", "--disable-pinch",
@@ -388,11 +482,10 @@ def awake_flags(keep_pc, showing):
 
 
 def keep_pc_awake(showing=False):
-    if not setting("keep_pc_awake", False):
-        return
+    on = screen_setting("keep_awake", False)
     try:
         import ctypes
-        ctypes.windll.kernel32.SetThreadExecutionState(awake_flags(True, showing))
+        ctypes.windll.kernel32.SetThreadExecutionState(awake_flags(on, showing))
     except (OSError, AttributeError) as e:
         log(f"keep-awake failed: {e}")
 
@@ -415,7 +508,8 @@ def set_internal_brightness(level):
 
 def saver_profiles(count):
     """One profile per monitor: a second window in the same profile would open on the first window's monitor."""
-    return [PROFILE] + [f"{PROFILE}-{i}" for i in range(2, count + 1)]
+    first = profile_for("saver")
+    return [first] + [f"{first}-{i}" for i in range(2, count + 1)]
 
 
 def lock_screen():
@@ -423,12 +517,17 @@ def lock_screen():
     ctypes.windll.user32.LockWorkStation()
 
 
-def browser_pids():
+def browser_pids(profile=None):
     """Main browser processes using our profiles (browser-profile-saver, -2, ... all match).
     Chrome relaunches itself at startup, so the process start_browser() returns is usually gone by now."""
-    prof = PROFILE.replace("'", "''")
+    # the saver profiles (-saver, -saver-2, ...) by prefix; any other profile exactly, so browser-profile
+    # doesn't also match browser-profile-saver
+    prof = (profile or profile_for("saver")).replace("'", "''")
+    match = (f"$_.CommandLine -like '*{prof}*'" if not profile else
+             f"($_.CommandLine -like '*{prof}' -or $_.CommandLine -like '*{prof} *')")
     cmd = ("Get-CimInstance Win32_Process -Filter \"Name='chrome.exe' or Name='msedge.exe'\" | "
-           f"Where-Object {{ $_.CommandLine -like '*{prof}*' -and $_.CommandLine -notlike '*--type=*' }} | "
+           f"Where-Object {{ {match} "
+           "-and $_.CommandLine -notlike '*--type=*' } | "
            "ForEach-Object { $_.ProcessId }")
     try:
         out = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True,
@@ -463,22 +562,32 @@ def screen_off_seconds():
 
 
 def saver_loop(browser_path, server):
-    wait = max(0.25, setting("screensaver_minutes", 10.0)) * 60
+    """The screen saver. Returns (with the browser closed) when the server switches this screen to always on."""
+    wait = max(0.25, screen_setting("minutes", 10.0)) * 60
     log(f"screen saver on: opens after {wait / 60:g} minutes idle")
     off = screen_off_seconds()
     if off and off <= wait:
         log(f"warning: the power plan turns the screen off after {off / 60:g} minutes, before the screen saver"
             " opens. Raise 'Turn off my screen after' in Settings > System > Power, or run setup again.")
     restore_brightness()  # in case the launcher stopped while the laptop screen was darkened
-    if setting("keep_pc_awake", False):
-        keep_pc_awake()
+    keep_pc_awake()
+    if screen_setting("keep_awake", False):
         log("keeping the PC awake, and the screens on while the display shows")
-    showing, pids, noted, profiles = False, [], "", [PROFILE]
+    showing, pids, noted, profiles = False, [], "", [profile_for("saver")]
+    checked = time.time()
     while True:
+        if time.time() - checked >= 60:
+            checked = time.time()
+            fetch_screen_settings()
+            if screen_setting("mode", None) != "saver":
+                if showing:
+                    stop_browser(pids, profiles)
+                    restore_brightness()
+                return server
         if not showing:
             time.sleep(2)
             # settings are read as they're needed, so an edit to settings.json counts right away
-            wait = max(0.25, setting("screensaver_minutes", 10.0)) * 60
+            wait = max(0.25, screen_setting("minutes", 10.0)) * 60
             idle = idle_seconds()
             busy = screen_busy() if idle >= wait else ""
             if idle >= wait and not busy and REMOTE and not server_up():
@@ -489,7 +598,7 @@ def saver_loop(browser_path, server):
                 noted = busy
             if idle >= wait and not busy:
                 found = screens()  # looked up each time, in case a monitor was plugged in or out
-                chosen = pick_screens(found, setting("screensaver_screens", "all")) or [None]
+                chosen = pick_screens(found, screen_setting("screens", "all")) or [None]
                 profiles = saver_profiles(len(chosen))
                 log(f"opening on {len(chosen)} screen{'s' if len(chosen) > 1 else ''} after {idle / 60:.1f} minutes idle")
                 shown_at = last_input()
@@ -516,7 +625,7 @@ def saver_loop(browser_path, server):
                 restore_brightness()
                 keep_pc_awake()  # the screens may turn off on schedule again
                 if last_input() != shown_at:
-                    lock = setting("screensaver_lock", True)
+                    lock = screen_setting("lock", True)
                     log("closed: input" + ("; locking" if lock else ""))
                     if lock:
                         lock_screen()
@@ -551,29 +660,48 @@ def main():
         time.sleep(1)
     if REMOTE:
         log(f"showing the display from {URL}" + ("" if server_up() else " (not answering yet)"))
-    if SAVER:
-        saver_loop(browser_path, server)
-        return
+    fetch_screen_settings()
+    log(f"this screen is \"{screen_name()}\" in the Display Manager")
+    while True:
+        mode = screen_setting("mode", None)
+        if mode == "saver" and WINDOWS:
+            log("mode: screen saver")
+            server = saver_loop(browser_path, server)
+        else:
+            log("mode: always on")
+            server = always_loop(browser_path, server)
+
+
+def always_loop(browser_path, server):
+    """The display full time. Returns (with the browser closed) when the server switches this screen to the screen saver."""
+    profile = profile_for("always")
     keep_awake()
-    if not browser_running() and (not REMOTE or server_up()):
-        start_browser(browser_path)
+    if not browser_running(profile) and (not REMOTE or server_up()):
+        start_browser(browser_path, profile)
+    checked = time.time()
     while True:
         time.sleep(30)
+        if time.time() - checked >= 55:
+            checked = time.time()
+            fetch_screen_settings()
+            if screen_setting("mode", None) == "saver" and WINDOWS:
+                stop_browser(browser_pids(profile), [profile])
+                return server
         keep_awake()
         if REMOTE:
             # another machine's server: open the browser once it answers, never start one here
-            if not browser_running() and server_up():
+            if not browser_running(profile) and server_up():
                 log("browser not running; starting")
-                start_browser(browser_path)
+                start_browser(browser_path, profile)
             continue
         if server is not None and server.poll() is not None:
             log(f"server exited with code {server.returncode}; restarting")
             server = start_server()
         elif server is None and not server_up():
             server = start_server()
-        if not browser_running():
+        if not browser_running(profile):
             log("browser closed; restarting")
-            start_browser(browser_path)
+            start_browser(browser_path, profile)
 
 
 if __name__ == "__main__":
