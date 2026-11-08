@@ -1,4 +1,4 @@
-using Manager.Core;
+﻿using Manager.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -18,7 +18,7 @@ public sealed partial class ScreensPage : Page
         public RotationEditor? Rotation;   // null: uses the house rotation
         public bool Launcher, Saved;
         public string Mode = "always";
-        public SaverOptions Saver = new(10, true, "all", false);
+        public SaverOptions Saver = new(10, true, false);
         public double? Seen;
         public bool Dirty, ModeDirty;
         public int Version;   // goes up with every edit, so a save only clears the edits it sent
@@ -94,7 +94,7 @@ public sealed partial class ScreensPage : Page
                 Saved = sc?.Saved ?? false,
                 // until it's saved here, the PC follows its own settings: show (and keep) those
                 Mode = sc?.Effective.Mode ?? "always",
-                Saver = sc?.Effective.Saver ?? new SaverOptions(10, true, "all", false),
+                Saver = sc?.Effective.Saver ?? new SaverOptions(10, true, false),
                 Seen = st?.Last,
             });
         }
@@ -219,16 +219,19 @@ public sealed partial class ScreensPage : Page
         if (!d.Saved && !d.Dirty)
             p.Children.Add(Ui.Card(Ui.Text("Showing this PC's own settings. Nothing changes until you save."), Ui.Gold));
 
+        string[] modes = ["always", "saver", "off"];
         var mode = new RadioButtons { Header = "Shows the display" };
         mode.Items.Add("Always on");
         mode.Items.Add("Screen saver");
-        mode.SelectedIndex = d.Mode == "saver" ? 1 : 0;
+        mode.Items.Add("Off");
+        mode.SelectedIndex = Math.Max(0, Array.IndexOf(modes, d.Mode));
         p.Children.Add(mode);
 
         var saver = new StackPanel { Spacing = 8, Margin = new Thickness(0, 4, 0, 0), Visibility = d.Mode == "saver" ? Visibility.Visible : Visibility.Collapsed };
+        saver.Children.Add(Ui.Note("Windows' own screen saver shows the display on every screen."));
         var minutes = new NumberBox
         {
-            Header = "After this many minutes without input",
+            Header = "Wait (minutes)",
             Value = d.Saver.Minutes,
             Minimum = 1,
             Maximum = 240,
@@ -244,33 +247,28 @@ public sealed partial class ScreensPage : Page
             d.Saver = d.Saver with { Minutes = m };
             ChangedMode(d);
         };
-        var lockBox = new CheckBox { Content = "Lock Windows when it closes", IsChecked = d.Saver.Lock };
+        var lockBox = new CheckBox { Content = "Lock Windows when it closes (never over Shabbat and Yom Tov)", IsChecked = d.Saver.Lock };
         lockBox.Click += (_, _) => { d.Saver = d.Saver with { Lock = lockBox.IsChecked == true }; ChangedMode(d); };
-        var screens = new ComboBox { Header = "Show it on", Width = 260 };
-        screens.Items.Add("All screens");
-        screens.Items.Add("Plugged-in monitor only");
-        screens.SelectedIndex = d.Saver.Screens == "external" ? 1 : 0;
-        screens.SelectionChanged += (_, _) =>
+        var shabbat = new CheckBox { Content = "Keep the screens on over Shabbat and Yom Tov", IsChecked = d.Saver.Shabbat };
+        var winL = Ui.Note("Don't lock this PC (Win+L) on Erev Shabbat: the screen saver can't show over the lock screen.");
+        winL.Visibility = d.Saver.Shabbat ? Visibility.Visible : Visibility.Collapsed;
+        shabbat.Click += (_, _) =>
         {
-            var picked = screens.SelectedIndex == 1 ? "external" : "all";
-            if (picked == d.Saver.Screens) return;
-            d.Saver = d.Saver with { Screens = picked };
+            d.Saver = d.Saver with { Shabbat = shabbat.IsChecked == true };
+            winL.Visibility = d.Saver.Shabbat ? Visibility.Visible : Visibility.Collapsed;
             ChangedMode(d);
         };
-        var awake = new CheckBox { Content = "Keep the PC awake and the screens on while it shows", IsChecked = d.Saver.KeepAwake };
-        awake.Click += (_, _) => { d.Saver = d.Saver with { KeepAwake = awake.IsChecked == true }; ChangedMode(d); };
         saver.Children.Add(minutes);
         saver.Children.Add(lockBox);
-        saver.Children.Add(screens);
-        saver.Children.Add(awake);
+        saver.Children.Add(shabbat);
+        saver.Children.Add(winL);
         p.Children.Add(saver);
 
         // RadioButtons raises SelectionChanged while it loads; only a real change counts as an edit
         mode.SelectionChanged += (_, _) =>
         {
-            var picked = mode.SelectedIndex == 1 ? "saver" : "always";
-            if (mode.SelectedIndex < 0 || picked == d.Mode) return;
-            d.Mode = picked;
+            if (mode.SelectedIndex < 0 || modes[mode.SelectedIndex] == d.Mode) return;
+            d.Mode = modes[mode.SelectedIndex];
             saver.Visibility = d.Mode == "saver" ? Visibility.Visible : Visibility.Collapsed;
             ChangedMode(d);
         };
