@@ -23,8 +23,11 @@ public class ManageClient(HttpClient http, Uri baseUri, string key)
     /// <summary>Reads 10.0 (how Python writes a float setting) as 10.</summary>
     private sealed class LenientInt : JsonConverter<int>
     {
-        public override int Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
-            reader.TryGetInt32(out var i) ? i : (int)Math.Round(reader.GetDouble());
+        public override int Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType != JsonTokenType.Number) throw new JsonException("expected a number");
+            return reader.TryGetInt32(out var i) ? i : (int)Math.Round(reader.GetDouble());
+        }
 
         public override void Write(Utf8JsonWriter writer, int value, JsonSerializerOptions options) => writer.WriteNumberValue(value);
     }
@@ -108,7 +111,7 @@ public class ManageClient(HttpClient http, Uri baseUri, string key)
         {
             return new(default, NotAnswering);
         }
-        catch (JsonException)
+        catch (Exception e) when (e is JsonException or InvalidOperationException or NotSupportedException or FormatException)
         {
             return new(default, NeedsUpdate);
         }

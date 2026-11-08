@@ -20,7 +20,8 @@ public sealed partial class ScreensPage : Page
         public string Mode = "always";
         public SaverOptions Saver = new(10, true, "all", false);
         public double? Seen;
-        public bool Dirty;
+        public bool Dirty, ModeDirty;
+        public int Version;   // goes up with every edit, so a save only clears the edits it sent
     }
 
     private Household? household;
@@ -37,7 +38,23 @@ public sealed partial class ScreensPage : Page
         if (!drafts.Any(d => d.Dirty)) _ = Load();
     }
 
-    private void Reload_Click(object sender, RoutedEventArgs e) => _ = Load();
+    private async void Reload_Click(object sender, RoutedEventArgs e)
+    {
+        if (drafts.Any(d => d.Dirty))
+        {
+            var ask = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = "Discard unsaved changes?",
+                Content = "Reloading shows what the display server has now. Changes you haven't saved are lost.",
+                PrimaryButtonText = "Discard and reload",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close,
+            };
+            if (await ask.ShowAsync() != ContentDialogResult.Primary) return;
+        }
+        await Load();
+    }
 
     private async Task Load()
     {
@@ -47,6 +64,11 @@ public sealed partial class ScreensPage : Page
         Busy.IsActive = false;
         Ui.Show(Message, h.Error);
         if (h.Value is null) return;
+        if (h.Value.DefaultRotation is null || h.Value.Screens is null || h.Value.Scenes is null)
+        {
+            Ui.Show(Message, ManageClient.NeedsUpdate);
+            return;
+        }
         household = h.Value;
         var seen = (s?.Value?.Screens ?? []).ToDictionary(x => x.Name);
         var selected = current?.Name;
@@ -70,8 +92,9 @@ public sealed partial class ScreensPage : Page
                 Rotation = rot,
                 Launcher = (sc?.Launcher ?? false) || (st?.Launcher ?? false),
                 Saved = sc?.Saved ?? false,
-                Mode = sc?.Mode ?? "always",
-                Saver = sc?.Saver ?? new SaverOptions(10, true, "all", false),
+                // until it's saved here, the PC follows its own settings: show (and keep) those
+                Mode = sc?.Effective.Mode ?? "always",
+                Saver = sc?.Effective.Saver ?? new SaverOptions(10, true, "all", false),
                 Seen = st?.Last,
             });
         }
@@ -122,7 +145,7 @@ public sealed partial class ScreensPage : Page
                 else
                 {
                     // start from a copy of the house rotation as it stands in the editor
-                    d.Rotation = new RotationEditor(drafts[0].Rotation!.Items, household.Scenes);
+                    d.Rotation = new RotationEditor(drafts[0].Rotation!.ItemsToSave(), household.Scenes);
                     d.Rotation.AddMissingFromCatalog();
                 }
                 Changed(d);
@@ -219,10 +242,10 @@ public sealed partial class ScreensPage : Page
             var m = (int)Math.Clamp(Math.Round(a.NewValue), 1, 240);
             if (m == d.Saver.Minutes) return;
             d.Saver = d.Saver with { Minutes = m };
-            Changed(d);
+            ChangedMode(d);
         };
         var lockBox = new CheckBox { Content = "Lock Windows when it closes", IsChecked = d.Saver.Lock };
-        lockBox.Click += (_, _) => { d.Saver = d.Saver with { Lock = lockBox.IsChecked == true }; Changed(d); };
+        lockBox.Click += (_, _) => { d.Saver = d.Saver with { Lock = lockBox.IsChecked == true }; ChangedMode(d); };
         var screens = new ComboBox { Header = "Show it on", Width = 260 };
         screens.Items.Add("All screens");
         screens.Items.Add("Plugged-in monitor only");
@@ -232,10 +255,10 @@ public sealed partial class ScreensPage : Page
             var picked = screens.SelectedIndex == 1 ? "external" : "all";
             if (picked == d.Saver.Screens) return;
             d.Saver = d.Saver with { Screens = picked };
-            Changed(d);
+            ChangedMode(d);
         };
         var awake = new CheckBox { Content = "Keep the PC awake and the screens on while it shows", IsChecked = d.Saver.KeepAwake };
-        awake.Click += (_, _) => { d.Saver = d.Saver with { KeepAwake = awake.IsChecked == true }; Changed(d); };
+        awake.Click += (_, _) => { d.Saver = d.Saver with { KeepAwake = awake.IsChecked == true }; ChangedMode(d); };
         saver.Children.Add(minutes);
         saver.Children.Add(lockBox);
         saver.Children.Add(screens);
@@ -249,7 +272,7 @@ public sealed partial class ScreensPage : Page
             if (mode.SelectedIndex < 0 || picked == d.Mode) return;
             d.Mode = picked;
             saver.Visibility = d.Mode == "saver" ? Visibility.Visible : Visibility.Collapsed;
-            Changed(d);
+            ChangedMode(d);
         };
         return p;
     }
@@ -257,33 +280,54 @@ public sealed partial class ScreensPage : Page
     private void Changed(Draft d)
     {
         d.Dirty = true;
+        d.Version++;
         Message.IsOpen = false;
+    }
+
+    private void ChangedMode(Draft d)
+    {
+        d.ModeDirty = true;
+        Changed(d);
     }
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
-        if (current is not { } d) return;
-        if (d.Name is not null && d.Rotation is null && !d.Launcher && !d.Dirty)
+        var pending = drafts.Where(x => x.Dirty).ToList();
+        if (pending.Count == 0)
         {
-            Ui.Show(Message, null, "Nothing to save.");
+            Ui.Show(Message, null, "No changes to save.");
             return;
         }
-        if (d.Rotation?.Validate() is { } invalid)
-        {
-            Ui.Show(Message, invalid);
-            return;
-        }
+        foreach (var x in pending)
+            if (x.Rotation?.Validate() is { } invalid)
+            {
+                ScreenList.SelectedIndex = drafts.IndexOf(x);
+                Ui.Show(Message, $"{x.Name ?? "House rotation"}: {invalid}");
+                return;
+            }
         SaveButton.IsEnabled = false;
         Busy.IsActive = true;
-        var r = await AppState.Call(c => c.SaveRotationAsync(d.Name, d.Rotation?.Items));
-        if (r.Ok && d.Name is not null && d.Launcher)
-            r = await AppState.Call(c => c.SaveScreenAsync(d.Name, d.Mode, d.Saver));
+        string? error = null;
+        foreach (var x in pending)
+        {
+            var version = x.Version;
+            var modeEdited = x.ModeDirty;
+            var r = await AppState.Call(c => c.SaveRotationAsync(x.Name, x.Rotation?.ItemsToSave()));
+            // a PC's mode is sent only when it was edited, so saving a rotation never changes what the PC does
+            if (r.Ok && x.Name is not null && x.Launcher && modeEdited)
+                r = await AppState.Call(c => c.SaveScreenAsync(x.Name, x.Mode, x.Saver));
+            if (!r.Ok)
+            {
+                error = $"{x.Name ?? "House rotation"}: {r.Error}";
+                ScreenList.SelectedIndex = drafts.IndexOf(x);
+                break;
+            }
+            if (modeEdited) x.Saved = true;
+            if (x.Version == version) x.Dirty = x.ModeDirty = false;
+        }
         Busy.IsActive = false;
         SaveButton.IsEnabled = true;
-        Ui.Show(Message, r.Error, Ui.Saved);
-        if (!r.Ok) return;
-        d.Dirty = false;
-        d.Saved = d.Saved || d.Launcher;
-        BuildPane();
+        Ui.Show(Message, error, Ui.Saved);
+        if (error is null) BuildPane();
     }
 }

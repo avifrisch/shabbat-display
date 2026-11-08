@@ -64,6 +64,30 @@ public class ClientTests
     }
 
     [Fact]
+    public async Task Unsaved_screen_carries_the_pcs_own_settings()
+    {
+        var json = "{\"sports\":{},\"business\":{\"on\":true,\"watchlist\":[],\"news\":{}},\"default_rotation\":[],\"screens\":{\"Acer\":{\"rotation\":null,\"launcher\":true,\"saved\":false,\"mode\":\"always\",\"saver\":{\"minutes\":10,\"lock\":true,\"screens\":\"all\",\"keep_awake\":false},\"local\":{\"mode\":\"saver\",\"saver\":{\"minutes\":15.0,\"lock\":false,\"screens\":\"external\",\"keep_awake\":true}}}},\"nyt_signed_in\":false,\"agenda_set\":false,\"leagues\":{},\"scenes\":[]}";
+        var acer = (await Client(new FakeHandler(json)).GetHouseholdAsync()).Value!.Screens["Acer"];
+        Assert.Equal("saver", acer.Effective.Mode);
+        Assert.Equal(new SaverOptions(15, false, "external", true), acer.Effective.Saver);
+    }
+
+    [Fact]
+    public void Saved_screen_uses_its_saved_settings()
+    {
+        var s = new Screen(null, true, true, "always", new SaverOptions(10, true, "all", false), new LocalSettings("saver", new SaverOptions(5, true, "all", false)));
+        Assert.Equal("always", s.Effective.Mode);
+    }
+
+    [Fact]
+    public async Task Odd_values_never_throw()
+    {
+        var json = "{\"sports\":{},\"business\":{\"on\":true,\"watchlist\":[],\"news\":{}},\"default_rotation\":[{\"scene\":\"shul\",\"seconds\":\"30\",\"on\":true}],\"screens\":{},\"nyt_signed_in\":false,\"agenda_set\":false,\"leagues\":{},\"scenes\":[]}";
+        var r = await Client(new FakeHandler(json)).GetHouseholdAsync();
+        Assert.Equal(ManageClient.NeedsUpdate, r.Error);
+    }
+
+    [Fact]
     public async Task Saves_send_snake_case_bodies()
     {
         var h = new FakeHandler("{\"ok\":true}"); var c = Client(h);

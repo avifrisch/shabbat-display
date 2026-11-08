@@ -6,7 +6,13 @@ public class RotationEditor(List<RotationItem> items, IReadOnlyList<SceneInfo> c
     public const int MinSeconds = 5;
     public const int MaxSeconds = 300;
 
+    private readonly HashSet<string> given = [.. items.Select(i => i.Scene)];
+
     public List<RotationItem> Items { get; } = [.. items];
+
+    /// <summary>The list to save: scenes added from the catalog and left off are dropped. The server counts an off
+    /// scene as present, so saving one would stop it adding that league when the league is switched on.</summary>
+    public List<RotationItem> ItemsToSave() => [.. Items.Where(i => i.On || given.Contains(i.Scene))];
 
     public string Label(int i) => catalog.FirstOrDefault(c => c.Scene == Items[i].Scene)?.Label ?? Items[i].Scene;
 

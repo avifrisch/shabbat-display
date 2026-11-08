@@ -13,6 +13,7 @@ public sealed partial class BusinessPage : Page
     private readonly Dictionary<string, Stock> found = [];
     private readonly Debouncer debounce = new(250);
     private bool loading, dirty;
+    private int edits;   // a save only clears the edits it sent
 
     public BusinessPage()
     {
@@ -31,6 +32,11 @@ public sealed partial class BusinessPage : Page
         Busy.IsActive = false;
         Ui.Show(Message, r.Error);
         if (r.Value is not { } h) return;
+        if (h.Business is null)
+        {
+            Ui.Show(Message, ManageClient.NeedsUpdate);
+            return;
+        }
         loading = true;
         OnSwitch.IsOn = h.Business.On;
         news = new(h.Business.News ?? []);
@@ -81,6 +87,7 @@ public sealed partial class BusinessPage : Page
     {
         if (loading) return;
         dirty = true;
+        edits++;
         Message.IsOpen = false;
     }
 
@@ -115,12 +122,13 @@ public sealed partial class BusinessPage : Page
     {
         news["biz_nyt"] = NytSwitch.IsOn;
         news["biz_cnbc"] = CnbcSwitch.IsOn;
+        var sent = edits;
         SaveButton.IsEnabled = false;
         Busy.IsActive = true;
         var r = await AppState.Call(c => c.SaveBusinessAsync(new Business(OnSwitch.IsOn, watchlist.Items, news)));
         Busy.IsActive = false;
         SaveButton.IsEnabled = true;
-        if (r.Ok) dirty = false;
+        if (r.Ok && edits == sent) dirty = false;
         Ui.Show(Message, r.Error, Ui.Saved);
     }
 }

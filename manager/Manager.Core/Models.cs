@@ -14,7 +14,16 @@ public record RotationItem(string Scene, int Seconds, bool On);
 
 public record SaverOptions(int Minutes, bool Lock, string Screens, bool KeepAwake);
 
-public record Screen(List<RotationItem>? Rotation, bool Launcher, bool Saved, string Mode, SaverOptions Saver);
+/// <summary>What a PC's own settings.json says, sent by its launcher.</summary>
+public record LocalSettings(string? Mode, SaverOptions? Saver);
+
+/// <summary>Until a screen is saved in the app, the PC follows its own settings (Local), not Mode and Saver.</summary>
+public record Screen(List<RotationItem>? Rotation, bool Launcher, bool Saved, string Mode, SaverOptions Saver, LocalSettings? Local = null)
+{
+    public LocalSettings Effective => !Saved && Local is { } l
+        ? new(l.Mode ?? "always", l.Saver ?? Saver)
+        : new(Mode ?? "always", Saver);
+}
 
 public record SceneInfo(string Scene, string Label);
 

@@ -52,4 +52,15 @@ public class RotationTests
         Assert.All(e.Items.Skip(1), i => Assert.False(i.On));
         Assert.True(e.Items[0].On);
     }
+
+    [Fact]
+    public void Added_scenes_left_off_are_not_saved()
+    {
+        // a scene the server didn't have, still off, must not be saved: the server then
+        // treats it as present and won't add it when its league is switched on
+        var e = new RotationEditor([new("shul", 30, true), new("news", 30, false)], Catalog);
+        e.AddMissingFromCatalog();
+        e.SetOn(e.Items.FindIndex(i => i.Scene == "nba"), true);
+        Assert.Equal(new[] { "shul", "news", "nba" }, e.ItemsToSave().Select(i => i.Scene));
+    }
 }

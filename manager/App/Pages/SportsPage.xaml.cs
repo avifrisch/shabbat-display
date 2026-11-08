@@ -13,6 +13,7 @@ public sealed partial class SportsPage : Page
     private readonly Dictionary<string, StackPanel> bodies = [];
     private Dictionary<string, string> names = [];
     private bool dirty;
+    private int edits;   // a save only clears the edits it sent
 
     public SportsPage()
     {
@@ -31,7 +32,13 @@ public sealed partial class SportsPage : Page
         Busy.IsActive = false;
         Ui.Show(Message, r.Error);
         if (r.Value is not { } h) return;
-        sports = new(h.Sports);
+        if (h.Sports is null || h.Leagues is null)
+        {
+            Ui.Show(Message, ManageClient.NeedsUpdate);
+            return;
+        }
+        // only leagues this server knows; a stray key would make every save fail
+        sports = new(h.Sports.Where(kv => kv.Key == "mlb" || h.Leagues.ContainsKey(kv.Key)));
         names = new() { ["mlb"] = "MLB" };
         foreach (var (k, v) in h.Leagues) names[k] = v;
         Build();
@@ -49,7 +56,13 @@ public sealed partial class SportsPage : Page
         {
             var on = new ToggleSwitch { IsOn = sports[key].On, OnContent = "On", OffContent = "Off", MinWidth = 0 };
             AutomationProperties.SetName(on, names[key] + " on");
-            on.Toggled += (_, _) => { sports[key] = sports[key] with { On = on.IsOn }; Changed(); };
+            Expander? expander = null;
+            on.Toggled += (_, _) =>
+            {
+                sports[key] = sports[key] with { On = on.IsOn };
+                if (on.IsOn && expander is not null) expander.IsExpanded = true;   // show where to add teams
+                Changed();
+            };
             var header = new Grid { HorizontalAlignment = HorizontalAlignment.Stretch };
             header.ColumnDefinitions.Add(new ColumnDefinition());
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -58,7 +71,7 @@ public sealed partial class SportsPage : Page
             header.Children.Add(on);
             var body = new StackPanel { Spacing = 4 };
             bodies[key] = body;
-            var expander = new Expander
+            expander = new Expander
             {
                 Header = header,
                 Content = body,
@@ -127,17 +140,19 @@ public sealed partial class SportsPage : Page
     private void Changed()
     {
         dirty = true;
+        edits++;
         Message.IsOpen = false;
     }
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
+        var sent = edits;
         SaveButton.IsEnabled = false;
         Busy.IsActive = true;
         var r = await AppState.Call(c => c.SaveSportsAsync(sports));
         Busy.IsActive = false;
         SaveButton.IsEnabled = true;
-        if (r.Ok) dirty = false;
+        if (r.Ok && edits == sent) dirty = false;
         Ui.Show(Message, r.Error, Ui.Saved);
     }
 }

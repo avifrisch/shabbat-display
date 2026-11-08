@@ -35,7 +35,10 @@ public static class AppState
     /// <summary>Opens the access-code dialog (only one at a time). True once a code works.</summary>
     public static Task<bool> AskForCodeAsync()
     {
-        return asking ??= Ask();
+        if (asking is not null) return asking;
+        var t = Ask();
+        if (!t.IsCompleted) asking = t;   // one that finished at once must not stay stored
+        return t;
 
         static async Task<bool> Ask()
         {
@@ -47,6 +50,10 @@ public static class AppState
                 if (d.Client is null) return false;
                 Client = d.Client;
                 return true;
+            }
+            catch (Exception)   // another dialog is open; the call then reports the refused code
+            {
+                return false;
             }
             finally
             {
@@ -63,15 +70,16 @@ public static class AppState
             var e = await ConnectAsync();
             if (e is not null) return new(default, e);
         }
-        var r = await f(Client!);
+        if (Client is not { } client) return new(default, ManageClient.NotAnswering);
+        var r = await f(client);
         if (r.Error == ManageClient.Refused)
         {
-            if (await AskForCodeAsync()) r = await f(Client!);
+            if (await AskForCodeAsync() && Client is { } again) r = await f(again);
         }
         else if (r.Error == ManageClient.NotAnswering)
         {
             var old = Server;
-            if (await ConnectAsync() is null && Server != old) r = await f(Client!);
+            if (await ConnectAsync() is null && Server != old && Client is { } moved) r = await f(moved);
         }
         return r;
     }

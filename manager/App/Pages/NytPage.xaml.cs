@@ -74,7 +74,7 @@ public sealed partial class NytPage : Page
         sending = false;
     }
 
-    private async Task Send(string cookie)
+    private async Task<bool> Send(string cookie)
     {
         Busy.IsActive = true;
         var r = await AppState.Call(c => c.SetNytCookieAsync(cookie));
@@ -82,11 +82,15 @@ public sealed partial class NytPage : Page
         if (!r.Ok)
         {
             Ui.Show(Message, r.Error);
-            return;
+            return false;
         }
         CloseSignIn();
+        // the display has it now; don't keep a second copy in the app's browser
+        if (webReady) Web.CoreWebView2.CookieManager.DeleteAllCookies();
         ShowState(r.Value);
-        Ui.Show(Message, null, r.Value ? "Signed in. " + Ui.Saved : "The display server didn't keep the sign-in.");
+        if (r.Value) Ui.Show(Message, null, Ui.Saved);
+        else Ui.Show(Message, "The display server didn't keep the sign-in.");
+        return r.Value;
     }
 
     private void CloseSignIn()
@@ -119,9 +123,8 @@ public sealed partial class NytPage : Page
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
         ShowState(r.Value);
-        Ui.Show(Message, null, r.Value
-            ? "Signed out here, but the display still has the NYT sign-in from its settings.json."
-            : "Signed out. " + Ui.Saved);
+        if (r.Value) Ui.Show(Message, "Signed out here, but the display still has the NYT sign-in from its settings.json.");
+        else Ui.Show(Message, null, Ui.Saved);
     }
 
     private async void PasteSave_Click(object sender, RoutedEventArgs e)
@@ -131,7 +134,6 @@ public sealed partial class NytPage : Page
             Ui.Show(Message, "Paste the NYT-S value first.");
             return;
         }
-        await Send(cookie);
-        Paste.Password = "";
+        if (await Send(cookie)) Paste.Password = "";
     }
 }
