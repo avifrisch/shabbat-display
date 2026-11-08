@@ -25,8 +25,22 @@ class Isolated(unittest.TestCase):
         self._config = copy.deepcopy(server.CONFIG)
         self._data = dict(server.store.data)
         server._cache.clear()
+        # never touch the real household.json or access code
+        import tempfile
+        self._hdir = tempfile.TemporaryDirectory()
+        self._hpatches = [mock.patch.object(server, "HOUSEHOLD_FILE", os.path.join(self._hdir.name, "household.json")),
+                          mock.patch.object(server, "KEY_FILE", os.path.join(self._hdir.name, "manage-key.txt"))]
+        for p in self._hpatches:
+            p.start()
+        server._household_cache = None
+        server._household_mtime = None
 
     def tearDown(self):
+        for p in self._hpatches:
+            p.stop()
+        self._hdir.cleanup()
+        server._household_cache = None
+        server._household_mtime = None
         server.CONFIG.clear()
         server.CONFIG.update(self._config)
         server.store.data = self._data
