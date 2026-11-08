@@ -2584,7 +2584,7 @@ def team_search(league, q):
         words = [(t["abbr"] or "").lower()] + t["name"].lower().split()
         if any(w.startswith(q) for w in words):
             first.append(t)
-        elif q in t["name"].lower():
+        elif len(q) > 1 and q in t["name"].lower():  # one letter matches word starts only
             rest.append(t)
     return (first + rest)[:20]
 
