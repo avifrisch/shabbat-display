@@ -85,6 +85,8 @@ FEEDS = {
     ],
     "mlb_news": ["https://www.mlb.com/feeds/news/rss.xml"],
     "nyt": ["https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"],
+    "biz_nyt": ["https://rss.nytimes.com/services/xml/rss/nyt/Business.xml"],
+    "biz_cnbc": ["https://www.cnbc.com/id/10001147/device/rss/rss.html"],
     "toi": [
         "https://www.timesofisrael.com/feed/",
         # backup if the site's bot protection refuses the request
@@ -1011,12 +1013,12 @@ def parse_feed(text, source):
     return out
 
 
-def feed_fetcher(key):
+def feed_fetcher(key, ua=UA):
     def fetch():
         errors = []
         for url in FEEDS[key]:
             try:
-                items = parse_feed(http_get(url, accept="application/rss+xml, application/xml, text/xml"), key)
+                items = parse_feed(http_get(url, accept="application/rss+xml, application/xml, text/xml", ua=ua), key)
                 if "news.google.com" in url:
                     for it in items:
                         it["title"] = re.sub(r"\s+-\s+[^-]+$", "", it["title"])
@@ -1431,9 +1433,10 @@ def http_get_with(url, headers, timeout=15, limit=3_000_000):
     return raw.decode(charset, "replace")
 
 
-ARTICLE_FEEDS = ("nyt", "cnn", "toi", "yankees_news", "mlb_news")
+ARTICLE_FEEDS = ("nyt", "cnn", "toi", "yankees_news", "mlb_news", "biz_nyt", "biz_cnbc")
 ARTICLE_SOURCES = {"nyt": "New York Times", "cnn": "CNN", "toi": "Times of Israel",
-                   "yankees_news": "Yankees news", "mlb_news": "MLB news", "espn": "ESPN"}
+                   "yankees_news": "Yankees news", "mlb_news": "MLB news", "espn": "ESPN",
+                   "biz_nyt": "New York Times", "biz_cnbc": "CNBC"}
 ARTICLE_FAILED = "The full article couldn't be loaded."
 
 
@@ -2198,6 +2201,158 @@ def update_shul():
     return 0
 
 
+# ---------------------------------------------------------------- business
+# Index levels and the watchlist from CNBC's quote service (delayed, one request for all),
+# Yahoo's chart API for anything CNBC lacks. Both are unofficial and asked with our own
+# User-Agent. Ticker search uses the SEC's list of companies, which requires a contact.
+
+INDICES = [("SPX", "S&P 500", ".SPX", "^GSPC"), ("DJI", "Dow Jones", ".DJI", "^DJI"), ("IXIC", "Nasdaq", ".IXIC", "^IXIC")]
+CNBC_QUOTES = ("https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol"
+               "?symbols={}&requestMethod=itv&noform=1&output=json")
+YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{}?range=1d&interval=1d"
+SEC_TICKERS = "https://www.sec.gov/files/company_tickers.json"
+SEC_UA = "ShabbatDisplay/1.0 (personal home display; frischa@avifrischlaw.com)"  # sec.gov only; Avi agreed
+SEC_FILE = os.path.join(HERE, "sec-tickers.json")
+
+
+def _num(s):
+    """7376.86 from "7,376.86", "+23.13" or "+0.31%"; None when it isn't a number."""
+    try:
+        return float(str(s).replace(",", "").replace("%", "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def cnbc_quotes(symbols):
+    url = CNBC_QUOTES.format(urllib.parse.quote("|".join(symbols)))
+    j = json.loads(http_get(url, accept="application/json", ua=OWN_UA))
+    out = {}
+    for q in ((j.get("FormattedQuoteResult") or {}).get("FormattedQuote") or []):
+        last = _num(q.get("last"))
+        if q.get("code") not in (0, "0") or last is None:
+            continue
+        out[q.get("symbol")] = {"last": last, "change": _num(q.get("change")), "pct": _num(q.get("change_pct")),
+                                "name": q.get("shortName") or q.get("name"), "time": q.get("last_time")}
+    return out
+
+
+def yahoo_quote(symbol):
+    url = YAHOO_CHART.format(urllib.parse.quote(symbol.replace(".", "-")))
+    meta = json.loads(http_get(url, accept="application/json", ua=OWN_UA))["chart"]["result"][0]["meta"]
+    last, prev = meta["regularMarketPrice"], meta.get("chartPreviousClose") or meta.get("previousClose")
+    change = round(last - prev, 4) if prev else None
+    t = meta.get("regularMarketTime")
+    return {"last": last, "change": change, "pct": round(change / prev * 100, 2) if prev else None,
+            "name": meta.get("shortName"), "time": datetime.fromtimestamp(t).astimezone().isoformat() if t else None}
+
+
+def market_open(n):
+    return n.weekday() < 5 and (9, 30) <= (n.hour, n.minute) < (16, 0)
+
+
+def fetch_markets():
+    b = household()["business"]
+    if not b.get("on", True):
+        return {"off": True}
+    watch = [w for w in b.get("watchlist") or [] if TICKER.fullmatch(w.get("symbol") or "")]
+    want = [c for _, _, c, _ in INDICES] + [w["symbol"] for w in watch]
+    try:
+        got = cnbc_quotes(want)
+    except Exception as e:  # noqa: BLE001 - Yahoo for everything
+        log(f"markets: CNBC failed ({e})")
+        got = {}
+    source = "CNBC" if got else "Yahoo"
+    yahoo = {c: y for _, _, c, y in INDICES}
+    missing = []
+    for sym in want:
+        if sym in got:
+            continue
+        try:
+            got[sym] = yahoo_quote(yahoo.get(sym, sym))
+        except Exception:  # noqa: BLE001 - shown without that row
+            missing.append(sym)
+    if len(missing) == len(want):
+        raise RuntimeError("no quotes from CNBC or Yahoo")
+    n = now()
+
+    def row(sym, name, key):
+        q = got.get(key) or {}
+        return {"symbol": sym, "name": name, "last": q.get("last"), "change": q.get("change"), "pct": q.get("pct")}
+    return {"indices": [row(s, name, c) for s, name, c, _ in INDICES if c in got],
+            "watch": [row(w["symbol"], w.get("name") or w["symbol"], w["symbol"]) for w in watch if w["symbol"] in got],
+            "as_of": n.isoformat(timespec="seconds"), "source": source,
+            # the trading day of the newest price, e.g. Friday's on a weekend
+            "last_trade": max((str(q["time"])[:10] for q in got.values() if q.get("time")), default=None),
+            "market": "open" if market_open(n) else "closed", "missing": missing}
+
+
+def market_wait(n, last_as_of):
+    """Every 5 minutes while US markets are open, once more after the close, then not until
+    the next weekday's open. Local time, which is Eastern at the house. Holidays aren't
+    tracked: on one, the closing prices are fetched again."""
+    if market_open(n):
+        return 300
+    close = n.replace(hour=16, minute=5, second=0, microsecond=0)
+    if n.weekday() < 5 and n >= n.replace(hour=16, minute=0, second=0, microsecond=0) \
+            and (last_as_of is None or last_as_of < close):
+        return 300
+    nxt = n.replace(hour=9, minute=30, second=0, microsecond=0)
+    if nxt <= n:
+        nxt += timedelta(days=1)
+    while nxt.weekday() >= 5:
+        nxt += timedelta(days=1)
+    return int((nxt - n).total_seconds()) + 60
+
+
+def markets_poll():
+    as_of = parse_dt((store.get("markets") or {}).get("as_of"))
+    return market_wait(now(), as_of)
+
+
+def sec_tickers():
+    """The SEC's list of listed companies, downloaded at most weekly (only when someone
+    searches). [] if it was never downloaded and can't be now."""
+    try:
+        fresh = time.time() - os.path.getmtime(SEC_FILE) < 7 * 86400
+    except OSError:
+        fresh = False
+    if not fresh:
+        try:
+            raw = json.loads(http_get(SEC_TICKERS, accept="application/json", ua=SEC_UA))
+            rows = [{"symbol": v["ticker"].upper(), "name": v["title"]} for v in raw.values()
+                    if isinstance(v, dict) and v.get("ticker") and v.get("title")]
+            tmp = SEC_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(rows, f)
+            os.replace(tmp, SEC_FILE)
+            return rows
+        except Exception as e:  # noqa: BLE001 - use the old list if there is one
+            log(f"SEC company list: {e}")
+    try:
+        with open(SEC_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return []
+
+
+def stock_search(q):
+    """Up to 15 companies: the exact ticker, then tickers starting with q, then names with a word starting with q."""
+    q = (q or "").strip()
+    if not q:
+        return []
+    ql = q.lower()
+    exact, prefix, names = [], [], []
+    for r in sec_tickers():
+        sym = r["symbol"].lower()
+        if sym == ql:
+            exact.append(r)
+        elif sym.startswith(ql):
+            prefix.append(r)
+        elif any(w.startswith(ql) for w in re.split(r"[\s,.&/-]+", r["name"].lower())):
+            names.append(r)
+    return (exact + prefix + names)[:15]
+
+
 # ---------------------------------------------------------------- scheduler
 
 SOURCES = [
@@ -2219,6 +2374,9 @@ SOURCES = [
     ("toi",           feed_fetcher("toi"),          600),
     ("agenda",        fetch_agenda,                 600),
     ("shul",          fetch_shul,                   3600),  # fetches only when shul_due()
+    ("markets",       fetch_markets,                markets_poll),
+    ("biz_nyt",       feed_fetcher("biz_nyt", OWN_UA),  900),
+    ("biz_cnbc",      feed_fetcher("biz_cnbc", OWN_UA), 900),
 ] + [("sport_" + k, league_fetcher(k), league_poller(k)) for k in LEAGUES]  # each sleeps while switched off
 
 
@@ -2615,6 +2773,8 @@ def manage_route(method, path, query, key, body):
             except ValueError:
                 raise BadRequest("lines must be a number") from None
             return 200, json.dumps({"lines": log_tail(n)})
+        if method == "GET" and name == "stocks":
+            return 200, json.dumps({"stocks": stock_search((q.get("q") or [""])[0])})
         if method == "GET" and name == "teams":
             league = (q.get("league") or [""])[0]
             _need(league == "mlb" or league in LEAGUES, f"Unknown league: {league}")
