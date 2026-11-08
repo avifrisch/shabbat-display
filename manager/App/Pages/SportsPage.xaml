@@ -1,0 +1,21 @@
+<Page
+    x:Class="ShabbatManager.Pages.SportsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    NavigationCacheMode="Required">
+    <ScrollViewer>
+        <StackPanel Spacing="8" MaxWidth="760" HorizontalAlignment="Left" Padding="0,0,24,24">
+            <Grid>
+                <TextBlock Text="Sports" Style="{StaticResource TitleTextBlockStyle}" />
+                <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right">
+                    <ProgressRing x:Name="Busy" IsActive="False" Width="20" Height="20" />
+                    <Button x:Name="SaveButton" Content="Save" Style="{StaticResource AccentButtonStyle}" Click="Save_Click" IsEnabled="False" />
+                </StackPanel>
+            </Grid>
+            <InfoBar x:Name="Message" IsClosable="True" />
+            <TextBlock x:Name="Intro" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="A league shows only in its season. Switching a league on adds it to screens that use the house rotation." />
+            <StackPanel x:Name="Leagues" Spacing="6" Margin="0,8,0,0" />
+        </StackPanel>
+    </ScrollViewer>
+</Page>

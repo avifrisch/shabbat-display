@@ -1,5 +1,5 @@
 using System.Net;
-using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -82,8 +82,9 @@ public class ManageClient(HttpClient http, Uri baseUri, string key)
     {
         using var req = new HttpRequestMessage(method, new Uri(baseUri, "api/manage/" + path));
         req.Headers.Add("X-Manage-Key", key);
+        // a string, not JsonContent: the server reads exactly Content-Length bytes, and a streamed body has none
         if (body is not null)
-            req.Content = JsonContent.Create(body, body.GetType(), options: Json);
+            req.Content = new StringContent(JsonSerializer.Serialize(body, body.GetType(), Json), Encoding.UTF8, "application/json");
         try
         {
             using var resp = await http.SendAsync(req);

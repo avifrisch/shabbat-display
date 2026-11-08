@@ -1,5 +1,6 @@
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Windows.UI;
@@ -72,4 +73,44 @@ public static class Ui
     };
 
     public static SolidColorBrush Transparent => new(Colors.Transparent);
+
+    // Segoe Fluent Icons
+    public const string Up = "", Down = "", Remove = "", Star = "", StarFilled = "";
+
+    public static Button IconButton(string glyph, string tip, Action click, Brush? color = null, bool enabled = true)
+    {
+        var icon = new FontIcon { Glyph = glyph, FontSize = 14 };
+        if (color is not null) icon.Foreground = color;
+        var b = new Button { Content = icon, Padding = new Thickness(8, 6, 8, 6), IsEnabled = enabled, Background = Transparent, BorderThickness = new Thickness(0) };
+        ToolTipService.SetToolTip(b, tip);
+        AutomationProperties.SetName(b, tip);
+        b.Click += (_, _) => click();
+        return b;
+    }
+
+    public static TextBlock Note(string text) => new()
+    {
+        Text = text,
+        TextWrapping = TextWrapping.Wrap,
+        Foreground = Dim,
+        Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
+        Margin = new Thickness(0, 4, 0, 0),
+    };
+}
+
+/// <summary>Waits for a pause in typing; an older wait is cancelled by a newer one.</summary>
+public sealed class Debouncer(int ms)
+{
+    private int latest;
+
+    /// <summary>A ticket for this keystroke, once typing has paused; null when a newer keystroke came in.</summary>
+    public async Task<int?> Pause()
+    {
+        var mine = ++latest;
+        await Task.Delay(ms);
+        return mine == latest ? mine : null;
+    }
+
+    /// <summary>Whether an answer for this ticket is still wanted (no typing since).</summary>
+    public bool IsLatest(int ticket) => ticket == latest;
 }

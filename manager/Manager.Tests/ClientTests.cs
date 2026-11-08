@@ -66,6 +66,16 @@ public class ClientTests
     }
 
     [Fact]
+    public async Task Bodies_carry_a_content_length()
+    {
+        // the server reads exactly Content-Length bytes; a streamed body arrives empty
+        var h = new FakeHandler("{\"ok\":true}");
+        await Client(h).SaveSportsAsync(new() { ["nba"] = new League(true, [new(18, "NY", "New York Knicks")], 18) });
+        Assert.Equal(h.LastBody!.Length, h.Last!.Content!.Headers.ContentLength);
+        Assert.Contains("\"nba\":{\"on\":true", h.LastBody);
+    }
+
+    [Fact]
     public async Task Old_status_without_fields_still_parses()
     {
         var s = (await Client(new FakeHandler("{\"ok\":true}")).GetStatusAsync()).Value!;
