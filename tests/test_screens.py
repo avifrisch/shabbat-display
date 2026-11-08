@@ -71,19 +71,57 @@ class ScreenTests(ManageCase):
         self.assertNotIn("nhl", sp)
 
     def test_launcher_first_checkin_echoes_its_own_settings(self):
-        code, j = self.get("/api/screen-settings?screen=Ariela&mode=saver&minutes=10&lock=1&screens=external&awake=1")
+        code, j = self.get("/api/screen-settings?screen=Ariela&mode=saver&minutes=10&lock=1&shabbat=1")
         self.assertEqual(code, 200)
-        self.assertEqual((j["mode"], j["saver"]["screens"], j["saver"]["keep_awake"], j["saved"]),
-                         ("saver", "external", True, False))
+        self.assertEqual((j["mode"], j["saver"], j["saved"]), ("saver", {"minutes": 10, "lock": True, "shabbat": True}, False))
         self.assertTrue(server.household()["screens"]["Ariela"]["launcher"])
         self.assertTrue(server.seen["Ariela"]["launcher"])
 
+    def test_old_launcher_awake_means_shabbat(self):
+        j = self.get("/api/screen-settings?screen=Ariela&mode=saver&minutes=10&lock=1&screens=external&awake=1")[1]
+        self.assertEqual(j["saver"], {"minutes": 10, "lock": True, "shabbat": True})
+
+    def test_old_keep_awake_becomes_shabbat(self):
+        h = server.household()
+        h["screens"]["Acer"] = dict(server._new_screen(), saver={"minutes": 15, "lock": False, "screens": "external", "keep_awake": True})
+        server.save_household(h)
+        self.assertEqual(server.household()["screens"]["Acer"]["saver"], {"minutes": 15, "lock": False, "shabbat": True})
+
+    def test_save_screen_off_and_shabbat(self):
+        code, _ = self.call("POST", "/api/manage/screen", {"name": "Acer", "mode": "off", "saver": {"minutes": 12, "lock": True, "shabbat": True}})
+        self.assertEqual(code, 200)
+        s = server.household()["screens"]["Acer"]
+        self.assertEqual((s["mode"], s["saver"]), ("off", {"minutes": 12, "lock": True, "shabbat": True}))
+
+    def test_save_screen_rejects_bad_minutes(self):
+        for m in (0, 241, 1.5, True):
+            self.assertEqual(self.call("POST", "/api/manage/screen", {"name": "Acer", "mode": "saver", "saver": {"minutes": m}})[0], 400, m)
+
+    def test_holy_spans_from_calendar(self):
+        items = [{"category": "havdalah", "date": "2026-11-07T17:25:00-05:00"},
+                 {"category": "candles", "date": "2026-11-13T16:17:00-05:00"},
+                 {"category": "havdalah", "date": "2026-11-14T17:20:00-05:00"},
+                 {"category": "candles", "date": "2026-11-20T16:12:00-05:00"},   # Erev Yom Tov
+                 {"category": "candles", "date": "2026-11-21T17:16:00-05:00"},   # second day
+                 {"category": "havdalah", "date": "2026-11-22T17:15:00-05:00"}]
+        n = server.parse_dt("2026-11-10T09:00:00-05:00")
+        self.assertEqual(server.holy_spans(items, n), [
+            {"start": "2026-11-13T16:17:00-05:00", "end": "2026-11-14T17:20:00-05:00"},
+            {"start": "2026-11-20T16:12:00-05:00", "end": "2026-11-22T17:15:00-05:00"}])
+        self.assertEqual(len(server.holy_spans(items, server.parse_dt("2026-11-14T18:00:00-05:00"))), 1)
+
+    def test_screen_settings_carries_holy_spans(self):
+        server.store.data["calendar"] = {"items": [{"category": "candles", "date": "2099-01-02T16:00:00-05:00"},
+                                                   {"category": "havdalah", "date": "2099-01-03T17:00:00-05:00"}]}
+        j = self.get("/api/screen-settings?screen=Ariela&mode=saver")[1]
+        self.assertEqual(j["holy"], [{"start": "2099-01-02T16:00:00-05:00", "end": "2099-01-03T17:00:00-05:00"}])
+
     def test_saved_settings_win_over_local(self):
-        self.get("/api/screen-settings?screen=Ariela&mode=saver&minutes=10&lock=1&screens=all&awake=0")
+        self.get("/api/screen-settings?screen=Ariela&mode=saver&minutes=10&lock=1&shabbat=0")
         h = server.household()
         h["screens"]["Ariela"].update(saved=True, mode="always")
         server.save_household(h)
-        self.assertEqual(self.get("/api/screen-settings?screen=Ariela&mode=saver&minutes=10&lock=1&screens=all&awake=0")[1]["mode"],
+        self.assertEqual(self.get("/api/screen-settings?screen=Ariela&mode=saver&minutes=10&lock=1&shabbat=0")[1]["mode"],
                          "always")
 
     def test_bad_screen_settings_query(self):
