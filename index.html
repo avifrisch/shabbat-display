@@ -86,6 +86,7 @@ h3{margin:0;font-weight:600}
 .stage-head{display:flex;align-items:flex-end;justify-content:space-between;gap:2rem;padding-bottom:.95rem;border-bottom:1px solid var(--line);margin-bottom:1.45rem}
 .stage-title{font-size:2.15rem;font-weight:620;font-stretch:90%;letter-spacing:-.005em;line-height:1}
 .head-right{display:flex;align-items:center;gap:2rem}
+.chips{display:flex;gap:.8rem}
 .chip{display:none;align-items:center;gap:.6rem;font-size:1.1rem;font-weight:600;padding:.3rem .8rem;border-radius:2rem;background:rgba(240,112,90,.13)}
 .chip.on{display:flex}
 .chip .dot,.livedot{width:.6rem;height:.6rem;border-radius:50%;background:var(--live);box-shadow:0 0 .6rem var(--live)}
@@ -166,6 +167,20 @@ h3{margin:0;font-weight:600}
 .stand td.nm{text-align:left;font-weight:400;color:var(--muted);font-size:1.1rem}
 .stand tr.me td{background:repeating-linear-gradient(90deg,rgba(238,231,215,.045) 0 1px,transparent 1px 1.1rem);color:var(--text)}
 .stand tr.me td.nm{color:var(--text)}
+
+/* other sports and business */
+.mini.me{border-color:rgba(229,186,94,.45)}
+.sp-line{font-size:1.15rem;margin:.7rem 0 0}
+.sp-line td:first-child{text-align:left;color:var(--muted);font-weight:600}
+.sp-line .rhe{font-weight:700}
+.idx-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem;margin-bottom:1.2rem}
+.idx{background:var(--panel);border:1px solid var(--line);border-radius:1rem;padding:1rem 1.4rem}
+.idx .n{font-size:1.1rem;color:var(--muted)}
+.idx .v{font-size:2.6rem;font-weight:620;font-stretch:86%;line-height:1.15}
+.idx .c{font-size:1.25rem;font-weight:600}
+.up{color:#7FC98A}.down{color:var(--live)}
+.biz-note{font-size:1rem;color:var(--faint);margin:-.6rem 0 .8rem}
+.wl td.up,.wl td.down{font-weight:600}
 
 /* ---------- interaction ---------- */
 /* Panels open over the scene; nothing looks tappable until someone touches the screen. */
@@ -348,7 +363,7 @@ body.holy .shab .en{color:var(--gold)}
     <div class="stage-head">
       <div class="stage-title" id="stitle"></div>
       <div class="head-right">
-        <div class="chip" id="chip"></div>
+        <div class="chips" id="chips"></div>
         <div class="scenes" id="scenes"></div>
       </div>
     </div>
@@ -408,7 +423,7 @@ let S = null, DEMO = false, lastOk = 0;
 
 async function poll() {
   try {
-    const r = await fetch("/api/state", {cache: "no-store"});
+    const r = await fetch("/api/state" + (screenParam() ? "?screen=" + encodeURIComponent(screenParam()) : ""), {cache: "no-store"});
     if (!r.ok) throw new Error(r.status);
     S = await r.json(); DEMO = false; lastOk = Date.now();
   } catch (e) {
@@ -416,6 +431,8 @@ async function poll() {
   }
   renderAll();
 }
+// this screen's name in the Display Manager: set by the launcher, or in the iPad's bookmark
+const screenParam = () => Q.get("screen") || "";
 const D = (k) => (S && S.data && S.data[k]) || null;
 const CFG = () => (S && S.config) || {};
 
@@ -592,7 +609,7 @@ function renderShabbat() {
 // Weekdays only: hidden from candle lighting until havdalah.
 function agendaOn() {
   const a = D("agenda"), h = holyState();
-  return !!(a && a.configured) && !(h && h.inHoly);
+  return !!(a && a.configured) && !(h && h.inHoly) && rotationList().some((r) => r.scene === "agenda");
 }
 function agendaDay(day) {
   const d0 = new Date(day.getFullYear(), day.getMonth(), day.getDate()), d1 = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
@@ -702,7 +719,10 @@ function emptyMsg(key) {
 // attributes that make a headline open the reading panel
 const tapArticle = (key, it) => it.link ? ` data-tap="article" data-key="${key}" data-link="${esc(it.link)}"` : "";
 function headlines(key, n, leadMode) {
-  const f = D(key); const items = (f && f.items) || [];
+  const f = D(key);
+  return headlineList((f && f.items) || [], key, n, leadMode);
+}
+function headlineList(items, key, n, leadMode) {
   if (!items.length) return emptyMsg(key);
   return items.slice(0, n).map((it, i) => {
     const lead = leadMode && i === 0;
@@ -720,7 +740,8 @@ const col = (title, key, body) => `<div class="col"><div class="col-h"><h3>${esc
 // ------------------------------------------------------------------ scenes
 const SCENES = {
   agenda: {title: () => "Agenda", tab: "Agenda", render: sceneAgenda},
-  yankees: {title: () => "Yankees", tab: "Yankees", render: sceneTeam},
+  yankees: {title: () => mlbIsYankees() ? "Yankees" : mlbFav().favorite_name || "MLB team",
+            tab: () => mlbIsYankees() ? "Yankees" : CFG().team_abbr || "MLB", render: sceneTeam},
   mlb: {title: () => {
           const sb = D("scoreboard"); const ws = sb && sb.games.some((g) => g.game_type === "W");
           return ws ? "World Series" : "Around the majors"; }, tab: "MLB", render: sceneMLB},
@@ -728,7 +749,11 @@ const SCENES = {
   israel: {title: () => "Israel", tab: "Israel", render: sceneIsrael},
   shul: {title: () => !shulShabbatOn() ? "Davening times" : (shabbatSpan() || {}).yt ? "Yom Tov times" : "Shabbat times",
          tab: "Shul", render: sceneShul},
+  business: {title: () => "Markets", tab: "Business", render: sceneBusiness},
 };
+const sceneTab = (s) => typeof SCENES[s].tab === "function" ? SCENES[s].tab() : SCENES[s].tab;
+const mlbFav = () => (CFG().sports || {}).mlb || {};
+const mlbIsYankees = () => !CFG().team_abbr || CFG().team_abbr === "NYY";
 const isHoly = () => document.body.classList.contains("holy");
 
 // ------------------------------------------------------------------ shul tab
@@ -829,7 +854,8 @@ function sceneTeam() {
   const table = st ? `<table class="stand"><tr><th>${esc(CFG().division_name || "")}</th><th>W</th><th>L</th><th>GB</th><th>Strk</th></tr>
     ${st.teams.map((x) => `<tr class="${x.is_team ? "me" : ""}"><td>${esc(x.abbr)}</td><td>${x.w}</td><td>${x.l}</td><td>${esc(x.gb)}</td><td>${esc(x.streak || "")}</td></tr>`).join("")}</table>` : "";
   return `<div class="grid2" style="grid-template-columns:minmax(0,1.25fr) minmax(0,1fr)"><div>${left}</div><div class="col"><div class="col-h"><h3>Standings</h3>${ageHTML("standings")}</div>${table}</div></div>
-    <div class="grid2" style="flex:1">${col("Roster moves", "transactions", txList(tx && tx.team, 5))}${col("Yankees news", "yankees_news", headlines("yankees_news", 5))}</div>`;
+    <div class="grid2" style="flex:1">${col("Roster moves", "transactions", txList(tx && tx.team, 5))}${mlbIsYankees()
+      ? col("Yankees news", "yankees_news", headlines("yankees_news", 5)) : col("MLB news", "mlb_news", headlines("mlb_news", 5))}</div>`;
 }
 
 function sceneMLB() {
@@ -873,20 +899,48 @@ function sceneIsrael() {
 let order = [], idx = 0, sceneStart = Date.now(), current = null, front = "layerA";
 const HOLD = Q.get("hold") === "1";
 
+// this screen's scenes and seconds, from the server (the Display Manager); today's order without one
+function rotationList() {
+  const r = CFG().rotation;
+  if (Array.isArray(r) && r.length) return r;
+  const secs = CFG().rotation_seconds || {};
+  return ["agenda", "shul", "yankees", "mlb", "news", "israel"].map((scene) => ({scene, seconds: secs[scene] || 30}));
+}
+// live team scenes repeat every other turn: L1 s1 L2 s2 L1 s3 ...
+function withLive(seq, live) {
+  if (!live.length) return seq;
+  const out = [], rest = seq.filter((s) => !live.includes(s));
+  rest.forEach((s, i) => { out.push(live[i % live.length]); out.push(s); });
+  return out;
+}
+function liveScenes() {
+  const t = D("team");
+  return [...(t && t.live ? ["yankees"] : []),
+          ...sportKeys().filter((k) => ((D("sport_" + k) || {}).team || {}).live).map((k) => k + "_team")];
+}
 function buildOrder() {
   const has = (k) => { const f = D(k); return !!(f && f.items && f.items.length); };
-  const shul = D("shul");
-  const ok = {agenda: agendaOn(), yankees: true, mlb: true, news: has("nyt") || has("cnn"), israel: has("toi"),
-              shul: !!(shul && (isHoly() ? shul.bulletin || D("calendar") : shul.chart || shulShabbatOn()))};
-  const t = D("team");
-  const seq = t && t.live ? ["yankees", "mlb", "yankees", "agenda", "yankees", "shul", "yankees", "news", "yankees", "israel"]
-                          : ["agenda", "shul", "yankees", "mlb", "news", "israel"];
-  return seq.filter((s) => ok[s] || s === Q.get("scene"));
+  const shul = D("shul"), team = D("team") || {};
+  const ok = {agenda: agendaOn(), yankees: !team.off, mlb: !team.off, news: has("nyt") || has("cnn"), israel: has("toi"),
+              shul: !!(shul && (isHoly() ? shul.bulletin || D("calendar") : shul.chart || shulShabbatOn())),
+              business: bizOn()};
+  for (const k of sportKeys()) {
+    const v = D("sport_" + k), on = !!(v && v.on && v.in_season);
+    ok[k + "_team"] = on && !!v.team;
+    ok[k] = on;
+  }
+  const want = Q.get("scene");
+  const base = rotationList().map((r) => r.scene).filter((s) => SCENES[s]);
+  if (want && SCENES[want] && !base.includes(want)) base.unshift(want);
+  const live = liveScenes().filter((s) => base.includes(s) && ok[s]);
+  const out = withLive(base, live).filter((s) => ok[s] || s === want);
+  return out.length ? out : ["news"];
 }
 function duration(name) {
-  const r = CFG().rotation_seconds || {};
-  return (r[name] || 30) * 1000;
+  const r = rotationList().find((x) => x.scene === name);
+  return ((r && r.seconds) || (CFG().rotation_seconds || {})[name] || 30) * 1000;
 }
+
 // hide list items that would be cut off at the bottom of their column
 function fitColumns(layer) {
   layer.querySelectorAll(".col").forEach((c) => {
@@ -904,6 +958,7 @@ function paint(layerId, name) {
   fitShabbat($(layerId));
 }
 function showScene(name, fade = true) {
+  if (!SCENES[name]) name = "news";
   current = name;
   const back = front === "layerA" ? "layerB" : "layerA";
   const target = fade ? back : front;
@@ -912,17 +967,19 @@ function showScene(name, fade = true) {
   else $(front).classList.add("show");
   $("stitle").textContent = SCENES[name].title();
   const tabs = [...new Set(order)];
-  $("scenes").innerHTML = tabs.map((s) => `<span class="${s === name ? "on" : ""}" data-scene="${s}">${SCENES[s].tab}<i id="${s === name ? "prog" : ""}"></i></span>`).join("");
+  $("scenes").innerHTML = tabs.map((s) => `<span class="${s === name ? "on" : ""}" data-scene="${s}">${esc(sceneTab(s))}<i id="${s === name ? "prog" : ""}"></i></span>`).join("");
   renderChip();
 }
+// a live score chip for each favorite team playing now, except on that team's own scene
 function renderChip() {
-  const t = D("team"); const chip = $("chip");
-  if (t && t.live && current !== "yankees") {
-    const g = t.live;
-    chip.className = "chip on";
-    if (g.id) { chip.dataset.tap = "game"; chip.dataset.id = g.id; }
-    chip.innerHTML = `<span class="dot"></span>${esc(g.away.abbr)} ${g.away.score ?? 0}&nbsp; ${esc(g.home.abbr)} ${g.home.score ?? 0}&nbsp; <span style="font-weight:450">${esc(inningText(g))}</span>`;
-  } else { chip.className = "chip"; delete chip.dataset.tap; delete chip.dataset.id; }
+  const out = [], t = D("team");
+  const chip = (attrs, g, what) => `<div class="chip on"${attrs}><span class="dot"></span>${esc(g.away.abbr)} ${g.away.score ?? 0}&nbsp; ${esc(g.home.abbr)} ${g.home.score ?? 0}&nbsp; <span style="font-weight:450">${esc(what)}</span></div>`;
+  if (t && t.live && current !== "yankees") out.push(chip(tapGame(t.live), t.live, inningText(t.live)));
+  for (const k of sportKeys()) {
+    const g = ((D("sport_" + k) || {}).team || {}).live;
+    if (g && current !== k + "_team") out.push(chip(tapScore(k, g), g, g.detail));
+  }
+  $("chips").innerHTML = out.join("");
 }
 function tick() {
   if (!S) return;
@@ -1091,6 +1148,146 @@ PANELS.article = {
   },
 };
 
+// ------------------------------------------------------------------ other sports
+// Every league chosen in the Display Manager gets two scenes, like the Yankees and MLB:
+// "<league>_team" (the favorite's games, standings and news) and "<league>" (scores, news).
+const LEAGUE_TAB = {nba: "NBA", wnba: "WNBA", nfl: "NFL", nhl: "NHL", mls: "MLS", ncaam: "NCAAM", ncaaw: "NCAAW", ncaaf: "NCAAF"};
+const LEAGUE_TITLE = {nba: "Around the NBA", wnba: "Around the WNBA", nfl: "Around the NFL", nhl: "Around the NHL",
+                      mls: "Around MLS", ncaam: "Men's college basketball", ncaaw: "Women's college basketball", ncaaf: "College football"};
+// regulation periods: men's college basketball plays halves, soccer halves, hockey periods
+const PERIODS = {nba: 4, wnba: 4, nfl: 4, nhl: 3, mls: 2, ncaam: 2, ncaaw: 4, ncaaf: 4};
+const sportKeys = () => Object.keys(CFG().sports || {}).filter((k) => k !== "mlb" && LEAGUE_TAB[k]);
+function registerSports() {
+  for (const k of Object.keys(LEAGUE_TAB)) { delete SCENES[k + "_team"]; delete SCENES[k]; }
+  for (const k of sportKeys()) {
+    const lg = () => (CFG().sports || {})[k] || {};
+    SCENES[k + "_team"] = {title: () => lg().favorite_name || LEAGUE_TAB[k], tab: () => lg().favorite_abbr || LEAGUE_TAB[k],
+                           render: () => sportTeamScene(k)};
+    SCENES[k] = {title: () => LEAGUE_TITLE[k], tab: LEAGUE_TAB[k], render: () => sportLeagueScene(k)};
+  }
+}
+const tapScore = (key, g) => g.id ? ` data-tap="score" data-key="${esc(key)}" data-id="${esc(g.id)}"` : "";
+function periodLabels(key, n) {
+  const reg = PERIODS[key] || 4;
+  return Array.from({length: Math.max(reg, n)}, (_, i) => i < reg ? (reg === 2 ? ["1st", "2nd"][i] : String(i + 1))
+                                                                  : (key === "mls" ? "ET" : "OT" + (i > reg ? i - reg + 1 : "")));
+}
+function sportStatus(g) {
+  if (g.state === "Live") return `<span class="st"><span class="livedot"></span>${esc(g.detail)}</span>`;
+  if (g.state === "Final" || g.state === "Off") return `<span class="st">${esc(g.detail || g.state)}</span>`;
+  const d = pd(g.start);
+  return `<span class="st">${d ? `${dayLabel(d)} ${hmap(d)}` : esc(g.detail)}</span>`;
+}
+function lineTable(key, g) {
+  const n = Math.max(g.away.lines.length, g.home.lines.length);
+  if (!n) return "";
+  const cols = periodLabels(key, n);
+  const row = (t) => `<tr><td>${esc(t.abbr)}</td>${cols.map((_, i) => `<td>${t.lines[i] ?? ""}</td>`).join("")}<td class="rhe">${t.score ?? ""}</td></tr>`;
+  return `<table class="box-line sp-line"><tr><th></th>${cols.map((c) => `<th>${c}</th>`).join("")}<th>T</th></tr>${row(g.away)}${row(g.home)}</table>`;
+}
+function sportCard(key, g, opts = {}) {
+  const fin = g.state === "Final", pre = g.state === "Preview";
+  const row = (t, o) => {
+    const lose = fin && t.score != null && o.score != null && t.score < o.score;
+    const sub = pre || opts.showRecord ? t.record : "";
+    return `<div class="gc-row${lose ? " lose" : ""}"><span class="ab">${esc(t.abbr)}</span>
+      <span class="nm">${esc(t.name)}${sub ? `<small>${esc(sub)}</small>` : ""}</span>
+      <span class="r">${pre ? "" : (t.score ?? "")}</span><span class="he"></span><span class="he"></span></div>`;
+  };
+  const head = fin ? short(pd(g.start)) : pre ? "Next game" : "";
+  return `<div class="gc"${tapScore(key, g)}><div class="gc-head"><span>${esc(head)}</span>${sportStatus(g)}</div>
+    ${row(g.away, g.home)}${row(g.home, g.away)}${pre ? "" : lineTable(key, g)}
+    ${g.venue ? `<div class="gc-foot"><span>${esc(g.venue)}</span></div>` : ""}</div>`;
+}
+function sportMini(key, g) {
+  const fin = g.state === "Final";
+  const rw = (t, o) => `<div class="rw${fin && t.score < o.score ? " lose" : ""}"><span>${esc(t.abbr)}</span><span>${g.state === "Preview" ? "" : (t.score ?? "")}</span></div>`;
+  const st = g.state === "Live" ? `<span class="livedot"></span>${esc(g.detail)}` : g.state === "Preview" ? esc(hmap(pd(g.start))) : esc(g.detail || "Final");
+  return `<div class="mini${g.chosen ? " me" : ""}"${tapScore(key, g)}><div class="st">${st}</div>${rw(g.away, g.home)}${rw(g.home, g.away)}</div>`;
+}
+function standTable(st) {
+  if (!st || !st.rows || !st.rows.length) return `<div class="empty">No standings yet.</div>`;
+  let rows = st.rows.slice(0, 8);
+  const me = st.rows.find((r) => r.is_team);
+  if (me && !rows.includes(me)) rows = rows.slice(0, 7).concat([me]);
+  return `<table class="stand"><tr><th>${esc(st.group || "")}</th>${st.cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>
+    ${rows.map((r) => `<tr class="${r.is_team ? "me" : ""}"><td>${esc(r.abbr)}</td>${r.vals.map((v) => `<td>${esc(v)}</td>`).join("")}</tr>`).join("")}</table>`;
+}
+function sportTeamScene(key) {
+  const v = D("sport_" + key) || {}, t = v.team || {}, lg = (CFG().sports || {})[key] || {}, src = "sport_" + key;
+  let left = "";
+  if (t.live) left = sportCard(key, t.live, {showRecord: true});
+  else {
+    if (t.last) left += sportCard(key, t.last);
+    if (t.next) left += `<div style="height:1.1rem"></div>` + sportCard(key, t.next);
+    if (!left) left = `<div class="empty">No games scheduled.</div>`;
+  }
+  return `<div class="grid2" style="grid-template-columns:minmax(0,1.25fr) minmax(0,1fr)"><div>${left}</div><div class="col"><div class="col-h"><h3>Standings</h3>${ageHTML(src)}</div>${standTable(v.standings)}</div></div>
+    <div class="grid2" style="flex:1">${col(`${lg.favorite_name || LEAGUE_TAB[key]} news`, src, headlineList((v.team_news || {}).items || [], src, 5))}${col(`${LEAGUE_TAB[key]} news`, null, headlineList((v.news || {}).items || [], src, 5))}</div>`;
+}
+function sportLeagueScene(key) {
+  const v = D("sport_" + key) || {}, sc = v.scores || {}, games = sc.games || [], src = "sport_" + key;
+  const label = games.length && sc.label === "Yesterday" ? `<div class="col-h"><h3>Yesterday's scores</h3></div>` : "";
+  let top = "";
+  if (games.length && games.length <= 2) top = `<div class="grid2">${games.map((g) => sportCard(key, g)).join("")}</div>`;
+  else if (games.length > 2) top = `<div class="mini-grid">${games.slice(0, 8).map((g) => sportMini(key, g)).join("")}</div>`;
+  const news = (v.news || {}).items || [];
+  const half = Math.ceil(Math.min(news.length, top ? 8 : 12) / 2);
+  const li = (arr) => arr.length ? headlineList(arr, src, arr.length) : "";
+  return `${top ? `<div>${label}${top}</div>` : `<div class="empty">No games today.</div>`}
+    <div class="col" style="flex:1"><div class="col-h"><h3>${esc(LEAGUE_TAB[key])} news</h3>${ageHTML(src)}</div>
+      ${news.length ? `<div class="grid2"><div class="col">${li(news.slice(0, half))}</div><div class="col">${li(news.slice(half, half * 2))}</div></div>` : emptyMsg(src)}</div>`;
+}
+function findGame(key, id) {
+  const v = D("sport_" + key) || {}, t = v.team || {};
+  return [t.live, t.next, t.last, ...(t.recent || []), ...((v.scores || {}).games || [])].find((g) => g && String(g.id) === String(id)) || null;
+}
+// the simple score panel: the game is already in the state, so nothing is fetched
+PANELS.score = {
+  load: async (a) => findGame(a.key, a.id),
+  refreshMs: 20000,
+  shouldRefresh: (g) => !!(g && g.state === "Live"),
+  render(g, a) {
+    if (!g) return `<div class="panel-msg">This game couldn't be found.</div>`;
+    const big = (t) => `<div class="gc-row"><span class="ab">${esc(t.abbr)}</span><span class="nm">${esc(t.full || t.name)}${t.record ? `<small>${esc(t.record)}</small>` : ""}</span>
+      <span class="r">${g.state === "Preview" ? "" : (t.score ?? "")}</span><span class="he"></span><span class="he"></span></div>`;
+    const d = pd(g.start);
+    return `<div class="box-head"><span class="box-st">${sportStatus(g)}</span>${g.venue ? `<span>${esc(g.venue)}</span>` : ""}</div>
+      <div class="box-sub">${esc(((CFG().sports || {})[a.key] || {}).name || LEAGUE_TAB[a.key] || "")}</div>
+      ${big(g.away)}${big(g.home)}${lineTable(a.key, g)}
+      ${g.state === "Preview" && d ? `<p class="read-note">Starts ${esc(dayLabel(d))} at ${esc(hmap(d))}.</p>` : ""}`;
+  },
+};
+
+// ------------------------------------------------------------------ business
+const bizOn = () => { const m = D("markets"); return !!(m && !m.off && ((m.indices || []).length || (m.watch || []).length)); };
+const fmtNum = (v) => v == null ? "" : Number(v).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const upDown = (v) => v > 0 ? "up" : v < 0 ? "down" : "";
+const signed = (v, suffix = "") => v == null ? "" : (v > 0 ? "+" : "") + fmtNum(v) + suffix;
+function bizNote(m) {
+  if (m.market === "open") { const d = pd(m.as_of); return `Delayed${d ? " · " + hmap(d) : ""}`; }
+  const lt = m.last_trade ? new Date(m.last_trade + "T12:00:00") : null;
+  return "Market closed" + (lt && !isNaN(lt) ? ` · ${sameDay(lt, NOW()) ? "today's" : DOW[lt.getDay()] + "'s"} closing prices` : "");
+}
+function sceneBusiness() {
+  const m = D("markets") || {}, on = CFG().business_news || {};
+  const tiles = (m.indices || []).map((i) => `<div class="idx"><div class="n">${esc(i.name)}</div><div class="v">${fmtNum(i.last)}</div>
+    <div class="c ${upDown(i.change)}">${signed(i.change)} (${signed(i.pct, "%")})</div></div>`).join("");
+  const watch = (m.watch || []).slice(0, 12);
+  const wl = watch.length ? `<table class="stand wl"><tr><th>Symbol</th><th style="text-align:left">Name</th><th>Last</th><th>Chg</th><th>%</th></tr>
+    ${watch.map((w) => `<tr><td>${esc(w.symbol)}</td><td class="nm">${esc(w.name)}</td><td>${fmtNum(w.last)}</td>
+      <td class="${upDown(w.change)}">${signed(w.change)}</td><td class="${upDown(w.change)}">${signed(w.pct, "%")}</td></tr>`).join("")}</table>`
+    : `<div class="empty">Add stocks in the Display Manager.</div>`;
+  const names = {biz_nyt: "New York Times", biz_cnbc: "CNBC"};
+  const items = ["biz_nyt", "biz_cnbc"].filter((k) => on[k] !== false)
+    .flatMap((k) => ((D(k) || {}).items || []).map((it) => ({...it, _k: k})))
+    .sort((a, b) => (pd(b.time) || 0) - (pd(a.time) || 0));
+  const news = items.length ? items.slice(0, 10).map((it) => `<div class="hl"${tapArticle(it._k, it)}><div class="t">${esc(it.title)}</div>
+    <div class="w">${esc(names[it._k])}${it.time ? " · " + rel(it.time) : ""}</div></div>`).join("") : `<div class="empty">Waiting for headlines.</div>`;
+  return `<div class="biz-note">${esc(bizNote(m))}</div><div class="idx-row">${tiles}</div>
+    <div class="grid2" style="flex:1">${col("Watchlist", "markets", wl)}${col("Business news", null, news)}</div>`;
+}
+
 // ------------------------------------------------------------------ box score panel
 const num = (v) => v ?? "";
 function boxStatus(b) {
@@ -1234,6 +1431,7 @@ function renderDim() {
   $("dim").style.opacity = on ? (c.dim_level ?? .5) : 0;
 }
 function renderAll() {
+  registerSports();
   renderClock(); renderSide(); renderShabbat(); renderSky(); renderDim(); renderAgendaNext();
   $("badge").textContent = DEMO ? "Preview data. Run server.py for live feeds." : "";
   if (!current) {
@@ -1243,6 +1441,7 @@ function renderAll() {
   } else if (current === "agenda" && !agendaOn() && !HOLD) {
     advance();  // Shabbat started: move off the agenda right away
   } else {
+    if (!SCENES[current]) { advance(); return; }  // a league switched off or out of season
     paint(front, current);
     $("stitle").textContent = SCENES[current].title(); renderChip();
   }
@@ -1366,7 +1565,11 @@ function makeDemo() {
   };
   return {
     config: {location_name: "Teaneck", team_abbr: "NYY", division_name: "AL East", zmanim_labels: "hebrew",
-      dim_start: "23:00", dim_end: "06:30", dim_level: .55, rotation_seconds: {agenda: 25, shul: 30, yankees: 30, mlb: 30, news: 30, israel: 25}},
+      dim_start: "23:00", dim_end: "06:30", dim_level: .55, rotation_seconds: {agenda: 25, shul: 30, yankees: 30, mlb: 30, news: 30, israel: 25},
+      rotation: [["shul",30],["yankees",30],["mlb",30],["nba_team",30],["nba",30],["news",30],["israel",25],["business",30]].map(([scene, seconds]) => ({scene, seconds})),
+      sports: {mlb: {name: "MLB", favorite_abbr: "NYY", favorite_name: "New York Yankees", teams: [147]},
+               nba: {name: "NBA", favorite_abbr: "NY", favorite_name: "New York Knicks", teams: [18]}},
+      business_news: {biz_nyt: true, biz_cnbc: true}},
     meta, demo_panels,
     data: {
       weather: {current: {temp: isDay ? 58 : 53, feels: isDay ? 57 : 50, code: 2, is_day: isDay, wind_mph: 9, wind_dir: "NW", humidity: 61},
@@ -1407,6 +1610,39 @@ function makeDemo() {
         league: [{date: "2026-10-27", text: "Houston Astros released LF Nelson Velázquez."}]},
       yankees_news: feed(yn, 95, "", "yankees_news"), mlb_news: feed(mlbn, 18, "", "mlb_news"),
       nyt: feed(nyt, 22, "Officials say the proposal would add parkland and flood protection along two miles of shoreline, with construction starting next year.", "nyt"),
+      sport_nba: (() => {
+        const side = (abbr, id, name, score, lines, record) => ({id, abbr, name, full: name, score, lines, record, winner: null});
+        const live = {id: "901", start: at(19, 30), state: "Live", detail: "Q3 4:12", period: 3, clock: "4:12", venue: "Madison Square Garden", chosen: true,
+          away: side("BOS", 2, "Celtics", 71, [24, 26, 21], "5-4"), home: side("NY", 18, "Knicks", 78, [30, 25, 23], "5-4")};
+        const last = {id: "900", start: at(19, 30, -2), state: "Final", detail: "Final", period: 4, venue: "Rocket Mortgage FieldHouse", chosen: true,
+          away: side("NY", 18, "Knicks", 109, [26, 37, 25, 21], "4-4"), home: side("CLE", 5, "Cavaliers", 97, [22, 24, 28, 23], "5-4")};
+        const other = (id, a, h, as, hs, st, det) => ({id, start: at(19, 0), state: st, detail: det, venue: "", chosen: false,
+          away: side(a, 0, a, as, st === "Preview" ? [] : [20, 25, 30, as - 75], ""), home: side(h, 0, h, hs, st === "Preview" ? [] : [22, 24, 28, hs - 74], "")});
+        const standRows = [["DET","8","1","-","W5"],["CLE","6","3","2.0","W1"],["NY","5","4","3.0","W1"],["BOS","5","4","3.0","L1"],["MIA","5","4","3.0","L2"],
+          ["ORL","4","5","4.0","W2"],["PHI","4","5","4.0","L1"],["MIL","3","6","5.0","L3"],["ATL","3","6","5.0","L1"]];
+        return {on: true, in_season: true, team: {live, next: null, last, recent: [last]},
+          scores: {label: "Today", games: [live, other("902", "IND", "DEN", 102, 114, "Final", "Final"), other("903", "LAL", "PHX", 88, 90, "Live", "Q4 2:31"),
+                                           other("904", "GS", "SA", null, null, "Preview", ""), other("905", "MIA", "ORL", 99, 104, "Final", "Final/OT")]},
+          standings: {group: "Eastern Conference", cols: ["W", "L", "GB", "Strk"],
+                      rows: standRows.map((r) => ({abbr: r[0], name: r[0], vals: r.slice(1), is_team: r[0] === "NY"}))},
+          team_news: feed(["Brunson scores 31 as Knicks pull away late", "Knicks' bench steps up in road win", "Injury report: Robinson day-to-day",
+                           "Thibodeau on the second unit", "Towns returns to practice"], 40, "", "espn"),
+          news: feed(["Pistons stay perfect at home", "Wembanyama blocks nine in Spurs win", "Trade talk heats up around the deadline",
+                      "Rookie rankings: week 3", "Lakers' late run falls short", "Celtics shake up rotation", "Heat sign veteran guard",
+                      "Nuggets' Jokic posts another triple-double"], 25, "", "espn")};
+      })(),
+      markets: {indices: [{symbol: "SPX", name: "S&P 500", last: 7376.86, change: 23.13, pct: .31},
+                          {symbol: "DJI", name: "Dow Jones", last: 51285.73, change: -237.33, pct: -.46},
+                          {symbol: "IXIC", name: "Nasdaq", last: 24579.43, change: 264.43, pct: 1.09}],
+                watch: [{symbol: "AAPL", name: "Apple Inc.", last: 342.37, change: -1.8, pct: -.52},
+                        {symbol: "MSFT", name: "Microsoft Corp.", last: 611.2, change: 4.15, pct: .68},
+                        {symbol: "BRK.B", name: "Berkshire Hathaway", last: 570.89, change: -1.44, pct: -.25},
+                        {symbol: "JPM", name: "JPMorgan Chase", last: 318.05, change: 2.9, pct: .92}],
+                as_of: at(15, 42), source: "CNBC", market: "open", last_trade: ymd(0), missing: []},
+      biz_nyt: feed(["Fed signals patience as inflation cools", "Retailers brace for a slower holiday season", "Oil prices slip on supply worries",
+                     "A quiet rally in small-cap stocks"], 30, "", "biz_nyt"),
+      biz_cnbc: feed(["Stocks close mixed as tech rebounds", "Treasury yields edge higher", "Chipmakers lead the Nasdaq",
+                      "What to watch in earnings next week"], 12, "", "biz_cnbc"),
       agenda, cnn: feed(cnn, 9, "", "cnn"), toi: feed(toi, 14, "The new segment adds stops in several neighborhoods and is expected to carry tens of thousands of riders a day.", "toi"),
     },
   };
