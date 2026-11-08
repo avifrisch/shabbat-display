@@ -18,3 +18,8 @@ household.json.tmp
 manage-key.txt
 screen-settings.json
 sec-tickers.json
+household.json.bak
+household.json.bak.tmp
+household.json.bad-*
+screen-settings.json.tmp
+sec-tickers.json.tmp

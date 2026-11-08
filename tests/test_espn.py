@@ -149,7 +149,7 @@ class FetchLeagueTests(HouseholdCase):
         self.assertIsNone(v["standings"])
 
     def test_poll_seconds(self):
-        self.assertEqual(server.league_poll_seconds("nba"), 600)
+        self.assertEqual(server.league_poll_seconds("nba"), 60)
         self.nba_on([18], 18)
         server.store.data["sport_nba"] = {"on": True, "in_season": True, "team": {"live": {"id": "2"}}, "scores": {"games": []}}
         self.assertEqual(server.league_poll_seconds("nba"), 30)

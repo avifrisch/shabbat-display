@@ -524,7 +524,7 @@ def browser_pids(profile=None):
     # doesn't also match browser-profile-saver
     prof = (profile or profile_for("saver")).replace("'", "''")
     match = (f"$_.CommandLine -like '*{prof}*'" if not profile else
-             f"($_.CommandLine -like '*{prof}' -or $_.CommandLine -like '*{prof} *')")
+             f"($_.CommandLine -like '*{prof}' -or $_.CommandLine -like '*{prof} *' -or $_.CommandLine -like '*{prof}\"*')")
     cmd = ("Get-CimInstance Win32_Process -Filter \"Name='chrome.exe' or Name='msedge.exe'\" | "
            f"Where-Object {{ {match} "
            "-and $_.CommandLine -notlike '*--type=*' } | "
@@ -540,8 +540,10 @@ def browser_pids(profile=None):
 def stop_browser(pids, profiles):
     """Close the screen-saver browsers at once. A polite close takes seconds, and
     mark_clean_exit() keeps the forced one from causing a restore-pages bubble next time."""
+    # the screen-saver profiles are found together by their shared prefix; any other one by its own path
+    lookups = {None if os.path.basename(p).startswith("browser-profile-saver") else p for p in profiles}
     for _ in range(2):
-        for pid in pids or browser_pids():
+        for pid in pids or [x for prof in lookups for x in browser_pids(prof)]:
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], creationflags=NO_WINDOW,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(20):
@@ -549,6 +551,7 @@ def stop_browser(pids, profiles):
                 return
             time.sleep(0.1)
         pids = None  # look again, in case it had relaunched under a new process
+    log("couldn't close the display's browser window")
 
 
 def screen_off_seconds():

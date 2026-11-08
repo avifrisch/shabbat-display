@@ -180,6 +180,26 @@ class ScreenSettingsTests(unittest.TestCase):
         self.assertTrue(launcher.page_url(True).endswith("?screen=Den&saver=1"))
         self.assertTrue(launcher.page_url(False).endswith("?screen=Den"))
 
+    def test_always_profile_found_when_quoted(self):
+        # a folder path with a space is quoted on the command line, so the profile is followed by a quote
+        cmds = []
+
+        class Done:
+            stdout = ""
+        with self.mock.patch.object(launcher.subprocess, "run", lambda args, **kw: cmds.append(args[-1]) or Done()):
+            launcher.browser_pids(r"C:\Users\Some Name\ShabbatDisplay\browser-profile")
+        self.assertIn(r"""-like '*C:\Users\Some Name\ShabbatDisplay\browser-profile"*'""", cmds[0])
+
+    def test_stop_looks_again_for_the_same_profile(self):
+        looked = []
+        with self.mock.patch.object(launcher, "browser_pids", lambda profile=None: looked.append(profile) or []), \
+                self.mock.patch.object(launcher, "browser_running", lambda p: True), \
+                self.mock.patch.object(launcher.subprocess, "run", lambda *a, **k: None), \
+                self.mock.patch.object(launcher.time, "sleep", lambda s: None):
+            launcher.stop_browser([], [launcher.profile_for("always")])
+        self.assertTrue(looked)
+        self.assertTrue(all(p == launcher.profile_for("always") for p in looked))
+
     def test_profile_per_mode(self):
         self.assertTrue(launcher.profile_for("saver").endswith("browser-profile-saver"))
         self.assertTrue(launcher.profile_for("always").endswith("browser-profile"))

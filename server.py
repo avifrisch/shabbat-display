@@ -300,6 +300,7 @@ _household_lock = threading.RLock()
 _household_cache = None
 _household_mtime = None
 _household_noted = None
+_household_bad = False
 seen = {}  # screen name -> {"last": epoch seconds, "launcher": bool}, in memory only
 
 
@@ -321,7 +322,7 @@ def default_household():
         "default_rotation": rot,
         "screens": {SERVER_PC: {"rotation": [agenda] + copy.deepcopy(rot), "launcher": True, "saved": False,
                                 "mode": "always", "saver": default_saver(), "local": None}},
-        "secrets": {"nyt_cookie": ""},
+        "secrets": {"nyt_cookie": None},  # None: never set in the app; "": signed out there
     }
 
 
@@ -329,23 +330,68 @@ def default_saver():
     return {"minutes": 10, "lock": True, "screens": "all", "keep_awake": False}
 
 
+def _rotation_items(rot):
+    """The usable items of a rotation; anything malformed is dropped."""
+    out = []
+    for r in rot if isinstance(rot, list) else []:
+        if isinstance(r, dict) and isinstance(r.get("scene"), str) and isinstance(r.get("seconds"), int) \
+                and not isinstance(r.get("seconds"), bool):
+            out.append({"scene": r["scene"], "seconds": r["seconds"], "on": bool(r.get("on", True))})
+    return out
+
+
 def _fill_household(h):
-    """Add whatever an older or hand-trimmed file is missing."""
+    """Repair whatever an older, hand-edited or damaged file has wrong, so a bad value can
+    never break /api/state: missing parts come from the defaults, bad items are dropped."""
     d = default_household()
     for k, v in d.items():
-        if k != "screens" and not isinstance(h.get(k), type(v)):
+        if k not in ("screens", "secrets") and not isinstance(h.get(k), type(v)):
             h[k] = v
-    h.setdefault("screens", {})
     for k, v in d["sports"].items():
-        if not isinstance(h["sports"].get(k), dict):
-            h["sports"][k] = v
-    h["secrets"].setdefault("nyt_cookie", "")
+        lg = h["sports"].get(k)
+        if not isinstance(lg, dict):
+            h["sports"][k] = lg = v
+        teams = [t for t in lg.get("teams") or [] if isinstance(t, dict) and isinstance(t.get("id"), int)]
+        lg.update(on=bool(lg.get("on")), teams=[{"id": t["id"], "abbr": str(t.get("abbr") or ""), "name": str(t.get("name") or "")}
+                                                for t in teams])
+        if lg.get("favorite") not in [t["id"] for t in teams]:
+            lg["favorite"] = teams[0]["id"] if teams else None
+    b = h["business"]
+    b["on"] = bool(b.get("on", True))
+    b["watchlist"] = [w for w in b.get("watchlist") or [] if isinstance(w, dict) and isinstance(w.get("symbol"), str)]
+    b["news"] = {**d["business"]["news"], **(b.get("news") if isinstance(b.get("news"), dict) else {})}
+    h["default_rotation"] = _rotation_items(h["default_rotation"]) or d["default_rotation"]
+    screens = h.get("screens") if isinstance(h.get("screens"), dict) else {}
+    h["screens"] = {}
+    for name, s in screens.items():
+        if not isinstance(s, dict):
+            continue
+        fixed = {**_new_screen(), **s}
+        fixed["rotation"] = _rotation_items(s.get("rotation")) or None
+        if not isinstance(fixed["saver"], dict):
+            fixed["saver"] = default_saver()
+        if fixed["mode"] not in ("always", "saver"):
+            fixed["mode"] = "always"
+        h["screens"][name] = fixed
+    if not isinstance(h.get("secrets"), dict):
+        h["secrets"] = {}
+    h["secrets"].setdefault("nyt_cookie", None)
     return h
 
 
+def _read_household(path):
+    with open(path, encoding="utf-8") as f:
+        h = json.load(f)
+    if not isinstance(h, dict):
+        raise ValueError("not a JSON object")
+    return _fill_household(h)
+
+
 def household():
-    """The household config (a copy, safe to change and pass to save_household())."""
-    global _household_cache, _household_mtime, _household_noted
+    """The household config (a copy, safe to change and pass to save_household()). A file that
+    can't be read is never used and never overwritten: the last good copy in memory, else the
+    backup from the last save, else the defaults stand in until the next save sets it aside."""
+    global _household_cache, _household_mtime, _household_noted, _household_bad
     with _household_lock:
         try:
             mtime = os.path.getmtime(HOUSEHOLD_FILE)
@@ -358,27 +404,45 @@ def household():
                 log("household.json created from the current settings")
         elif mtime != _household_mtime:
             try:
-                with open(HOUSEHOLD_FILE, encoding="utf-8") as f:
-                    h = json.load(f)
-                if not isinstance(h, dict):
-                    raise ValueError("not a JSON object")
-                _household_cache, _household_mtime = _fill_household(h), mtime
-            except (OSError, ValueError) as e:
+                _household_cache, _household_mtime = _read_household(HOUSEHOLD_FILE), mtime
+                _household_bad = False
+            except (OSError, ValueError, AttributeError, TypeError) as e:
+                _household_bad = True
+                if _household_cache is None:
+                    try:
+                        _household_cache = _read_household(HOUSEHOLD_FILE + ".bak")
+                        how = "the backup from the last save (household.json.bak)"
+                    except (OSError, ValueError, AttributeError, TypeError):
+                        _household_cache = default_household()
+                        how = "the defaults"
+                else:
+                    how = "the last good copy"
+                _household_mtime = mtime
                 if _household_noted != mtime:
                     _household_noted = mtime
-                    log(f"household.json can't be read ({e}); using the last good copy")
-                if _household_cache is None:
-                    return default_household()
+                    log(f"household.json can't be read ({e}); using {how}")
         return copy.deepcopy(_household_cache)
 
 
 def save_household(h):
-    global _household_cache, _household_mtime
+    global _household_cache, _household_mtime, _household_bad
     with _household_lock:
-        tmp = HOUSEHOLD_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(h, f, indent=1)
-        os.replace(tmp, HOUSEHOLD_FILE)
+        if _household_bad and os.path.exists(HOUSEHOLD_FILE):
+            bad = f"{HOUSEHOLD_FILE}.bad-{time.strftime('%Y%m%d-%H%M%S')}"
+            try:
+                os.replace(HOUSEHOLD_FILE, bad)
+                log(f"household.json couldn't be read; kept it as {os.path.basename(bad)} and saved a new one")
+            except OSError as e:
+                log(f"household.json couldn't be set aside ({e})")
+        text = json.dumps(h, indent=1)
+        for path in (HOUSEHOLD_FILE + ".bak", HOUSEHOLD_FILE):  # the backup first, so one is always whole
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(text)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
+        _household_bad = False
         _household_cache = _fill_household(copy.deepcopy(h))
         try:
             _household_mtime = os.path.getmtime(HOUSEHOLD_FILE)
@@ -404,7 +468,8 @@ def manage_key():
 
 def nyt_cookie():
     """The NYT sign-in cookie: the one set from the app, else settings.json's. Secret."""
-    return (household()["secrets"].get("nyt_cookie") or CONFIG.get("nyt_cookie") or "").strip()
+    app = household()["secrets"].get("nyt_cookie")
+    return (CONFIG.get("nyt_cookie") or "" if app is None else app).strip()
 
 # ---------------------------------------------------------------- weather
 
@@ -927,7 +992,7 @@ def fetch_league(key):
 def league_poll_seconds(key):
     """Every 30 s while a chosen team plays or starts within 15 minutes; hourly out of season."""
     if not league_settings(key).get("on"):
-        return 600
+        return 60  # nothing is fetched while off; this is how soon a switch in the app is noticed
     v = store.get("sport_" + key) or {}
     if not v.get("on"):
         return 180
@@ -2390,6 +2455,14 @@ def retry_wait(key, retry, interval):
     return max(RETRY_FLOOR.get(key, 0), min(retry, interval))
 
 
+# set by the management API after a save, so the source refreshes now instead of after its sleep
+WAKE = {}
+
+
+def wake(key):
+    WAKE.setdefault(key, threading.Event()).set()
+
+
 def run_source(key, fn, every):
     retry = 60
     while True:
@@ -2402,7 +2475,9 @@ def run_source(key, fn, every):
             log(f"{key}: {e}")
             wait = retry_wait(key, retry, every() if callable(every) else every)
             retry = min(retry * 2, 900)
-        time.sleep(wait)
+        ev = WAKE.setdefault(key, threading.Event())
+        ev.wait(wait)
+        ev.clear()
 
 
 def start_sources():
@@ -2455,12 +2530,24 @@ def sports_config(h):
 
 def state_json(screen=None):
     """The page's data. With a valid screen name, that screen's rotation; the agenda only
-    goes to screens whose rotation has it."""
+    goes to screens whose rotation has it. Never fails: with any problem in the household
+    config it answers with the house defaults, so no screen falls back to preview data."""
+    try:
+        return _state_json(screen)
+    except Exception as e:  # noqa: BLE001
+        log(f"state for screen {screen!r}: {e}; answering with the defaults")
+        return _state_json(None, default_household())
+
+
+def _state_json(screen, fallback=None):
     if screen is not None and not valid_screen(screen):
         screen = None
     if screen:
-        check_in(screen, False, None)
-    h = household()
+        try:
+            check_in(screen, False, None)
+        except OSError as e:  # e.g. household.json held open by another program: still answer
+            log(f"check-in from {screen!r} not saved ({e})")
+    h = fallback or household()
     rot = effective_rotation(screen, h)
     snap = store.snapshot()
     data = snap["data"]
@@ -2468,7 +2555,7 @@ def state_json(screen=None):
         data = {k: v for k, v in data.items() if k != "agenda"}
     cfg = {k: CONFIG[k] for k in ("location_name", "team_abbr", "division_name", "zmanim_labels",
                                   "dim_start", "dim_end", "dim_level", "rotation_seconds")}
-    fav = mlb_favorite()
+    fav = mlb_favorite() if fallback is None else {"abbr": CONFIG["team_abbr"], "division_name": CONFIG["division_name"]}
     cfg.update(team_abbr=fav["abbr"], division_name=fav["division_name"])
     cfg.update(rotation=rot, screen=screen, sports=sports_config(h),
                business_news=dict(h["business"].get("news") or {}))
@@ -2620,6 +2707,8 @@ def _save_sports(h, body):
         was_on = h["sports"][league]["on"]
         on = bool(v.get("on"))
         h["sports"][league] = {"on": on, "teams": teams, "favorite": fav}
+        for k in (("team", "standings", "scoreboard", "transactions") if league == "mlb" else ("sport_" + league,)):
+            wake(k)
         if on and not was_on:
             pair = league_pair(league)
             rot = h["default_rotation"]
@@ -2647,6 +2736,7 @@ def _save_business(h, body):
         _need(k in ("biz_nyt", "biz_cnbc"), f"Unknown news source: {k}")
         news[k] = bool(v)
     h["business"] = {"on": bool(body.get("on", True)), "watchlist": out, "news": news}
+    wake("markets")  # a stock added on a weekend shows its last close now, not on Monday
 
 
 def _new_screen():
@@ -2815,6 +2905,9 @@ def manage_route(method, path, query, key, body):
         return 404, json.dumps({"ok": False, "error": "not found"})
     except BadRequest as e:
         return 400, json.dumps({"ok": False, "error": str(e)})
+    except Exception as e:  # noqa: BLE001 - always an answer the app can show
+        log(f"manage {method} {name}: {type(e).__name__}: {e}")
+        return 500, json.dumps({"ok": False, "error": "Something went wrong on the server. Its log has the details."})
 
 
 def shul_update_now():
