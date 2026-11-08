@@ -1,6 +1,6 @@
 # A real Windows screen saver for the Shabbat Display
 
-Date: 2026-11-08. Status: design, not yet approved.
+Date: 2026-11-08. Status: approved by Avi on 2026-11-08.
 
 ## Why
 
