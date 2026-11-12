@@ -189,6 +189,26 @@ final class AssistantReplyTests: XCTestCase {
         XCTAssertEqual(reply, AssistantReply(say: "Pasta timer set.", actions: [.setTimer(seconds: 600, label: "pasta"), .cancelTimer(label: "all")], error: nil))
     }
 
+    func testMusicAndCodeActions() throws {
+        let json = #"{"ok": true, "say": "Jazz.", "actions": [{"type": "play_music", "query": "quiet jazz", "kind": "any"}, {"type": "play_music", "query": ""}, {"type": "music_control", "command": "next"}, {"type": "music_control", "command": "louder"}, {"type": "show_code", "url": "https://www.walmart.com/sc/cart/addToCart?items=1_2", "title": "Walmart cart"}, {"type": "show_code", "path": "/shop", "title": "Shopping list"}, {"type": "show_code", "url": "javascript:alert(1)"}, {"type": "show_code", "path": "//evil.example/x"}]}"#
+        let reply = try XCTUnwrap(AssistantReply.parse(Data(json.utf8)))
+        XCTAssertEqual(reply.actions, [
+            .playMusic(query: "quiet jazz", kind: "any"), .musicControl("next"),
+            .showCode(title: "Walmart cart", url: "https://www.walmart.com/sc/cart/addToCart?items=1_2", path: nil),
+            .showCode(title: "Shopping list", url: nil, path: "/shop"),
+        ])
+    }
+
+    func testPhoneCode() throws {
+        let cart = try XCTUnwrap(PhoneCode(title: "", link: URL(string: "https://www.walmart.com/sc/cart/addToCart?items=1_2")!))
+        XCTAssertEqual(cart.title, "Open on your phone")
+        XCTAssertGreaterThan(cart.image.size.width, 200)
+        XCTAssertTrue(cart.hint.contains("check out there"))
+        let page = URL(string: "/shop", relativeTo: ServerAddress("192.168.4.109")!.base)!.absoluteURL
+        XCTAssertEqual(page.absoluteString, "http://192.168.4.109:8765/shop")
+        XCTAssertTrue(try XCTUnwrap(PhoneCode(title: "Shopping list", link: page)).hint.contains("home Wi-Fi"))
+    }
+
     func testARefusalAndNonsense() throws {
         let reply = try XCTUnwrap(AssistantReply.parse(Data(#"{"ok": false, "error": "budget_month", "say": "I've reached this month's spending limit."}"#.utf8)))
         XCTAssertEqual(reply.error, "budget_month")

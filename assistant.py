@@ -15,6 +15,7 @@ nothing to pip install.
 
 import json
 import os
+import re
 import threading
 import urllib.error
 import urllib.request
@@ -38,9 +39,12 @@ Your answer is read aloud. Keep it to one or two short sentences in plain words:
 no markdown, no emoji, no symbols a voice would stumble on. Say numbers the way people say them.
 
 Use a tool whenever the request is something a tool does, and only say a thing is done after \
-the tool has answered. You can keep a shopping list and set kitchen timers. You cannot play \
-music, order anything, send messages or control other devices yet; say so briefly if asked. \
-You have no internet search: answer from what you know and from the facts below, and say so \
+the tool has answered. You can keep a shopping list, set kitchen timers, play music from \
+Apple Music on the display, and put a code on the display that a phone scans to open the \
+shopping list or a Walmart cart of the family's usual items. You cannot place an order, pay, \
+send messages or control other devices; checkout always happens on the phone. Say so briefly \
+if asked. When you start music, just say what you are putting on; the display itself says so \
+if it can't find it. You have no internet search: answer from what you know and from the facts below, and say so \
 when you don't know.
 
 If the words look like something the display overheard rather than a request to it, answer \
@@ -63,6 +67,26 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "items": {"type": "array", "items": {"type": "string"}}},
          "required": ["items"]}},
+    {"name": "play_music",
+     "description": "Play music on the display from Apple Music. Replaces whatever is playing.",
+     "input_schema": {"type": "object", "properties": {
+         "query": {"type": "string", "description": "What to search Apple Music for: a song, album, artist, playlist or kind of music, in the user's words ('Shlomo Carlebach', 'quiet jazz', 'Abbey Road')."},
+         "kind": {"type": "string", "enum": ["any", "song", "album", "artist", "playlist", "station"],
+                  "description": "What the query names, when the user made that clear; otherwise 'any'."}},
+         "required": ["query"]}},
+    {"name": "music_control",
+     "description": "Control the music playing on the display.",
+     "input_schema": {"type": "object", "properties": {
+         "command": {"type": "string", "enum": ["pause", "resume", "next", "previous", "stop"]}},
+         "required": ["command"]}},
+    {"name": "send_to_phone",
+     "description": "Show a code on the display for a phone's camera. 'cart' opens Walmart with the family's usual items in the cart, ready for them to check out; 'list' opens the shopping list page, where items can be ticked off and the usual Walmart items are set up.",
+     "input_schema": {"type": "object", "properties": {
+         "what": {"type": "string", "enum": ["cart", "list"]}},
+         "required": ["what"]}},
+    {"name": "add_usuals_to_shopping_list",
+     "description": "Copy the family's usual Walmart items onto the shopping list.",
+     "input_schema": {"type": "object", "properties": {}}},
     {"name": "remove_from_shopping_list",
      "description": "Take items off the shopping list. Use the items' names as they appear on the list.",
      "input_schema": {"type": "object", "properties": {
@@ -222,6 +246,13 @@ class ShoppingList:
                 _write_atomic(self.path, {"items": items})
         return removed
 
+    def remove_exact(self, text):
+        with self.lock:
+            items = self._load()
+            kept = [i for i in items if i["text"].casefold() != text.casefold()]
+            if len(kept) != len(items):
+                _write_atomic(self.path, {"items": kept})
+
     def mark_sent(self, texts):
         with self.lock:
             items = self._load()
@@ -235,6 +266,119 @@ class ShoppingList:
 
     def unsent(self):
         return [i["text"] for i in self.items() if not i.get("sent")]
+
+
+WALMART_CART = "https://www.walmart.com/sc/cart/addToCart?items="
+
+
+def walmart_item_id(link):
+    """The item number in a Walmart product link (.../ip/Name/123456789) or typed by itself; "" if none."""
+    text = link.strip() if isinstance(link, str) else ""
+    if text.isdigit():
+        return text if 4 <= len(text) <= 15 else ""
+    m = re.search(r"walmart\.com/ip/(?:[^/?#]+/)?(\d{4,15})(?:[/?#]|$)", text)
+    return m.group(1) if m else ""
+
+
+class Usuals:
+    """The things the family buys again and again: [{id, name, item_id, qty}] in usuals.json.
+    `item_id` is Walmart's number for the product ("" until a product link is given)."""
+
+    def __init__(self, path):
+        self.path = path
+        self.lock = threading.Lock()
+
+    def _load(self):
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                items = json.load(f)["items"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return []
+        out = []
+        for i in items if isinstance(items, list) else []:
+            if isinstance(i, dict) and isinstance(i.get("id"), str) and isinstance(i.get("name"), str):
+                qty = i.get("qty")
+                out.append({"id": i["id"], "name": i["name"],
+                            "item_id": i["item_id"] if isinstance(i.get("item_id"), str) and i["item_id"].isdigit() else "",
+                            "qty": qty if isinstance(qty, int) and not isinstance(qty, bool) and 1 <= qty <= 24 else 1})
+        return out
+
+    def items(self):
+        with self.lock:
+            return self._load()
+
+    def add(self, name, link="", qty=1):
+        """Add an item, or update the one with this name. Returns it, or None if there is no name."""
+        name = _clean_text(name, MAX_ITEM_LEN)
+        if not name:
+            return None
+        qty = qty if isinstance(qty, int) and not isinstance(qty, bool) and 1 <= qty <= 24 else 1
+        item_id = walmart_item_id(link)
+        with self.lock:
+            items = self._load()
+            item = next((i for i in items if i["name"].casefold() == name.casefold()), None)
+            if item:
+                item.update(qty=qty, item_id=item_id or item["item_id"])
+            elif len(items) < MAX_ITEMS:
+                item = {"id": os.urandom(4).hex(), "name": name, "item_id": item_id, "qty": qty}
+                items.append(item)
+            else:
+                return None
+            _write_atomic(self.path, {"items": items})
+            return item
+
+    def remove(self, item_id):
+        with self.lock:
+            items = self._load()
+            kept = [i for i in items if i["id"] != item_id]
+            if len(kept) != len(items):
+                _write_atomic(self.path, {"items": kept})
+            return len(kept) != len(items)
+
+    def cart_url(self):
+        """Walmart's add-to-cart link for every usual item that has a product number; "" if none has."""
+        parts = [i["item_id"] if i["qty"] == 1 else f"{i['item_id']}_{i['qty']}" for i in self.items() if i["item_id"]]
+        return WALMART_CART + ",".join(parts) if parts else ""
+
+
+def shop_state(shopping, usuals):
+    """What the phone's shopping page shows."""
+    return {"ok": True, "items": [i["text"] for i in shopping.items()], "usuals": usuals.items(), "cart_url": usuals.cart_url()}
+
+
+def shop_change(shopping, usuals, body, forward=None):
+    """One change from the shopping page. Returns (http status, dict)."""
+    if not isinstance(body, dict):
+        return 400, {"ok": False, "error": "That request couldn't be read."}
+    op = body.get("op")
+    try:
+        if op == "add_item":
+            items = _clean_items([body.get("text")])
+            if not items:
+                return 400, {"ok": False, "error": "Type an item first."}
+            shopping.add(items)
+            if forward:
+                try:
+                    pending = shopping.unsent()
+                    if pending and forward(pending) is not False:
+                        shopping.mark_sent(pending)
+                except Exception:  # noqa: BLE001 - the item is saved here either way
+                    pass
+        elif op == "remove_item":
+            shopping.remove_exact(_clean_text(body.get("text"), MAX_ITEM_LEN))
+        elif op == "add_usual":
+            link = body.get("link") if isinstance(body.get("link"), str) else ""
+            if link.strip() and not walmart_item_id(link):
+                return 400, {"ok": False, "error": "That doesn't look like a Walmart product link. Open the product on walmart.com and copy its link."}
+            if not usuals.add(body.get("name"), link, body.get("qty")):
+                return 400, {"ok": False, "error": "Give the item a name."}
+        elif op == "remove_usual":
+            usuals.remove(body.get("id") if isinstance(body.get("id"), str) else "")
+        else:
+            return 400, {"ok": False, "error": "That request couldn't be read."}
+    except OSError:
+        return 500, {"ok": False, "error": "That couldn't be saved on the display computer."}
+    return 200, shop_state(shopping, usuals)
 
 
 def _clean_items(value):
@@ -261,6 +405,13 @@ def _clean_timers(value):
     return out[:10]
 
 
+def _clean_music(value):
+    """What the iPad is playing: {playing, title}."""
+    if not isinstance(value, dict):
+        return None
+    return {"playing": bool(value.get("playing")), "title": _clean_text(value.get("title"), 120)}
+
+
 def _clean_history(value):
     """Earlier exchanges of this conversation: [{q, a}], oldest first."""
     out = []
@@ -283,8 +434,8 @@ class Assistant:
     """One per server. `settings()` gives {"api_key", "monthly_usd", "daily_requests"} each time,
     so a changed settings file takes effect without rebuilding this."""
 
-    def __init__(self, settings, budget, shopping, post=post_json, log=print, forward=None):
-        self.settings, self.budget, self.shopping = settings, budget, shopping
+    def __init__(self, settings, budget, shopping, usuals, post=post_json, log=print, forward=None):
+        self.settings, self.budget, self.shopping, self.usuals = settings, budget, shopping, usuals
         self.post, self.log, self.forward = post, log, forward
 
     # -- what the iPad asks
@@ -307,7 +458,7 @@ class Assistant:
         for h in _clean_history(body.get("history")):
             messages += [{"role": "user", "content": h["q"]}, {"role": "assistant", "content": h["a"]}]
         messages.append({"role": "user", "content": text})
-        system = SYSTEM + "\n\nFacts right now:\n" + self._facts(facts, timers)
+        system = SYSTEM + "\n\nFacts right now:\n" + self._facts(facts, timers, _clean_music(body.get("music")))
 
         actions, said = [], []
         for _ in range(MAX_STEPS):
@@ -352,7 +503,7 @@ class Assistant:
             return "I can't read my spending record, so I've stopped. It needs a look on the display computer."
         return "I've reached this month's spending limit."
 
-    def _facts(self, facts, timers):
+    def _facts(self, facts, timers, music=None):
         lines = [facts.strip()] if facts and facts.strip() else []
         items = [i["text"] for i in self.shopping.items()]
         lines.append("Shopping list: " + ("; ".join(items) if items else "empty") + ".")
@@ -362,6 +513,17 @@ class Assistant:
                 for t in timers) + ".")
         else:
             lines.append("Timers: none running.")
+        if music and music["title"]:
+            lines.append(f"Music: {music['title']} ({'playing' if music['playing'] else 'paused'}).")
+        else:
+            lines.append("Music: nothing playing.")
+        usual = self.usuals.items()
+        if usual:
+            lines.append("Usual Walmart items: " + "; ".join(
+                (f"{u['qty']} x " if u["qty"] > 1 else "") + u["name"] + ("" if u["item_id"] else " (no product link yet)")
+                for u in usual) + ".")
+        else:
+            lines.append("Usual Walmart items: none set up.")
         return "\n".join(lines)
 
     def _run(self, call, actions, timers):
@@ -391,6 +553,39 @@ class Assistant:
                 note = (f" Already on the list: {', '.join(dup)}." if dup else "") + \
                        ("" if len(added) + len(dup) == len(items) else " The list is full.")
                 return {"content": (f"Added: {', '.join(added)}." if added else "Nothing new was added.") + note}
+            if name == "play_music":
+                query = _clean_text(args.get("query"), 120)
+                if not query:
+                    return {"content": "Say what to play.", "is_error": True}
+                kind = args.get("kind") if args.get("kind") in ("song", "album", "artist", "playlist", "station") else "any"
+                actions.append({"type": "play_music", "query": query, "kind": kind})
+                return {"content": f"The display is looking for '{query}' on Apple Music and will play it, or say that it couldn't."}
+            if name == "music_control":
+                command = args.get("command")
+                if command not in ("pause", "resume", "next", "previous", "stop"):
+                    return {"content": "The commands are pause, resume, next, previous and stop.", "is_error": True}
+                actions.append({"type": "music_control", "command": command})
+                return {"content": "Done."}
+            if name == "send_to_phone":
+                if args.get("what") == "list":
+                    actions.append({"type": "show_code", "path": "/shop", "title": "Shopping list"})
+                    return {"content": "A code is on the display. A phone on the home Wi-Fi that scans it opens the shopping list."}
+                cart = self.usuals.cart_url()
+                if not cart:
+                    actions.append({"type": "show_code", "path": "/shop", "title": "Set up your usual items"})
+                    return {"content": "No usual Walmart items have a product link yet, so there is no cart to open. A code is on the "
+                                       "display instead: it opens the page where the usual items are set up."}
+                missing = [u["name"] for u in self.usuals.items() if not u["item_id"]]
+                actions.append({"type": "show_code", "url": cart, "title": "Walmart cart"})
+                return {"content": "A code is on the display. Scanning it with a phone opens Walmart with the usual items in the cart; "
+                                   "they review it and check out there." + (f" Left out, no product link yet: {', '.join(missing)}." if missing else "")}
+            if name == "add_usuals_to_shopping_list":
+                names = [(f"{u['qty']} x " if u["qty"] > 1 else "") + u["name"] for u in self.usuals.items()]
+                if not names:
+                    return {"content": "No usual items are set up yet."}
+                added, dup = self.shopping.add(names)
+                self._send_on()
+                return {"content": (f"Added: {', '.join(added)}." if added else "They were all on the list already.")}
             if name == "remove_from_shopping_list":
                 items = _clean_items(args.get("items"))
                 removed = self.shopping.remove(items)

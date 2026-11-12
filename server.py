@@ -118,6 +118,8 @@ PAGE_FILE = os.path.join(HERE, "index.html")
 SHUL_DIR = os.path.join(HERE, "shul")
 BUDGET_FILE = os.path.join(HERE, "assistant-budget.json")
 SHOPPING_FILE = os.path.join(HERE, "shopping.json")
+USUALS_FILE = os.path.join(HERE, "usuals.json")
+SHOP_PAGE_FILE = os.path.join(HERE, "shop.html")
 SHUL_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "pdf": "application/pdf"}
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/130.0 Safari/537.36 ShabbatDisplay/1.0")
@@ -2665,7 +2667,8 @@ def _forward_shopping(items):
 
 
 ASSISTANT = assistant_mod.Assistant(_assistant_settings, assistant_mod.Budget(BUDGET_FILE),
-                                    assistant_mod.ShoppingList(SHOPPING_FILE), log=log, forward=_forward_shopping)
+                                    assistant_mod.ShoppingList(SHOPPING_FILE), assistant_mod.Usuals(USUALS_FILE),
+                                    log=log, forward=_forward_shopping)
 
 
 def is_holy(n=None):
@@ -2713,6 +2716,18 @@ def assistant_route(body):
 
 def shopping_route():
     return 200, json.dumps({"ok": True, "items": [i["text"] for i in ASSISTANT.shopping.items()]})
+
+
+def shop_route(body=None):
+    """The phone's shopping page (shop.html): GET gives the list and the usual items, POST changes one."""
+    if body is None:
+        return 200, json.dumps(assistant_mod.shop_state(ASSISTANT.shopping, ASSISTANT.usuals))
+    try:
+        req = json.loads(body.decode("utf-8")) if body else None
+    except (ValueError, UnicodeDecodeError):
+        req = None
+    status, answer = assistant_mod.shop_change(ASSISTANT.shopping, ASSISTANT.usuals, req, forward=_forward_shopping)
+    return status, json.dumps(answer)
 
 
 # ---------------------------------------------------------------- management API
@@ -3111,6 +3126,11 @@ class Handler(BaseHTTPRequestHandler):
                            "application/json")
             elif path == "/api/shopping":
                 self._send(*shopping_route(), "application/json")
+            elif path == "/api/shop":
+                self._send(*shop_route(), "application/json")
+            elif path == "/shop":
+                with open(SHOP_PAGE_FILE, "rb") as f:
+                    self._send(200, f.read(), "text/html; charset=utf-8")
             elif path == "/health":
                 self._send(200, "ok", "text/plain")
             elif path.startswith("/fonts/") and ".." not in path:
@@ -3128,7 +3148,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         try:
-            if parsed.path != "/api/assistant" and not parsed.path.startswith("/api/manage/"):
+            if parsed.path not in ("/api/assistant", "/api/shop") and not parsed.path.startswith("/api/manage/"):
                 self._send(404, "not found", "text/plain")
                 return
             try:
@@ -3141,6 +3161,9 @@ class Handler(BaseHTTPRequestHandler):
             body = self.rfile.read(n) if n else b""
             if parsed.path == "/api/assistant":
                 self._send(*assistant_route(body), "application/json")
+                return
+            if parsed.path == "/api/shop":
+                self._send(*shop_route(body), "application/json")
                 return
             self._send(*manage_route("POST", parsed.path, parsed.query, self.headers.get("X-Manage-Key"), body),
                        "application/json")

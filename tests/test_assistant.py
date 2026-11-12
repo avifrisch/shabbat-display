@@ -42,6 +42,7 @@ class Case(unittest.TestCase):
         self.a = assistant.Assistant(lambda: self.settings,
                                      assistant.Budget(self.budget_file, now=lambda: self.clock),
                                      assistant.ShoppingList(os.path.join(self.dir.name, "shopping.json"), now=lambda: self.clock),
+                                     assistant.Usuals(os.path.join(self.dir.name, "usuals.json")),
                                      post=self.post, log=self.logged.append, forward=self.forward)
 
     def post(self, url, headers, body):
@@ -175,6 +176,105 @@ class Answers(Case):
         self.assertNotIn("sk-test", " ".join(self.logged))
 
 
+class MusicAndWalmart(Case):
+    def result(self):
+        return self.sent[-1]["messages"][2]["content"][0]
+
+    def test_music_becomes_actions_for_the_ipad(self):
+        self.answers = [tool("play_music", {"query": " quiet  jazz ", "kind": "radio"}), text("Putting on some quiet jazz.")]
+        out = self.ask("play some quiet jazz")[1]
+        self.assertEqual(out["actions"], [{"type": "play_music", "query": "quiet jazz", "kind": "any"}])
+        self.answers = [tool("play_music", {"query": "Abbey Road", "kind": "album"}), text("Abbey Road.")]
+        self.assertEqual(self.ask("play the album abbey road")[1]["actions"][0]["kind"], "album")
+        self.answers = [tool("music_control", {"command": "next"}), text("Skipped.")]
+        self.assertEqual(self.ask("skip this")[1]["actions"], [{"type": "music_control", "command": "next"}])
+        for bad in (("play_music", {"query": "  "}), ("music_control", {"command": "louder"})):
+            self.answers = [tool(*bad), text("Sorry.")]
+            self.assertEqual(self.ask("x")[1]["actions"], [])
+            self.assertTrue(self.result()["is_error"])
+
+    def test_what_is_playing_reaches_claude(self):
+        self.answers = [text("That's Abbey Road.")]
+        self.ask("what is this", music={"playing": True, "title": "Come Together - The Beatles"})
+        self.assertIn("Music: Come Together - The Beatles (playing).", self.sent[0]["system"])
+        self.answers = [text("Nothing.")]
+        self.ask("what is this", music={"playing": False, "title": ""})
+        self.assertIn("Music: nothing playing.", self.sent[-1]["system"])
+
+    def test_walmart_item_numbers(self):
+        for link, want in (("https://www.walmart.com/ip/Great-Value-Whole-Milk-1-Gallon/10450114", "10450114"),
+                           ("https://www.walmart.com/ip/Great-Value-Whole-Milk/10450114?athbdg=L1600&from=/search", "10450114"),
+                           ("walmart.com/ip/10450114", "10450114"), (" 10450114 ", "10450114"),
+                           ("https://www.walmart.com/search?q=milk", ""), ("https://evil.example/ip/x/10450114", ""),
+                           ("https://www.walmart.com/ip/Milk/12", ""), ("", ""), (None, "")):
+            self.assertEqual(assistant.walmart_item_id(link), want, link)
+
+    def test_the_cart_link_has_only_items_with_a_product_number(self):
+        u = self.a.usuals
+        self.assertEqual(u.cart_url(), "")
+        u.add("Milk", "https://www.walmart.com/ip/Milk/10450114", 2)
+        u.add("Eggs", "", 1)
+        u.add("Challah", "https://www.walmart.com/ip/Challah/555666777")
+        self.assertEqual(u.cart_url(), "https://www.walmart.com/sc/cart/addToCart?items=10450114_2,555666777")
+        u.add("milk", "", 3)  # the same item again: new amount, link kept
+        self.assertEqual([(i["name"], i["qty"], i["item_id"]) for i in u.items()][0], ("Milk", 3, "10450114"))
+        self.assertIsNone(u.add("  "))
+        self.assertTrue(u.remove(u.items()[0]["id"]))
+        self.assertFalse(u.remove("nope"))
+        self.assertEqual(u.cart_url(), "https://www.walmart.com/sc/cart/addToCart?items=555666777")
+
+    def test_send_the_cart_to_a_phone(self):
+        self.answers = [tool("send_to_phone", {"what": "cart"}), text("Set up your usual items first.")]
+        out = self.ask("reorder from walmart")[1]
+        self.assertEqual(out["actions"], [{"type": "show_code", "path": "/shop", "title": "Set up your usual items"}])
+        self.a.usuals.add("Milk", "10450114", 2)
+        self.a.usuals.add("Eggs")
+        self.answers = [tool("send_to_phone", {"what": "cart"}), text("Scan the code to open your cart.")]
+        out = self.ask("reorder from walmart")[1]
+        self.assertEqual(out["actions"], [{"type": "show_code", "url": "https://www.walmart.com/sc/cart/addToCart?items=10450114_2",
+                                           "title": "Walmart cart"}])
+        self.assertIn("Left out, no product link yet: Eggs.", self.result()["content"])
+        self.assertIn("Usual Walmart items: 2 x Milk; Eggs (no product link yet).", self.sent[-1]["system"])
+        self.answers = [tool("send_to_phone", {"what": "list"}), text("Scan the code.")]
+        self.assertEqual(self.ask("send the list to my phone")[1]["actions"], [{"type": "show_code", "path": "/shop", "title": "Shopping list"}])
+
+    def test_usuals_onto_the_shopping_list(self):
+        self.answers = [tool("add_usuals_to_shopping_list", {}), text("There are none.")]
+        self.ask("add the usuals")
+        self.assertEqual(self.result()["content"], "No usual items are set up yet.")
+        self.a.usuals.add("Milk", "", 2)
+        self.a.usuals.add("Eggs")
+        self.answers = [tool("add_usuals_to_shopping_list", {}), text("Added.")]
+        self.ask("add the usuals")
+        self.assertEqual([i["text"] for i in self.a.shopping.items()], ["2 x Milk", "Eggs"])
+
+    def test_changes_from_the_phones_page(self):
+        change = lambda body: assistant.shop_change(self.a.shopping, self.a.usuals, body, forward=self.forward)
+        status, state = change({"op": "add_item", "text": " Paper   towels "})
+        self.assertEqual((status, state["items"], self.forwarded), (200, ["Paper towels"], [["Paper towels"]]))
+        self.assertEqual(change({"op": "add_item", "text": ""})[0], 400)
+        self.a.shopping.add(["paper"])
+        self.assertEqual(change({"op": "remove_item", "text": "paper"})[1]["items"], ["Paper towels"])  # the exact item only
+        status, state = change({"op": "add_usual", "name": "Milk", "link": "https://www.walmart.com/ip/Milk/10450114", "qty": 2})
+        self.assertEqual(state["cart_url"], "https://www.walmart.com/sc/cart/addToCart?items=10450114_2")
+        status, state = change({"op": "add_usual", "name": "Eggs", "link": "https://www.target.com/p/eggs"})
+        self.assertEqual(status, 400)
+        self.assertIn("Walmart product link", state["error"])
+        self.assertEqual(change({"op": "add_usual", "name": "", "link": ""})[0], 400)
+        status, state = change({"op": "remove_usual", "id": self.a.usuals.items()[0]["id"]})
+        self.assertEqual((state["usuals"], state["cart_url"]), ([], ""))
+        for bad in (None, [], {"op": "format_disk"}, {}):
+            self.assertEqual(change(bad)[0], 400)
+
+    def test_a_damaged_usuals_file_is_an_empty_list(self):
+        with open(self.a.usuals.path, "w", encoding="utf-8") as f:
+            f.write('{"items": [{"id": "a", "name": "Milk", "item_id": "<script>", "qty": 99}, {"name": "no id"}, 7]}')
+        self.assertEqual(self.a.usuals.items(), [{"id": "a", "name": "Milk", "item_id": "", "qty": 1}])
+        with open(self.a.usuals.path, "w", encoding="utf-8") as f:
+            f.write("nonsense")
+        self.assertEqual(self.a.usuals.items(), [])
+
+
 class Spending(Case):
     def test_every_answer_is_counted(self):
         self.answers = [tool("set_timer", {"seconds": 60}, tokens_in=2000, tokens_out=100),
@@ -260,6 +360,7 @@ class Route(HouseholdCase):
         for target, name, value in (
                 (a, "budget", assistant.Budget(os.path.join(self.dir.name, "b.json"))),
                 (a, "shopping", assistant.ShoppingList(os.path.join(self.dir.name, "s.json"))),
+                (a, "usuals", assistant.Usuals(os.path.join(self.dir.name, "u.json"))),
                 (a, "post", self.post)):
             p = mock.patch.object(target, name, value)
             p.start()
@@ -338,6 +439,17 @@ class Route(HouseholdCase):
         with mock.patch.object(server.urllib.request, "urlopen", urlopen):
             self.assertIsNone(server._forward_shopping(["milk", "eggs"]))
         self.assertEqual(got, [("https://recipes.example/grocery-inbox/token", {"items": ["milk", "eggs"], "source": "display"}, "POST")])
+
+    def test_the_phones_shopping_page(self):
+        with urllib.request.urlopen(self.base + "/shop", timeout=5) as r:
+            page = r.read()
+            self.assertIn("text/html", r.headers["Content-Type"])
+        self.assertIn(b"Usual Walmart items", page)
+        self.assertEqual(self.call("/api/shop"), (200, {"ok": True, "items": [], "usuals": [], "cart_url": ""}))
+        status, state = self.call("/api/shop", {"op": "add_usual", "name": "Milk", "link": "10450114", "qty": 1})
+        self.assertEqual((status, state["cart_url"]), (200, "https://www.walmart.com/sc/cart/addToCart?items=10450114"))
+        self.assertEqual(self.call("/api/shop", {"op": "add_item", "text": "eggs"})[1]["items"], ["eggs"])
+        self.assertEqual(self.call("/api/shop", raw=b"{nope")[0], 400)
 
     def test_the_key_never_reaches_a_screen(self):
         with urllib.request.urlopen(self.base + "/api/state", timeout=5) as r:

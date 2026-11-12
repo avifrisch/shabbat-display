@@ -170,7 +170,10 @@ The iPad can also run the display as an app (`apple/`, built with Xcode on a Mac
 
 - "Hey display, set a pasta timer for ten minutes." Timers show in the corner, ring and say their name. Say "stop" or tap the timer to quiet it.
 - "Hey display, add milk and eggs to the shopping list." "What's on the list?" "Take the eggs off."
-- "Hey display, when is candle lighting?" It knows the time, the weather and the Shabbat times on the display, and answers general questions from what Claude knows. It can't search the internet, play music or order anything.
+- "Hey display, play some quiet jazz." "Pause." "Next." "Stop the music." Music comes from Apple Music, so the iPad needs to be signed in to an Apple Music subscription. A bar in the corner shows what is playing, with pause, next and stop buttons. The music goes quiet while you talk to the display.
+- "Hey display, reorder from Walmart." A code appears on the display; scan it with your phone and Walmart opens with your usual items in the cart. You review the cart and check out on the phone. The display never orders or pays for anything.
+- "Hey display, send the list to my phone." The code opens the shopping list page (below).
+- "Hey display, when is candle lighting?" It knows the time, the weather and the Shabbat times on the display, and answers general questions from what Claude knows. It can't search the internet.
 
 **On Shabbat and Yom Tov the microphone is off**, from candle lighting to havdalah, and so are speech and timers. It is also off whenever the iPad can't tell what day it is (no calendar from the computer yet, or one that has run out). The display itself carries on as always.
 
@@ -181,7 +184,13 @@ The iPad can also run the display as an app (`apple/`, built with Xcode on a Mac
 
 **What it costs.** Each request goes to Claude's smallest model and costs a small fraction of a cent. The computer keeps count in `assistant-budget.json` and stops for the rest of the month at `assistant_monthly_usd` (5 dollars unless you change it), and after `assistant_daily_requests` requests in a day (300). When it stops, the iPad says so. If that file is ever damaged the assistant stays off rather than start counting from zero; delete the file to start the month's count again.
 
-The shopping list is kept on the display computer in `shopping.json` (`http://<computer>:8765/api/shopping` shows it).
+**The shopping list page.** `http://<computer>:8765/shop`, on any phone on the home Wi-Fi (or scan the code the display shows). It lists what's on the shopping list, with a "Find at Walmart" link beside each item, and it is where you set up your **usual Walmart items**: a name, how many, and the product's link from walmart.com or the Walmart app (Share → Copy link). "Put the usual items in my Walmart cart" opens Walmart with every usual item that has a link. Items without a link are left out of the cart.
+
+**MenuApp.** To have spoken items also appear in MenuApp's Grocery tab, copy the URL from MenuApp → Settings → Kitchen Display → Copy Display URL and put it in `settings.json` as `"menuapp_grocery_url"`. Items land in MenuApp's "Kitchen display" list the next time the app is opened.
+
+**Apple Music, once.** The app has to be allowed to use Apple Music in your Apple developer account: developer.apple.com → Certificates, Identifiers & Profiles → Identifiers → `com.avifrischlaw.shabbatdisplay` → App Services → MusicKit. Until then the display says that Apple Music didn't answer.
+
+The shopping list is kept on the display computer in `shopping.json`, and the usual items in `usuals.json`.
 
 ## Setup on a Raspberry Pi
 

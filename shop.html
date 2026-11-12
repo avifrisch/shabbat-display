@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0D1726">
+<title>Shopping list</title>
+<style>
+@font-face { font-family: "Archivo"; src: url("/fonts/archivo.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+:root { --bg: #0D1726; --card: #162338; --line: #26354f; --text: #EFE9DC; --dim: #9aa6b8; --gold: #E5BA5E; --red: #ff8f80; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.4 "Archivo", system-ui, sans-serif; -webkit-text-size-adjust: 100%; }
+main { max-width: 640px; margin: 0 auto; padding: 20px 16px 60px; }
+h1 { font-size: 28px; margin: 6px 0 18px; }
+h2 { font-size: 15px; letter-spacing: .08em; text-transform: uppercase; color: var(--gold); margin: 30px 0 8px; font-weight: 600; }
+p.note { color: var(--dim); font-size: 15px; margin: 6px 0 12px; }
+ul { list-style: none; margin: 0; padding: 0; background: var(--card); border-radius: 14px; overflow: hidden; }
+li { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--line); }
+li:first-child { border-top: 0; }
+li .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+li .sub { display: block; color: var(--dim); font-size: 14px; }
+li.empty { color: var(--dim); }
+a { color: var(--gold); }
+a.find { font-size: 15px; white-space: nowrap; }
+button, a.big { font: inherit; border: 0; border-radius: 10px; padding: 10px 14px; background: var(--line); color: var(--text); cursor: pointer; }
+button.x { padding: 6px 12px; color: var(--dim); background: transparent; border: 1px solid var(--line); }
+button.go, a.big { display: block; width: 100%; text-align: center; text-decoration: none; background: var(--gold); color: #1a1405; font-weight: 700; padding: 14px; margin-top: 12px; }
+form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+input { font: inherit; flex: 1 1 160px; min-width: 0; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--line); background: #0f1a2b; color: var(--text); }
+input.qty { flex: 0 0 76px; }
+#error { color: var(--red); min-height: 1.4em; margin: 12px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Shopping list</h1>
+  <ul id="items"></ul>
+  <form id="add-item">
+    <input id="item-text" placeholder="Add an item" maxlength="80" autocomplete="off" enterkeyhint="done">
+    <button>Add</button>
+  </form>
+
+  <h2>Usual Walmart items</h2>
+  <p class="note">The things you buy again and again. Give each one its Walmart product link (open the product on walmart.com or in the app, Share, Copy link) and the button below fills your Walmart cart with all of them. You review the cart and check out at Walmart.</p>
+  <ul id="usuals"></ul>
+  <form id="add-usual">
+    <input id="usual-name" placeholder="Name (milk)" maxlength="80" autocomplete="off">
+    <input id="usual-qty" class="qty" type="number" min="1" max="24" value="1" inputmode="numeric" aria-label="How many">
+    <input id="usual-link" placeholder="Walmart product link" autocomplete="off" inputmode="url">
+    <button>Save</button>
+  </form>
+  <a id="cart" class="big" target="_blank" rel="noopener" hidden>Put the usual items in my Walmart cart</a>
+  <p id="error" role="alert"></p>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+
+function row(parts) {
+  const li = document.createElement("li");
+  parts.forEach((p) => li.appendChild(p));
+  return li;
+}
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function removeButton(label, change) {
+  const b = el("button", "x", "Remove");
+  b.type = "button";
+  b.setAttribute("aria-label", "Remove " + label);
+  b.onclick = () => send(change);
+  return b;
+}
+
+function show(state) {
+  const items = $("items");
+  items.replaceChildren();
+  if (!state.items.length) items.appendChild(el("li", "empty", "Nothing on the list."));
+  state.items.forEach((text) => {
+    const find = el("a", "find", "Find at Walmart");
+    find.href = "https://www.walmart.com/search?q=" + encodeURIComponent(text);
+    find.target = "_blank";
+    find.rel = "noopener";
+    items.appendChild(row([el("span", "name", text), find, removeButton(text, {op: "remove_item", text})]));
+  });
+
+  const usuals = $("usuals");
+  usuals.replaceChildren();
+  if (!state.usuals.length) usuals.appendChild(el("li", "empty", "No usual items yet."));
+  state.usuals.forEach((u) => {
+    const name = el("span", "name", (u.qty > 1 ? u.qty + " × " : "") + u.name);
+    name.appendChild(el("span", "sub", u.item_id ? "Walmart item " + u.item_id : "No product link yet: left out of the cart"));
+    usuals.appendChild(row([name, removeButton(u.name, {op: "remove_usual", id: u.id})]));
+  });
+
+  const cart = $("cart");
+  cart.hidden = !state.cart_url;
+  if (state.cart_url) cart.href = state.cart_url;
+}
+
+async function send(change) {
+  $("error").textContent = "";
+  try {
+    const r = await fetch("/api/shop", change ? {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(change)} : {cache: "no-store"});
+    const state = await r.json();
+    if (!state.ok) { $("error").textContent = state.error || "That didn't work."; return false; }
+    show(state);
+    return true;
+  } catch (e) {
+    $("error").textContent = "The display computer isn't answering. Is this phone on the home Wi-Fi?";
+    return false;
+  }
+}
+
+$("add-item").onsubmit = async (e) => {
+  e.preventDefault();
+  const text = $("item-text").value.trim();
+  if (text && await send({op: "add_item", text})) $("item-text").value = "";
+};
+$("add-usual").onsubmit = async (e) => {
+  e.preventDefault();
+  const change = {op: "add_usual", name: $("usual-name").value.trim(), link: $("usual-link").value.trim(), qty: parseInt($("usual-qty").value, 10) || 1};
+  if (await send(change)) { $("usual-name").value = ""; $("usual-link").value = ""; $("usual-qty").value = "1"; }
+};
+send();
+document.addEventListener("visibilitychange", () => { if (!document.hidden) send(); });
+</script>
+</body>
+</html>

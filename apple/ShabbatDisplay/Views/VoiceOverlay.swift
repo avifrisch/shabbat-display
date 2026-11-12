@@ -7,6 +7,11 @@ struct VoiceOverlay: View {
     var body: some View {
         ZStack {
             VStack(alignment: .trailing, spacing: 10) {
+                if let title = voice.music.title {
+                    MusicChip(title: title, playing: voice.music.playing) { command in
+                        Task { await voice.music.control(command) }
+                    }
+                }
                 ForEach(voice.timers.all) { timer in
                     TimerChip(timer: timer) {
                         if timer.ringing { voice.silence() } else { voice.cancel(timer) }
@@ -38,6 +43,32 @@ struct VoiceOverlay: View {
                 .transition(.opacity)
             }
 
+            if let code = voice.code {
+                Button(action: voice.dismissCode) {
+                    VStack(spacing: 14) {
+                        Text(code.title).font(.title.weight(.semibold))
+                        Image(uiImage: code.image)
+                            .interpolation(.none)
+                            .resizable()
+                            .frame(width: 300, height: 300)
+                            .padding(14)
+                            .background(.white, in: RoundedRectangle(cornerRadius: 14))
+                        Text(code.hint)
+                            .font(.title3)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 380)
+                        Text("Tap to close").font(.footnote).foregroundStyle(Theme.text.opacity(0.5))
+                    }
+                    .foregroundStyle(Theme.text)
+                    .padding(30)
+                    .background(Theme.background.opacity(0.96), in: RoundedRectangle(cornerRadius: 28))
+                    .overlay(RoundedRectangle(cornerRadius: 28).stroke(Theme.gold.opacity(0.5)))
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(.opacity)
+            }
+
             if voice.stage == .waiting {
                 // Small and steady: the microphone is on.
                 Image(systemName: "mic.fill")
@@ -50,6 +81,8 @@ struct VoiceOverlay: View {
         }
         .animation(.easeInOut(duration: 0.2), value: voice.stage)
         .animation(.easeInOut(duration: 0.2), value: voice.timers)
+        .animation(.easeInOut(duration: 0.2), value: voice.code)
+        .animation(.easeInOut(duration: 0.2), value: voice.music.title)
     }
 
     private var words: String? {
@@ -97,5 +130,35 @@ private struct TimerChip: View {
             }
             .buttonStyle(.plain)
         }
+    }
+}
+
+private struct MusicChip: View {
+    let title: String
+    let playing: Bool
+    let control: (String) -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "music.note").foregroundStyle(Theme.gold)
+            Text(title).lineLimit(1).frame(maxWidth: 320, alignment: .leading).padding(.trailing, 6)
+            button(playing ? "pause.fill" : "play.fill", playing ? "pause" : "resume", playing ? "Pause" : "Play")
+            button("forward.fill", "next", "Next")
+            button("xmark", "stop", "Stop the music")
+        }
+        .font(.title3)
+        .foregroundStyle(Theme.text)
+        .padding(.leading, 20)
+        .padding(.trailing, 8)
+        .padding(.vertical, 5)
+        .background(.ultraThinMaterial, in: Capsule())
+    }
+
+    private func button(_ icon: String, _ command: String, _ label: String) -> some View {
+        Button { control(command) } label: {
+            Image(systemName: icon).frame(width: 44, height: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 }

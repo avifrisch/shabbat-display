@@ -26,6 +26,9 @@ final class VoiceController {
     /// Why listening isn't on although it is switched on, for the settings screen.
     private(set) var problem: String?
     private(set) var recognizesOnDevice = true
+    /// A code for a phone to scan, while it is on screen.
+    private(set) var code: PhoneCode?
+    let music = MusicBox()
 
     private let model: AppModel
     private let settings = Settings()
@@ -42,6 +45,7 @@ final class VoiceController {
     private var candles: Task<Void, Never>?
     private var lastAlarm = Date.distantPast
     private var busy = false
+    private var codeUntil = Date.distantPast
 
     init(model: AppModel) {
         self.model = model
@@ -94,6 +98,8 @@ final class VoiceController {
         if !weekday {
             // Shabbat, Yom Tov, or a calendar that can't say: no sound of any kind.
             sounds.stopSpeaking()
+            music.stop()
+            code = nil
             if !timers.all.isEmpty { timers.removeAll(); settings.timers = [] }
             history = []
         }
@@ -144,7 +150,7 @@ final class VoiceController {
             if Date() < awaitingUntil {
                 stage = .hearing(words)
             } else if let command = wake.command(in: words) {
-                if !chimed { chimed = true; sounds.chime() }
+                if !chimed { chimed = true; music.holdForSpeech(); sounds.chime() }
                 stage = .hearing(command)
             }
         case .heard(let words):
@@ -164,6 +170,7 @@ final class VoiceController {
                 }
             } else if case .hearing = stage {
                 stage = .waiting
+                Task { await self.music.carryOn() }
             }
         }
     }
@@ -174,15 +181,18 @@ final class VoiceController {
         if !timers.ringing.isEmpty, StopWords.heard(in: request) { return silence() }
         busy = true
         listener.mute(true)
+        music.holdForSpeech()
         stage = .asking(request)
         if Date().timeIntervalSince(lastExchange) > 180 { history = [] }
-        let reply = await AssistantClient.ask(server, text: request, timers: timers.report(now: Date()), history: history)
+        let reply = await AssistantClient.ask(server, text: request, timers: timers.report(now: Date()), history: history,
+                                              music: music.report)
         // Shabbat may have begun while the answer was on its way.
         if model.holy.weekdayForCertain {
-            let say: String
+            var say: String
             if let reply {
-                apply(reply.actions)
                 say = reply.error == "holy" ? "" : reply.say
+                // Music that can't be played is said instead of "putting on…".
+                if let trouble = await apply(reply.actions, server: server) { say = trouble }
                 if reply.error == nil, !say.isEmpty {
                     history = Array((history + [AssistantClient.Exchange(q: request, a: say)]).suffix(3))
                     lastExchange = Date()
@@ -195,20 +205,37 @@ final class VoiceController {
                 await sounds.say(say)
             }
         }
+        if model.holy.weekdayForCertain { await music.carryOn() } else { music.stop() }
         busy = false
         listener.mute(false)
         stage = listening ? .waiting : .off
     }
 
-    private func apply(_ actions: [AssistantReply.Action]) {
+    /// Carries out the answer's actions. Returns a sentence to say instead of the answer when one failed.
+    private func apply(_ actions: [AssistantReply.Action], server: ServerAddress) async -> String? {
+        var trouble: String?
         for action in actions {
             switch action {
             case .setTimer(let seconds, let label): timers.add(seconds: seconds, label: label, now: Date())
             case .cancelTimer(let label): timers.cancel(label: label)
+            case .playMusic(let query, let kind):
+                do { try await music.play(query: query, kind: kind) } catch {
+                    trouble = (error as? MusicBox.Trouble ?? .failed).sentence
+                }
+            case .musicControl(let command): await music.control(command)
+            case .showCode(let title, let url, let path):
+                let link = url.flatMap(URL.init) ?? path.flatMap { URL(string: $0, relativeTo: server.base)?.absoluteURL }
+                if let link, let shown = PhoneCode(title: title, link: link) {
+                    code = shown
+                    codeUntil = Date().addingTimeInterval(120)
+                }
             }
         }
         if !actions.isEmpty { settings.timers = timers.all }
+        return trouble
     }
+
+    func dismissCode() { code = nil }
 
     // MARK: - Timers
 
@@ -227,6 +254,14 @@ final class VoiceController {
     private func tick() {
         if wanted != listening || !model.holy.weekdayForCertain { refresh() }
         guard model.holy.weekdayForCertain else { return }
+        music.look()
+        if code != nil, Date() > codeUntil { code = nil }
+        if !busy, case .hearing = stage, awaitingUntil != .distantPast, Date() > awaitingUntil {
+            // The wake phrase was said and nothing followed.
+            awaitingUntil = .distantPast
+            stage = listening ? .waiting : .off
+            Task { await self.music.carryOn() }
+        }
         let before = timers
         let started = timers.advance(to: Date())
         if timers != before { settings.timers = timers.all }

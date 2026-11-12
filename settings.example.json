@@ -36,6 +36,8 @@
   "anthropic_api_key": "",
   "assistant_monthly_usd": 5.0,
   "assistant_daily_requests": 300,
+  "_menuapp_help": "Optional: MenuApp's display URL (MenuApp, Settings, Kitchen Display, Copy Display URL), so spoken shopping items also reach MenuApp's Grocery tab. Secret.",
+  "menuapp_grocery_url": "",
 
   "bind": "127.0.0.1",
   "port": 8765

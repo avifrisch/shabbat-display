@@ -5,6 +5,10 @@ struct AssistantReply: Equatable {
     enum Action: Equatable {
         case setTimer(seconds: Int, label: String)
         case cancelTimer(label: String)
+        case playMusic(query: String, kind: String)
+        case musicControl(String)
+        /// Put a code on the display for a phone: a full link, or a page on the display server.
+        case showCode(title: String, url: String?, path: String?)
     }
 
     var say = ""
@@ -27,6 +31,20 @@ struct AssistantReply: Equatable {
                 }
             case "cancel_timer":
                 reply.actions.append(.cancelTimer(label: label))
+            case "play_music":
+                if let query = item["query"] as? String, !query.isEmpty {
+                    reply.actions.append(.playMusic(query: query, kind: item["kind"] as? String ?? "any"))
+                }
+            case "music_control":
+                if let command = item["command"] as? String, ["pause", "resume", "next", "previous", "stop"].contains(command) {
+                    reply.actions.append(.musicControl(command))
+                }
+            case "show_code":
+                let url = (item["url"] as? String).flatMap { $0.hasPrefix("https://") ? $0 : nil }
+                let path = (item["path"] as? String).flatMap { $0.hasPrefix("/") && !$0.hasPrefix("//") ? $0 : nil }
+                if url != nil || path != nil {
+                    reply.actions.append(.showCode(title: item["title"] as? String ?? "", url: url, path: path))
+                }
             default:
                 break
             }
@@ -38,17 +56,19 @@ struct AssistantReply: Equatable {
 enum AssistantClient {
     struct Exchange { let q: String; let a: String }
 
-    static func body(text: String, timers: [[String: Any]], history: [Exchange]) -> Data {
-        let json: [String: Any] = ["text": text, "timers": timers, "history": history.map { ["q": $0.q, "a": $0.a] }]
+    static func body(text: String, timers: [[String: Any]], history: [Exchange], music: [String: Any] = [:]) -> Data {
+        let json: [String: Any] = ["text": text, "timers": timers, "music": music,
+                                   "history": history.map { ["q": $0.q, "a": $0.a] }]
         return (try? JSONSerialization.data(withJSONObject: json)) ?? Data()
     }
 
     /// Nil when the display computer didn't answer at all.
-    static func ask(_ server: ServerAddress, text: String, timers: [[String: Any]], history: [Exchange]) async -> AssistantReply? {
+    static func ask(_ server: ServerAddress, text: String, timers: [[String: Any]], history: [Exchange],
+                    music: [String: Any] = [:]) async -> AssistantReply? {
         var request = URLRequest(url: server.base.appendingPathComponent("api/assistant"), timeoutInterval: 45)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = body(text: text, timers: timers, history: history)
+        request.httpBody = body(text: text, timers: timers, history: history, music: music)
         guard let (data, _) = try? await URLSession.shared.data(for: request) else { return nil }
         return AssistantReply.parse(data)
     }
