@@ -32,6 +32,11 @@
   "_screen_help": "The name this PC's screen has in the Display Manager app. Leave empty to use the PC's name.",
   "screen_name": "",
 
+  "_assistant_help": "Voice assistant for the iPad app. anthropic_api_key: a Claude API key from console.anthropic.com (secret; empty = assistant off). It stops for the month once it has spent assistant_monthly_usd dollars, and answers at most assistant_daily_requests requests a day. See README, 'The iPad app and its voice assistant'.",
+  "anthropic_api_key": "",
+  "assistant_monthly_usd": 5.0,
+  "assistant_daily_requests": 300,
+
   "bind": "127.0.0.1",
   "port": 8765
 }

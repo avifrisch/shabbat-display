@@ -162,6 +162,27 @@ An iPad can't run the display itself, but it can show the one running on your PC
 - **If the computer restarts,** the iPad shows an error until someone reloads the page.
 - **The battery:** an old iPad left plugged in all the time can develop a swollen battery. Check it now and then.
 
+## The iPad app and its voice assistant
+
+The iPad can also run the display as an app (`apple/`, built with Xcode on a Mac; iPadOS 17 or later). The app shows the same display, keeps the screen on, and comes back by itself after the computer restarts. On first run it asks for the computer's address. Hold the top-left corner for two seconds to open its settings again.
+
+**Voice** is off until you switch on **Listen for requests** in the app's settings. Then say the wake phrase ("hey display" unless you change it) and a request:
+
+- "Hey display, set a pasta timer for ten minutes." Timers show in the corner, ring and say their name. Say "stop" or tap the timer to quiet it.
+- "Hey display, add milk and eggs to the shopping list." "What's on the list?" "Take the eggs off."
+- "Hey display, when is candle lighting?" It knows the time, the weather and the Shabbat times on the display, and answers general questions from what Claude knows. It can't search the internet, play music or order anything.
+
+**On Shabbat and Yom Tov the microphone is off**, from candle lighting to havdalah, and so are speech and timers. It is also off whenever the iPad can't tell what day it is (no calendar from the computer yet, or one that has run out). The display itself carries on as always.
+
+**Setting up the assistant** (once, on the display computer):
+
+1. Get a Claude API key at console.anthropic.com. Leave auto-reload off there, so nothing can be charged beyond the credit you have.
+2. Put it in `settings.json` as `"anthropic_api_key": "sk-ant-..."` and restart the display.
+
+**What it costs.** Each request goes to Claude's smallest model and costs a small fraction of a cent. The computer keeps count in `assistant-budget.json` and stops for the rest of the month at `assistant_monthly_usd` (5 dollars unless you change it), and after `assistant_daily_requests` requests in a day (300). When it stops, the iPad says so. If that file is ever damaged the assistant stays off rather than start counting from zero; delete the file to start the month's count again.
+
+The shopping list is kept on the display computer in `shopping.json` (`http://<computer>:8765/api/shopping` shows it).
+
 ## Setup on a Raspberry Pi
 
 **What you need:** a Raspberry Pi 4 (2 GB or more) or Pi 5, its official power supply, a microSD card of 16 GB or more, and an HDMI cable for the monitor or TV.

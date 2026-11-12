@@ -34,6 +34,8 @@ from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import assistant as assistant_mod
+
 # --------------------------------------------------------------------------
 # Settings - these are the defaults. To change one, put it in settings.json
 # (the setup scripts create it from settings.example.json); anything in that
@@ -73,6 +75,14 @@ CONFIG = {
     # (or a whole Cookie header) copied from a signed-in browser. Secret.
     "nyt_cookie": "",
 
+    # Voice assistant (the iPad app). The key is secret; with none, the assistant is off.
+    # It stops for the month once it has spent assistant_monthly_usd on Claude.
+    "anthropic_api_key": "",
+    "assistant_monthly_usd": 5.0,
+    "assistant_daily_requests": 300,
+    # Where new shopping-list items are also sent (MenuApp's recipe server). Secret; empty = kept here only.
+    "menuapp_grocery_url": "",
+
     # Server
     "bind": "127.0.0.1",         # use "0.0.0.0" to view from other devices on your network
     "port": 8765,
@@ -106,6 +116,8 @@ CACHE_FILE = os.path.join(HERE, "cache.json")
 LOG_FILE = os.path.join(HERE, "server.log")
 PAGE_FILE = os.path.join(HERE, "index.html")
 SHUL_DIR = os.path.join(HERE, "shul")
+BUDGET_FILE = os.path.join(HERE, "assistant-budget.json")
+SHOPPING_FILE = os.path.join(HERE, "shopping.json")
 SHUL_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "pdf": "application/pdf"}
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/130.0 Safari/537.36 ShabbatDisplay/1.0")
@@ -2626,6 +2638,83 @@ def screen_settings_route(query):
                             "holy": holy_spans()})
 
 
+# ---------------------------------------------------------------- voice assistant
+# For the iPad app (assistant.py does the work). No access code, like the page's own data:
+# the monthly limit bounds what anyone on the home network could spend.
+
+def _assistant_settings():
+    def number(key, default):
+        v = CONFIG.get(key)
+        return v if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0 else default
+    key = CONFIG.get("anthropic_api_key")
+    return {"api_key": key.strip() if isinstance(key, str) else "",
+            "monthly_usd": number("assistant_monthly_usd", 5.0),
+            "daily_requests": int(number("assistant_daily_requests", 300))}
+
+
+def _forward_shopping(items):
+    """Send new shopping items to MenuApp's recipe server. False when no address is set,
+    so the items stay marked unsent and go once there is one."""
+    url = CONFIG.get("menuapp_grocery_url")
+    if not (isinstance(url, str) and url.startswith(("http://", "https://"))):
+        return False
+    req = urllib.request.Request(url, data=json.dumps({"items": items, "source": "display"}).encode("utf-8"),
+                                 headers={"Content-Type": "application/json", "User-Agent": OWN_UA}, method="POST")
+    with urllib.request.urlopen(req, timeout=10) as r:
+        r.read()
+
+
+ASSISTANT = assistant_mod.Assistant(_assistant_settings, assistant_mod.Budget(BUDGET_FILE),
+                                    assistant_mod.ShoppingList(SHOPPING_FILE), log=log, forward=_forward_shopping)
+
+
+def is_holy(n=None):
+    """Shabbat or Yom Tov now: after a candle lighting with its havdalah still ahead."""
+    n = n or now()
+    marks = sorted((parse_dt(it.get("date")), it.get("category"))
+                   for it in (store.get("calendar") or {}).get("items", [])
+                   if it.get("category") in ("candles", "havdalah") and parse_dt(it.get("date")))
+    last = [m for m in marks if m[0] <= n]
+    return bool(last) and last[-1][1] == "candles"
+
+
+def assistant_facts(n=None):
+    """A few lines the assistant can answer from: the time, the weather, the calendar."""
+    n = n or now()
+    lines = [f"It is {n:%A, %B} {n.day}, {n.year}, {n:%I:%M %p}".replace(" 0", " ") + f" in {CONFIG['location_name']}."]
+    try:
+        w = store.get("weather") or {}
+        c, t = w.get("current") or {}, w.get("today") or {}
+        if c:
+            lines.append(f"Weather: {c.get('temp')} F now, feels like {c.get('feels')}, wind {c.get('wind_mph')} mph; "
+                         f"today's high {t.get('hi')}, low {t.get('lo')}, {t.get('precip')}% chance of precipitation.")
+        for d in (w.get("daily") or [])[:3]:
+            lines.append(f"Forecast {d.get('date')}: high {d.get('hi')}, low {d.get('lo')}, {d.get('precip')}% precipitation.")
+        for it in (store.get("calendar") or {}).get("items", []):
+            when = parse_dt(it.get("date"))
+            if it.get("category") in ("candles", "havdalah") and when and when > n:
+                lines.append(f"{it.get('title') or it['category']}: {when:%A %B} {when.day}, {when:%I:%M %p}".replace(" 0", " ") + ".")
+            elif it.get("category") in ("parashat", "holiday", "roshchodesh") and it.get("title") \
+                    and str(it.get("date"))[:10] >= n.date().isoformat():
+                lines.append(f"{it['title']}: {str(it['date'])[:10]}.")
+    except (TypeError, ValueError, AttributeError, KeyError):
+        pass  # the time alone is enough to answer with
+    return "\n".join(lines[:20])
+
+
+def assistant_route(body):
+    try:
+        req = json.loads(body.decode("utf-8")) if body else None
+    except (ValueError, UnicodeDecodeError):
+        req = None
+    status, answer = ASSISTANT.handle(req, facts=assistant_facts(), holy=is_holy())
+    return status, json.dumps(answer)
+
+
+def shopping_route():
+    return 200, json.dumps({"ok": True, "items": [i["text"] for i in ASSISTANT.shopping.items()]})
+
+
 # ---------------------------------------------------------------- management API
 # For the Display Manager app. Every request carries the access code from manage-key.txt
 # in X-Manage-Key. Nothing here returns a secret, only whether one is set.
@@ -3020,6 +3109,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/manage/"):
                 self._send(*manage_route("GET", path, parsed.query, self.headers.get("X-Manage-Key"), b""),
                            "application/json")
+            elif path == "/api/shopping":
+                self._send(*shopping_route(), "application/json")
             elif path == "/health":
                 self._send(200, "ok", "text/plain")
             elif path.startswith("/fonts/") and ".." not in path:
@@ -3037,7 +3128,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         try:
-            if not parsed.path.startswith("/api/manage/"):
+            if parsed.path != "/api/assistant" and not parsed.path.startswith("/api/manage/"):
                 self._send(404, "not found", "text/plain")
                 return
             try:
@@ -3048,6 +3139,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(413, json.dumps({"ok": False, "error": "request too large"}), "application/json")
                 return
             body = self.rfile.read(n) if n else b""
+            if parsed.path == "/api/assistant":
+                self._send(*assistant_route(body), "application/json")
+                return
             self._send(*manage_route("POST", parsed.path, parsed.query, self.headers.get("X-Manage-Key"), body),
                        "application/json")
         except (OSError, ConnectionError):
