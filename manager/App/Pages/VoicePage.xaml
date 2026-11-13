@@ -1,0 +1,51 @@
+<Page
+    x:Class="ShabbatManager.Pages.VoicePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    NavigationCacheMode="Required">
+    <ScrollViewer>
+        <StackPanel Spacing="8" MaxWidth="760" HorizontalAlignment="Left" Padding="0,0,24,24">
+            <Grid>
+                <TextBlock Text="Voice assistant" Style="{StaticResource TitleTextBlockStyle}" />
+                <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right">
+                    <ProgressRing x:Name="Busy" IsActive="False" Width="20" Height="20" />
+                    <Button Content="Refresh" Click="Refresh_Click" />
+                </StackPanel>
+            </Grid>
+            <InfoBar x:Name="Message" IsClosable="True" />
+            <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="The iPad app's &quot;hey display&quot; requests are answered by Claude, through the display computer. Listening is switched on and off on each iPad, in the app's own settings. It is always off on Shabbat and Yom Tov." />
+            <TextBlock x:Name="State" Style="{StaticResource SubtitleTextBlockStyle}" TextWrapping="Wrap" />
+            <TextBlock x:Name="Spent" TextWrapping="Wrap" />
+
+            <TextBlock Text="Claude key" Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,20,0,0" />
+            <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="An API key from console.anthropic.com. Leave auto-reload off there, so nothing can be charged beyond the credit you have. The key is kept on the display computer and never shown again." />
+            <TextBlock x:Name="KeyState" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <PasswordBox x:Name="KeyBox" PlaceholderText="sk-ant-..." Width="360" AutomationProperties.Name="Claude key" />
+                <Button Content="Save key" Click="SaveKey_Click" />
+                <Button x:Name="RemoveKey" Content="Remove key" Click="RemoveKey_Click" />
+            </StackPanel>
+
+            <TextBlock Text="Limits" Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,20,0,0" />
+            <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="The assistant stops for the rest of the month at the dollar limit, and for the rest of the day at the request limit. The iPad says so when it stops." />
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <NumberBox x:Name="MonthlyBox" Header="Dollars a month" Minimum="0" Maximum="100" SmallChange="1" SpinButtonPlacementMode="Compact" Width="160" />
+                <NumberBox x:Name="DailyBox" Header="Requests a day" Minimum="0" Maximum="5000" SmallChange="50" SpinButtonPlacementMode="Compact" Width="160" />
+                <Button Content="Save limits" VerticalAlignment="Bottom" Click="SaveLimits_Click" />
+            </StackPanel>
+
+            <TextBlock Text="MenuApp" Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,20,0,0" />
+            <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="So that items added to the main shopping list also reach MenuApp's Grocery tab: MenuApp, Settings, Kitchen Display, Copy Display URL, and paste it here. Never shown again." />
+            <TextBlock x:Name="MenuState" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <PasswordBox x:Name="MenuBox" PlaceholderText="https://..." Width="360" AutomationProperties.Name="MenuApp display URL" />
+                <Button Content="Save address" Click="SaveMenu_Click" />
+                <Button x:Name="RemoveMenu" Content="Remove address" Click="RemoveMenu_Click" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

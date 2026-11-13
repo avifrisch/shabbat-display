@@ -56,6 +56,38 @@ public class ClientTests
     }
 
     [Fact]
+    public async Task Voice_state_is_read_and_changed()
+    {
+        const string answer = """
+            {"ok": true, "note": null, "holy": false, "key_set": true, "monthly_usd": 5.0, "daily_requests": 300.0,
+             "budget_ok": true, "spent_usd": 0.4213, "requests_today": 12,
+             "push": {"key_file": "AuthKey.p8", "key_id": "FZ5YNX7JN6", "team_id": "TEAM123456", "critical": false, "ready": true, "key_found": true},
+             "ntfy_set": false, "menuapp_set": true,
+             "devices": [{"id": "abababababab", "screen": "Kitchen iPad", "env": "production", "at": 1794500000}]}
+            """;
+        var h = new FakeHandler(answer); var c = Client(h);
+        var r = await c.ChangeVoiceAsync("set_limits", ("monthly_usd", 5.0), ("daily_requests", 300));
+        Assert.Equal("http://test:8765/api/manage/voice", h.Last!.RequestUri!.ToString());
+        Assert.Equal("""{"op":"set_limits","monthly_usd":5,"daily_requests":300}""", h.LastBody);
+        var v = r.Value!;
+        Assert.Equal(("On", true), VoiceSummary.Assistant(v));
+        Assert.Equal("$0.42 of $5.00 spent this month. 12 of 300 requests today.", VoiceSummary.Spent(v));
+        Assert.Equal(("Set up", true), VoiceSummary.Push(v.Push));
+        Assert.StartsWith("Kitchen iPad · TestFlight or App Store · last registered ", VoiceSummary.Device(v.Devices![0]));
+
+        Assert.Equal(("Off: no Claude key yet", false), VoiceSummary.Assistant(v with { KeySet = false }));
+        Assert.False(VoiceSummary.Assistant(v with { BudgetOk = false }).Good);
+        Assert.Equal(("Stopped until next month: the monthly limit is reached", false), VoiceSummary.Assistant(v with { SpentUsd = 5.0 }));
+        Assert.Equal(("Stopped until tomorrow: today's limit is reached", false), VoiceSummary.Assistant(v with { RequestsToday = 300 }));
+        Assert.Equal(("Set up. Off now, as on every Shabbat and Yom Tov", true), VoiceSummary.Assistant(v with { Holy = true }));
+        Assert.Equal(("The key file isn't on the display computer at that path", false), VoiceSummary.Push(v.Push! with { KeyFound = false }));
+        Assert.False(VoiceSummary.Push(null).Good);
+
+        var refused = await Client(new FakeHandler("{\"ok\":false,\"error\":\"Nothing is announced on Shabbat or Yom Tov.\"}", 403)).ChangeVoiceAsync("announce", ("text", "Dinner"));
+        Assert.Equal("Nothing is announced on Shabbat or Yom Tov.", refused.Error);
+    }
+
+    [Fact]
     public void Cookie_paste_is_trimmed_and_required()
     {
         Assert.Equal("abc", ManageClient.CleanCookie("  NYT-S=abc; "));

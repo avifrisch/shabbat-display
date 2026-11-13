@@ -355,8 +355,28 @@ def default_household():
         "default_rotation": rot,
         "screens": {SERVER_PC: {"rotation": [agenda] + copy.deepcopy(rot), "launcher": True, "saved": False,
                                 "mode": "always", "saver": default_saver(), "local": None}},
-        "secrets": {"nyt_cookie": None},  # None: never set in the app; "": signed out there
+        # None: never set in the app, so settings.json's value stands; "": cleared there
+        "secrets": {"nyt_cookie": None, **{k: None for k in VOICE_SECRETS}},
+        "voice": {k: None for k in VOICE_CHECKS},  # the assistant's limits and the push key; None as above
     }
+
+
+def _number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0
+
+
+# Settings the Display Manager can set (its Voice assistant and Phones pages). The secret ones are write-only.
+VOICE_SECRETS = ("anthropic_api_key", "announce_push_url", "menuapp_grocery_url")
+VOICE_CHECKS = {"assistant_monthly_usd": _number, "assistant_daily_requests": _number,
+                "apns_key_file": lambda v: isinstance(v, str), "apns_key_id": lambda v: isinstance(v, str),
+                "apns_team_id": lambda v: isinstance(v, str), "apns_critical": lambda v: isinstance(v, bool)}
+
+
+def app_setting(key):
+    """A setting the app can set: the app's value, else settings.json's (or the default)."""
+    h = household()
+    v = (h["secrets"] if key in VOICE_SECRETS else h["voice"]).get(key)
+    return CONFIG.get(key) if v is None else v
 
 
 MODES = ("always", "saver", "off")  # full time, Windows' screen saver, or neither
@@ -445,6 +465,10 @@ def _fill_household(h):
     if not isinstance(h.get("secrets"), dict):
         h["secrets"] = {}
     h["secrets"].setdefault("nyt_cookie", None)
+    for k in VOICE_SECRETS:
+        if not isinstance(h["secrets"].get(k), str):
+            h["secrets"][k] = None
+    h["voice"] = {k: h["voice"].get(k) if ok(h["voice"].get(k)) else None for k, ok in VOICE_CHECKS.items()}
     return h
 
 
@@ -2671,9 +2695,9 @@ def screen_settings_route(query):
 
 def _assistant_settings():
     def number(key, default):
-        v = CONFIG.get(key)
-        return v if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0 else default
-    key = CONFIG.get("anthropic_api_key")
+        v = app_setting(key)
+        return v if _number(v) else default
+    key = app_setting("anthropic_api_key")
     return {"api_key": key.strip() if isinstance(key, str) else "",
             "monthly_usd": number("assistant_monthly_usd", 5.0),
             "daily_requests": int(number("assistant_daily_requests", 300))}
@@ -2682,7 +2706,7 @@ def _assistant_settings():
 def _forward_shopping(items):
     """Send new shopping items to MenuApp's recipe server. False when no address is set,
     so the items stay marked unsent and go once there is one."""
-    url = CONFIG.get("menuapp_grocery_url")
+    url = app_setting("menuapp_grocery_url")
     if not (isinstance(url, str) and url.startswith(("http://", "https://"))):
         return False
     req = urllib.request.Request(url, data=json.dumps({"items": items, "source": "display"}).encode("utf-8"),
@@ -2692,11 +2716,11 @@ def _forward_shopping(items):
 
 
 def _push_settings():
-    key_file = CONFIG.get("apns_key_file") or ""
+    key_file = app_setting("apns_key_file") or ""
     if isinstance(key_file, str) and key_file and not os.path.isabs(key_file):
         key_file = os.path.join(HERE, key_file)
-    return {"key_file": key_file, "key_id": CONFIG.get("apns_key_id"), "team_id": CONFIG.get("apns_team_id"),
-            "topic": CONFIG.get("apns_topic"), "critical": CONFIG.get("apns_critical") is True}
+    return {"key_file": key_file, "key_id": app_setting("apns_key_id"), "team_id": app_setting("apns_team_id"),
+            "topic": CONFIG.get("apns_topic"), "critical": app_setting("apns_critical") is True}
 
 
 PUSH_DEVICES = push_mod.Devices(PUSH_DEVICES_FILE)
@@ -2728,7 +2752,7 @@ def push_register_route(body):
 
 
 def _relay_announcement(text):
-    url = CONFIG.get("announce_push_url")
+    url = app_setting("announce_push_url")
     if not (isinstance(url, str) and url.startswith("https://")):
         return False
     req = urllib.request.Request(url, data=text.encode("utf-8"), method="POST",
@@ -3094,6 +3118,85 @@ def _restart_soon():
     threading.Timer(0.5, lambda: os._exit(0)).start()
 
 
+def _voice_state(note=None):
+    """What the app's Voice assistant and Phones pages show. No secret here, only whether each is set."""
+    a, b, p = _assistant_settings(), ASSISTANT.budget.status(), _push_settings()
+
+    def text(key):
+        v = app_setting(key)
+        return v.strip() if isinstance(v, str) else ""
+    devices = [{"id": t[:12], "screen": d.get("screen") or "", "env": d.get("env") or "", "at": d.get("at") or 0}
+               for t, d in PUSH_DEVICES.all().items()]
+    return {"ok": True, "note": note, "holy": is_holy(),
+            "key_set": bool(a["api_key"]), "monthly_usd": a["monthly_usd"], "daily_requests": a["daily_requests"],
+            # budget_ok false: the count file can't be read, and the assistant stays off until it is deleted
+            "budget_ok": b is not None, "spent_usd": round(b["usd"], 4) if b else 0.0, "requests_today": b["requests"] if b else 0,
+            "push": {"key_file": text("apns_key_file"), "key_id": text("apns_key_id"), "team_id": text("apns_team_id"),
+                     "critical": p["critical"], "ready": APPLE_PUSH.ready(),
+                     "key_found": bool(p["key_file"]) and os.path.isfile(p["key_file"])},
+            "ntfy_set": bool(text("announce_push_url")), "menuapp_set": bool(text("menuapp_grocery_url")),
+            "devices": sorted(devices, key=lambda d: (d["screen"].lower(), d["id"]))}
+
+
+def _voice_change(data):
+    """One change from the app's Voice assistant or Phones page: (status, the new state)."""
+    _need(isinstance(data, dict) and isinstance(data.get("op"), str), "The request is missing what to change.")
+    op, note = data["op"], None
+
+    def word(key, limit, what):
+        v = data.get(key)
+        _need(isinstance(v, str) and len(v.strip()) <= limit, f"{what} is missing or too long.")
+        return v.strip()
+
+    def store_in(part, values):
+        with _household_lock:
+            h = household()
+            h[part].update(values)
+            save_household(h)
+
+    if op == "set_key":
+        key = word("key", 300, "The key")
+        _need(not key or (key.startswith("sk-ant-") and not re.search(r"\s", key)),
+              "That doesn't look like a Claude API key. It starts with sk-ant-.")
+        store_in("secrets", {"anthropic_api_key": key})
+    elif op == "set_limits":
+        usd, per_day = data.get("monthly_usd"), data.get("daily_requests")
+        _need(_number(usd) and usd <= 100, "The monthly limit is a number of dollars from 0 to 100.")
+        _need(_number(per_day) and per_day <= 5000 and per_day == int(per_day), "The daily limit is a whole number from 0 to 5000.")
+        store_in("voice", {"assistant_monthly_usd": float(usd), "assistant_daily_requests": int(per_day)})
+    elif op == "set_push":
+        key_id, team_id = word("key_id", 20, "The key ID"), word("team_id", 20, "The team ID")
+        _need(all(re.fullmatch(r"[A-Za-z0-9]*", v) for v in (key_id, team_id)), "The key ID and team ID are letters and digits only.")
+        _need(isinstance(data.get("critical"), bool), "The silent-mode switch is missing.")
+        store_in("voice", {"apns_key_file": word("key_file", 300, "The key file"), "apns_key_id": key_id,
+                           "apns_team_id": team_id, "apns_critical": data["critical"]})
+    elif op in ("set_ntfy", "set_menuapp"):
+        url = word("url", 500, "The address")
+        starts = ("https://",) if op == "set_ntfy" else ("http://", "https://")
+        _need(not url or (url.startswith(starts) and not re.search(r"\s", url)), f"The address starts with {' or '.join(starts)}.")
+        store_in("secrets", {"announce_push_url" if op == "set_ntfy" else "menuapp_grocery_url": url})
+    elif op == "forget_device":
+        gone = {t for t in PUSH_DEVICES.all() if t[:12] == data.get("id")}
+        _need(gone, "That device isn't on the list any more.")
+        PUSH_DEVICES.forget(gone)
+    elif op == "announce":
+        message = assistant_mod._clean_text(data.get("text"), 240)
+        _need(message, "Type what to announce.")
+        if is_holy():
+            return 403, {"ok": False, "error": "Nothing is announced on Shabbat or Yom Tov."}
+        ASSISTANT.announcements.add(message, "Display Manager")
+        phones = False
+        try:
+            phones = _push_announcement(message, "Display Manager") is not False
+        except Exception as e:  # noqa: BLE001 - the displays still have it
+            log(f"announce from the app: the phones weren't reached ({type(e).__name__})")
+        note = "It is on the displays now" + (" and was sent to the phones and tablets." if phones
+                                              else ". Nothing went to phones or tablets.")
+    else:
+        raise BadRequest("The display server doesn't know that change. It may need updating.")
+    return 200, _voice_state(note)
+
+
 SAVERS = {"sports": _save_sports, "business": _save_business, "rotation": _save_rotation, "screen": _save_screen}
 
 
@@ -3111,6 +3214,8 @@ def manage_route(method, path, query, key, body):
             return 200, json.dumps(_public_household(household()))
         if method == "GET" and name == "lists":
             return shop_route()
+        if method == "GET" and name == "voice":
+            return 200, json.dumps(_voice_state())
         if method == "GET" and name == "log":
             try:
                 n = max(1, min(500, int((q.get("lines") or ["200"])[0])))
@@ -3135,6 +3240,9 @@ def manage_route(method, path, query, key, body):
             raise BadRequest("The request wasn't valid JSON.") from None
         if name == "lists":
             return shop_route(body or b"{}")
+        if name == "voice":
+            status, out = _voice_change(data)
+            return status, json.dumps(out)
         if name in SAVERS:
             with _household_lock:
                 h = household()

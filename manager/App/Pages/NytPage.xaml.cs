@@ -49,6 +49,8 @@ public sealed partial class NytPage : Page
                 Directory.CreateDirectory(WebFolder);
                 var env = await CoreWebView2Environment.CreateWithOptionsAsync(null, WebFolder, new CoreWebView2EnvironmentOptions());
                 await Web.EnsureCoreWebView2Async(env);
+                // The NYT's page asks for the camera (its check that a person is there); a sign-in needs none of that.
+                Web.CoreWebView2.PermissionRequested += (_, a) => a.State = CoreWebView2PermissionState.Deny;
                 Web.CoreWebView2.NavigationCompleted += async (_, _) => await LookForCookie();
                 webReady = true;
             }

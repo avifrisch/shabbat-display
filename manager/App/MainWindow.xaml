@@ -22,6 +22,8 @@
                 <NavigationViewItem Content="Sports" Tag="Sports" Icon="Favorite" />
                 <NavigationViewItem Content="Business" Tag="Business" Icon="Shop" />
                 <NavigationViewItem Content="Lists" Tag="Lists" Icon="List" />
+                <NavigationViewItem Content="Voice assistant" Tag="Voice" Icon="Microphone" />
+                <NavigationViewItem Content="Phones" Tag="Phones" Icon="CellPhone" />
                 <NavigationViewItem Content="Screens" Tag="Screens" Icon="TwoPage" />
                 <NavigationViewItem Content="Shul" Tag="Shul" Icon="Calendar" />
                 <NavigationViewItem Content="NYT" Tag="NYT" Icon="Contact" />

@@ -167,6 +167,78 @@ class ManageTests(ManageCase):
             shown = self.get("/api/state")[1]["data"]["shopping"]
             self.assertEqual(shown, {"items": [], "lists": [{"name": "Kids", "kind": "todo", "items": ["Set the table"]}]})
 
+    def voice_files(self):
+        """The assistant's count file and the device list in the temp folder."""
+        return (mock.patch.object(server.ASSISTANT.budget, "path", os.path.join(self._dir.name, "budget.json")),
+                mock.patch.object(server.PUSH_DEVICES, "path", os.path.join(self._dir.name, "devices.json")))
+
+    def test_voice_settings_from_the_app_win_and_stay_secret(self):
+        budget, devices = self.voice_files()
+        server.CONFIG.update(anthropic_api_key="", assistant_monthly_usd=5.0, announce_push_url="https://ntfy.sh/from-settings")
+        with budget, devices:
+            self.assertEqual(self.call("GET", "/api/manage/voice", key=None)[0], 401)
+            status, v = self.call("GET", "/api/manage/voice")
+            self.assertEqual((status, v["key_set"], v["monthly_usd"], v["daily_requests"], v["ntfy_set"], v["spent_usd"]),
+                             (200, False, 5.0, 300, True, 0.0))
+            status, v = self.call("POST", "/api/manage/voice", {"op": "set_key", "key": "sk-ant-secret789"})
+            self.assertEqual((status, v["key_set"]), (200, True))
+            self.assertEqual(server._assistant_settings()["api_key"], "sk-ant-secret789")
+            v = self.call("POST", "/api/manage/voice", {"op": "set_limits", "monthly_usd": 2.5, "daily_requests": 40})[1]
+            self.assertEqual((v["monthly_usd"], v["daily_requests"]), (2.5, 40))
+            self.assertEqual(server._assistant_settings()["monthly_usd"], 2.5)
+            v = self.call("POST", "/api/manage/voice", {"op": "set_ntfy", "url": ""})[1]   # cleared in the app wins
+            self.assertFalse(v["ntfy_set"])
+            self.call("POST", "/api/manage/voice", {"op": "set_menuapp", "url": "https://example.com/inbox/secret321"})
+            for path in ("/api/manage/voice", "/api/manage/household", "/api/manage/status"):
+                text = json.dumps(self.call("GET", path)[1])
+                for secret in ("secret789", "secret321", "from-settings"):
+                    self.assertNotIn(secret, text)
+            self.assertNotIn("secret789", self.get("/api/state")[1].__repr__())
+
+    def test_voice_bad_values_are_sentences(self):
+        budget, devices = self.voice_files()
+        with budget, devices:
+            for body, start in (({"op": "set_key", "key": "hello"}, "That doesn't look like a Claude API key"),
+                                ({"op": "set_limits", "monthly_usd": 500, "daily_requests": 40}, "The monthly limit"),
+                                ({"op": "set_limits", "monthly_usd": 5, "daily_requests": 1.5}, "The daily limit"),
+                                ({"op": "set_ntfy", "url": "http://ntfy.sh/x"}, "The address starts with https://"),
+                                ({"op": "set_push", "key_file": "k.p8", "key_id": "A B", "team_id": "T1", "critical": False}, "The key ID"),
+                                ({"op": "forget_device", "id": "nope"}, "That device isn't"),
+                                ({"op": "announce", "text": "  "}, "Type what to announce"),
+                                ({"op": "dance"}, "The display server doesn't know")):
+                status, out = self.call("POST", "/api/manage/voice", body)
+                self.assertEqual(status, 400, body)
+                self.assertTrue(out["error"].startswith(start), out)
+
+    def test_voice_push_key_devices_and_announce(self):
+        budget, devices = self.voice_files()
+        sent = []
+        with budget, devices, mock.patch.object(server, "_push_announcement", lambda text, origin="", device="": sent.append((text, origin))):
+            token = "ab" * 32
+            self.assertTrue(server.PUSH_DEVICES.register(token, "Kitchen iPad", "production"))
+            v = self.call("POST", "/api/manage/voice", {"op": "set_push", "key_file": "missing.p8", "key_id": "FZ5YNX7JN6",
+                                                         "team_id": "TEAM123456", "critical": False})[1]
+            self.assertEqual((v["push"]["ready"], v["push"]["key_found"], v["push"]["key_id"]), (True, False, "FZ5YNX7JN6"))
+            self.assertEqual([(d["screen"], d["env"], d["id"]) for d in v["devices"]], [("Kitchen iPad", "production", token[:12])])
+            self.assertNotIn(token, json.dumps(v))
+
+            status, v = self.call("POST", "/api/manage/voice", {"op": "announce", "text": "Dinner is  ready"})
+            self.assertEqual((status, sent, v["note"]), (200, [("Dinner is ready", "Display Manager")],
+                                                        "It is on the displays now and was sent to the phones and tablets."))
+            self.assertEqual([i["text"] for i in server.ASSISTANT.announcements.since(0)["items"]][-1], "Dinner is ready")
+            with mock.patch.object(server, "is_holy", lambda n=None: True):
+                status, out = self.call("POST", "/api/manage/voice", {"op": "announce", "text": "Dinner"})
+            self.assertEqual((status, out["error"], len(sent)), (403, "Nothing is announced on Shabbat or Yom Tov.", 1))
+
+            v = self.call("POST", "/api/manage/voice", {"op": "forget_device", "id": token[:12]})[1]
+            self.assertEqual((v["devices"], server.PUSH_DEVICES.all()), ([], {}))
+
+    def test_voice_values_in_a_damaged_household_are_dropped(self):
+        h = server._fill_household({"voice": {"assistant_monthly_usd": "lots", "apns_critical": 1, "apns_key_id": "K1"},
+                                    "secrets": {"anthropic_api_key": 7}})
+        self.assertEqual((h["voice"]["assistant_monthly_usd"], h["voice"]["apns_critical"], h["voice"]["apns_key_id"],
+                          h["secrets"]["anthropic_api_key"]), (None, None, "K1", None))
+
     def test_log_tail(self):
         with mock.patch.object(server, "LOG_FILE", os.path.join(self._dir.name, "server.log")):
             with open(server.LOG_FILE, "w", encoding="utf-8") as f:

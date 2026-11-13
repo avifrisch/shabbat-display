@@ -86,3 +86,13 @@ public record UsualSet(string Id, string Name, List<UsualItem> Items);
 
 /// <summary>GET and POST /api/manage/lists: every list and every set of usual items.</summary>
 public record ListsState(List<ShopList>? Lists, List<UsualSet>? Sets);
+
+/// <summary>The Apple push key as the display computer has it. KeyFile is a path on that computer; KeyFound is whether a file is there.</summary>
+public record PushSetup(string KeyFile, string KeyId, string TeamId, bool Critical, bool Ready, bool KeyFound);
+
+/// <summary>A phone or tablet that asked for announcements. Env is "production" (TestFlight, App Store) or "development" (installed from Xcode).</summary>
+public record PushDevice(string Id, string Screen, string Env, long At);
+
+/// <summary>GET and POST /api/manage/voice: the voice assistant and the announcements, with no secret in it.</summary>
+public record VoiceState(bool KeySet, double MonthlyUsd, int DailyRequests, bool BudgetOk, double SpentUsd, int RequestsToday,
+                         PushSetup? Push, bool NtfySet, bool MenuappSet, List<PushDevice>? Devices, bool Holy, string? Note);

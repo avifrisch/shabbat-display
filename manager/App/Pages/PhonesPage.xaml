@@ -1,0 +1,55 @@
+<Page
+    x:Class="ShabbatManager.Pages.PhonesPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    NavigationCacheMode="Required">
+    <ScrollViewer>
+        <StackPanel Spacing="8" MaxWidth="760" HorizontalAlignment="Left" Padding="0,0,24,24">
+            <Grid>
+                <TextBlock Text="Phones &amp; announcements" Style="{StaticResource TitleTextBlockStyle}" />
+                <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right">
+                    <ProgressRing x:Name="Busy" IsActive="False" Width="20" Height="20" />
+                    <Button Content="Refresh" Click="Refresh_Click" />
+                </StackPanel>
+            </Grid>
+            <InfoBar x:Name="Message" IsClosable="True" />
+
+            <TextBlock Text="Announce" Style="{StaticResource SubtitleTextBlockStyle}" />
+            <TextBlock x:Name="AnnounceNote" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="Shown on every display for 45 seconds, said by iPads that are listening, and sent to the phones and tablets below." />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBox x:Name="AnnounceText" PlaceholderText="Dinner is ready." Width="460" MaxLength="240" KeyDown="AnnounceText_KeyDown" AutomationProperties.Name="Announcement" />
+                <Button x:Name="AnnounceButton" Content="Announce" Style="{StaticResource AccentButtonStyle}" Click="Announce_Click" />
+            </StackPanel>
+
+            <TextBlock Text="Phones and tablets with the app" Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,20,0,0" />
+            <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="Each device joins by itself when the Shabbat Display app is opened on it with notifications allowed. Removing one stops its announcements until the app is opened on it again." />
+            <StackPanel x:Name="Devices" Spacing="2" />
+
+            <TextBlock Text="Apple push key" Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,20,0,0" />
+            <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="What lets the display computer send spoken announcements to those devices. The key is a .p8 file that has to be on the display computer; give its path there (a bare file name means the display's own folder)." />
+            <TextBlock x:Name="PushState" TextWrapping="Wrap" />
+            <TextBox x:Name="KeyFile" Header="Key file on the display computer" PlaceholderText="AuthKey_XXXXXXXXXX.p8" Width="460" HorizontalAlignment="Left" MaxLength="300" />
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <TextBox x:Name="KeyId" Header="Key ID" Width="180" MaxLength="20" />
+                <TextBox x:Name="TeamId" Header="Team ID" Width="180" MaxLength="20" />
+            </StackPanel>
+            <ToggleSwitch x:Name="Critical" Header="Sound through silent mode" OnContent="On" OffContent="Off" />
+            <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="Leave off until Apple has granted the app Critical Alerts and that build is on the devices." />
+            <Button Content="Save push key settings" Click="SavePush_Click" />
+
+            <TextBlock Text="ntfy" Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,20,0,0" />
+            <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="Optional, for devices without the app: announcements as plain notifications through the free ntfy app. The address is https://ntfy.sh/ and a long made-up topic name, which works like a password. Never shown again." />
+            <TextBlock x:Name="NtfyState" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <PasswordBox x:Name="NtfyBox" PlaceholderText="https://ntfy.sh/..." Width="360" AutomationProperties.Name="ntfy address" />
+                <Button Content="Save address" Click="SaveNtfy_Click" />
+                <Button x:Name="RemoveNtfy" Content="Remove address" Click="RemoveNtfy_Click" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

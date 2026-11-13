@@ -67,6 +67,16 @@ public class ManageClient(HttpClient http, Uri baseUri, string key)
         return Send<ListsState>(HttpMethod.Post, "lists", body);
     }
 
+    public Task<Result<VoiceState>> GetVoiceAsync() => Send<VoiceState>(HttpMethod.Get, "voice");
+
+    /// <summary>One change to the voice assistant or the announcements (`op` plus what it needs); the answer is how things now stand.</summary>
+    public Task<Result<VoiceState>> ChangeVoiceAsync(string op, params (string Key, object? Value)[] more)
+    {
+        var body = new Dictionary<string, object?> { ["op"] = op };
+        foreach (var (k, v) in more) body[k] = v;
+        return Send<VoiceState>(HttpMethod.Post, "voice", body);
+    }
+
     public Task<Result<ShulUpdate>> UpdateShulAsync() => Send<ShulUpdate>(HttpMethod.Post, "shul-update", new { });
 
     /// <summary>Whether /health answers, for after a restart.</summary>
