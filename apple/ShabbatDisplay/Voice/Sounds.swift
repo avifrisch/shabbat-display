@@ -92,18 +92,31 @@ enum SpokenVoice {
     /// The English voices on this iPad, best first, without the novelty ones.
     static func choices(from voices: [AVSpeechSynthesisVoice] = AVSpeechSynthesisVoice.speechVoices()) -> [Choice] {
         voices
-            .filter { $0.language.hasPrefix("en") && !$0.voiceTraits.contains(.isNoveltyVoice) && !$0.voiceTraits.contains(.isPersonalVoice) }
+            .filter { $0.language.hasPrefix("en") && natural($0) }
             .map { Choice(id: $0.identifier, name: $0.name + ($0.language == "en-US" ? "" : " · " + accent($0.language)), rank: rank($0.quality)) }
             .sorted { ($1.rank, $0.name) < ($0.rank, $1.name) }
     }
 
     /// The saved voice if it is still installed, else the best American English one.
     static func chosen(_ id: String) -> AVSpeechSynthesisVoice? {
-        if !id.isEmpty, let saved = AVSpeechSynthesisVoice(identifier: id) { return saved }
-        let american = AVSpeechSynthesisVoice.speechVoices()
-            .filter { $0.language == "en-US" && !$0.voiceTraits.contains(.isNoveltyVoice) && !$0.voiceTraits.contains(.isPersonalVoice) }
+        if !id.isEmpty, let saved = AVSpeechSynthesisVoice(identifier: id), natural(saved) { return saved }
+        // A downloaded Enhanced or Premium voice if there is one; otherwise the iPad's own
+        // standard voice, never an arbitrary pick among the basic ones.
+        let better = AVSpeechSynthesisVoice.speechVoices()
+            .filter { $0.language == "en-US" && natural($0) && rank($0.quality) > 0 }
             .max { rank($0.quality) < rank($1.quality) }
-        return american ?? AVSpeechSynthesisVoice(language: "en-US")
+        return better ?? AVSpeechSynthesisVoice(language: "en-US")
+    }
+
+    /// Not a joke voice, a personal voice or one of the robotic "Eloquence" and old Mac voices.
+    static func natural(_ voice: AVSpeechSynthesisVoice) -> Bool {
+        natural(identifier: voice.identifier)
+            && !voice.voiceTraits.contains(.isNoveltyVoice) && !voice.voiceTraits.contains(.isPersonalVoice)
+    }
+
+    static func natural(identifier: String) -> Bool {
+        let id = identifier.lowercased()
+        return !id.contains("eloquence") && !id.contains("speech.synthesis.voice")
     }
 
     static func rank(_ quality: AVSpeechSynthesisVoiceQuality) -> Int {

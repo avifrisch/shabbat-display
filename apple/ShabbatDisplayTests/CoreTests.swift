@@ -235,6 +235,13 @@ final class SpokenVoiceTests: XCTestCase {
         XCTAssertEqual(SpokenVoice.Choice(id: "b", name: "Samantha", rank: 0).label, "Samantha")
     }
 
+    func testRoboticVoicesAreLeftOut() {
+        XCTAssertFalse(SpokenVoice.natural(identifier: "com.apple.eloquence.en-US.Rocko"))
+        XCTAssertFalse(SpokenVoice.natural(identifier: "com.apple.speech.synthesis.voice.Fred"))
+        XCTAssertTrue(SpokenVoice.natural(identifier: "com.apple.voice.compact.en-US.Samantha"))
+        XCTAssertTrue(SpokenVoice.natural(identifier: "com.apple.voice.premium.en-US.Zoe"))
+    }
+
     func testChoicesAreEnglishBestFirstAndAFallbackAlwaysExists() {
         let choices = SpokenVoice.choices()
         XCTAssertEqual(choices.map(\.rank), choices.map(\.rank).sorted(by: >))
