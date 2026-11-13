@@ -19,7 +19,8 @@ public record SaverOptions(int Minutes, bool Lock, bool Shabbat);
 public record LocalSettings(string? Mode, SaverOptions? Saver);
 
 /// <summary>Until a screen is saved in the app, the PC follows its own settings (Local), not Mode and Saver.</summary>
-public record Screen(List<RotationItem>? Rotation, bool Launcher, bool Saved, string Mode, SaverOptions Saver, LocalSettings? Local = null)
+/// Announce: the PC says announcements aloud (on unless switched off; a server from before the switch doesn't send it).
+public record Screen(List<RotationItem>? Rotation, bool Launcher, bool Saved, string Mode, SaverOptions Saver, LocalSettings? Local = null, bool Announce = true)
 {
     public LocalSettings Effective => !Saved && Local is { } l
         ? new(l.Mode ?? "always", l.Saver ?? Saver)

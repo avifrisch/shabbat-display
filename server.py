@@ -354,7 +354,7 @@ def default_household():
         "business": {"on": True, "watchlist": [], "news": {"biz_nyt": True, "biz_cnbc": True}},
         "default_rotation": rot,
         "screens": {SERVER_PC: {"rotation": [agenda] + copy.deepcopy(rot), "launcher": True, "saved": False,
-                                "mode": "always", "saver": default_saver(), "local": None}},
+                                "mode": "always", "saver": default_saver(), "local": None, "announce": True}},
         # None: never set in the app, so settings.json's value stands; "": cleared there
         "secrets": {"nyt_cookie": None, **{k: None for k in VOICE_SECRETS}},
         "voice": {k: None for k in VOICE_CHECKS},  # the assistant's limits and the push key; None as above
@@ -461,6 +461,8 @@ def _fill_household(h):
             fixed["local"] = {**fixed["local"], "saver": _fix_saver(fixed["local"].get("saver"))}
         if fixed["mode"] not in MODES:
             fixed["mode"] = "always"
+        if not isinstance(fixed["announce"], bool):
+            fixed["announce"] = True
         h["screens"][name] = fixed
     if not isinstance(h.get("secrets"), dict):
         h["secrets"] = {}
@@ -2686,7 +2688,7 @@ def screen_settings_route(query):
     src = s if s.get("saved") else (s.get("local") or local)
     return 200, json.dumps({"ok": True, "screen": name, "mode": src.get("mode", "always"),
                             "saver": _fix_saver(src.get("saver")), "saved": bool(s.get("saved")),
-                            "holy": holy_spans()})
+                            "announce": s.get("announce") is not False, "holy": holy_spans()})
 
 
 # ---------------------------------------------------------------- voice assistant
@@ -3017,7 +3019,8 @@ def _save_business(h, body):
 
 
 def _new_screen():
-    return {"rotation": None, "launcher": False, "saved": False, "mode": "always", "saver": default_saver(), "local": None}
+    return {"rotation": None, "launcher": False, "saved": False, "mode": "always", "saver": default_saver(), "local": None,
+            "announce": True}  # announce: a PC says announcements aloud (its launcher does)
 
 
 def _save_rotation(h, body):
@@ -3049,6 +3052,9 @@ def _save_screen(h, body):
     s.update(mode=mode, saved=True)
     if sv:
         s["saver"] = sv
+    if "announce" in body:  # an older app doesn't send it, and then it stays as it was
+        _need(isinstance(body["announce"], bool), "Saying announcements aloud must be on or off.")
+        s["announce"] = body["announce"]
 
 
 def valid_screen(name):

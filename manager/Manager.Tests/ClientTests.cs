@@ -123,6 +123,7 @@ public class ClientTests
         var json = "{\"sports\":{},\"business\":{\"on\":true,\"watchlist\":[],\"news\":{}},\"default_rotation\":[],\"screens\":{\"Acer\":{\"rotation\":null,\"launcher\":true,\"saved\":false,\"mode\":\"always\",\"saver\":{\"minutes\":10,\"lock\":true,\"shabbat\":false},\"local\":{\"mode\":\"saver\",\"saver\":{\"minutes\":15.0,\"lock\":false,\"shabbat\":true}}}},\"nyt_signed_in\":false,\"agenda_set\":false,\"leagues\":{},\"scenes\":[]}";
         var acer = (await Client(new FakeHandler(json)).GetHouseholdAsync()).Value!.Screens["Acer"];
         Assert.Equal("saver", acer.Effective.Mode);
+        Assert.True(acer.Announce);   // a server from before the switch doesn't send it
         Assert.Equal(new SaverOptions(15, false, true), acer.Effective.Saver);
     }
 
@@ -150,6 +151,9 @@ public class ClientTests
         Assert.Equal(HttpMethod.Post, h.Last!.Method);
         Assert.Contains("\"saver\":{\"minutes\":15,\"lock\":true,\"shabbat\":true}", h.LastBody);
         Assert.Contains("\"name\":\"Den\"", h.LastBody);
+        Assert.Contains("\"announce\":true", h.LastBody);
+        await c.SaveScreenAsync("Den", "always", new SaverOptions(15, true, true), announce: false);
+        Assert.Contains("\"announce\":false", h.LastBody);
         await c.SaveRotationAsync("Den", null);
         Assert.Contains("\"rotation\":null", h.LastBody);
     }

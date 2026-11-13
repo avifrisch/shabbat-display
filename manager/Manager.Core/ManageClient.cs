@@ -50,7 +50,8 @@ public class ManageClient(HttpClient http, Uri baseUri, string key)
     public Task<Result<bool>> SaveSportsAsync(Dictionary<string, League> sports) => Save("sports", sports);
     public Task<Result<bool>> SaveBusinessAsync(Business business) => Save("business", business);
     public Task<Result<bool>> SaveRotationAsync(string? screen, List<RotationItem>? rotation) => Save("rotation", new { screen, rotation });
-    public Task<Result<bool>> SaveScreenAsync(string name, string mode, SaverOptions saver) => Save("screen", new { name, mode, saver });
+    public Task<Result<bool>> SaveScreenAsync(string name, string mode, SaverOptions saver, bool announce = true) =>
+        Save("screen", new { name, mode, saver, announce });
     public Task<Result<bool>> RestartAsync() => Save("restart", new { });
 
     /// <summary>"" signs out. The answer is whether the server now has a cookie.</summary>

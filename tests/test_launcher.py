@@ -300,5 +300,44 @@ class ScreenSettingsTests(unittest.TestCase):
         self.assertTrue(launcher.profile_for("always").endswith("browser-profile"))
 
 
+class AnnounceTests(unittest.TestCase):
+    WEEKDAY = datetime.fromisoformat("2026-11-12T12:00:00-05:00")
+    SHABBAT = datetime.fromisoformat("2026-11-14T10:00:00-05:00")
+
+    def step(self, mark, answer, now=None, cache=None):
+        from unittest import mock
+        said = []
+        cache = {"holy": SPANS} if cache is None else cache
+
+        def fetch(since):
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        with mock.patch.object(launcher, "_cached_settings", lambda: cache),                 mock.patch.object(launcher, "screen_name", lambda: "Den"):
+            return launcher.announce_step(mark, fetch, said.append, now or self.WEEKDAY), said
+
+    def test_first_answer_only_sets_the_mark(self):
+        self.assertEqual(self.step(None, {"last": 4, "items": [{"id": 4, "text": "Dinner", "from": "Kitchen"}]}), (4, []))
+
+    def test_new_ones_are_said_but_not_this_screens_own(self):
+        items = [{"id": 5, "text": " Dinner is ready ", "from": "Kitchen"}, {"id": 6, "text": "Mine", "from": "Den"},
+                 {"id": 7, "text": "", "from": "x"}, "junk"]
+        self.assertEqual(self.step(4, {"last": 7, "items": items}), (7, ["Dinner is ready"]))
+
+    def test_never_on_shabbat_or_with_no_candle_lighting_ahead(self):
+        a = {"last": 5, "items": [{"id": 5, "text": "Dinner", "from": "Kitchen"}]}
+        self.assertEqual(self.step(4, a, self.SHABBAT), (5, []))
+        self.assertEqual(self.step(4, a, datetime.fromisoformat("2026-11-15T10:00:00-05:00")), (5, []))  # a stale calendar
+        self.assertEqual(self.step(4, a, cache={}), (5, []))
+
+    def test_switched_off_in_the_app(self):
+        a = {"last": 5, "items": [{"id": 5, "text": "Dinner", "from": "Kitchen"}]}
+        self.assertEqual(self.step(4, a, cache={"holy": SPANS, "announce": False}), (5, []))
+
+    def test_server_down_or_restarted(self):
+        self.assertEqual(self.step(4, OSError("down")), (4, []))
+        self.assertEqual(self.step(9, {"last": 0, "items": []}), (0, []))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -19,6 +19,7 @@ public sealed partial class ScreensPage : Page
         public bool Launcher, Saved;
         public string Mode = "always";
         public SaverOptions Saver = new(10, true, false);
+        public bool Announce = true;
         public double? Seen;
         public bool Dirty, ModeDirty;
         public int Version;   // goes up with every edit, so a save only clears the edits it sent
@@ -95,6 +96,7 @@ public sealed partial class ScreensPage : Page
                 // until it's saved here, the PC follows its own settings: show (and keep) those
                 Mode = sc?.Effective.Mode ?? "always",
                 Saver = sc?.Effective.Saver ?? new SaverOptions(10, true, false),
+                Announce = sc?.Announce ?? true,
                 Seen = st?.Last,
             });
         }
@@ -272,6 +274,11 @@ public sealed partial class ScreensPage : Page
             saver.Visibility = d.Mode == "saver" ? Visibility.Visible : Visibility.Collapsed;
             ChangedMode(d);
         };
+
+        var announce = new CheckBox { Content = "Say announcements aloud on this PC", IsChecked = d.Announce };
+        announce.Click += (_, _) => { d.Announce = announce.IsChecked == true; ChangedMode(d); };
+        p.Children.Add(announce);
+        p.Children.Add(Ui.Note("A chime and Windows' voice, whether or not the display is on the screen. Never on Shabbat or Yom Tov."));
         return p;
     }
 
@@ -313,7 +320,7 @@ public sealed partial class ScreensPage : Page
             var r = await AppState.Call(c => c.SaveRotationAsync(x.Name, x.Rotation?.ItemsToSave()));
             // a PC's mode is sent only when it was edited, so saving a rotation never changes what the PC does
             if (r.Ok && x.Name is not null && x.Launcher && modeEdited)
-                r = await AppState.Call(c => c.SaveScreenAsync(x.Name, x.Mode, x.Saver));
+                r = await AppState.Call(c => c.SaveScreenAsync(x.Name, x.Mode, x.Saver, x.Announce));
             if (!r.Ok)
             {
                 error = $"{x.Name ?? "House rotation"}: {r.Error}";

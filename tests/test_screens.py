@@ -93,6 +93,20 @@ class ScreenTests(ManageCase):
         s = server.household()["screens"]["Acer"]
         self.assertEqual((s["mode"], s["saver"]), ("off", {"minutes": 12, "lock": True, "shabbat": True}))
 
+    def test_announce_switch_reaches_the_launcher(self):
+        get = lambda: self.get("/api/screen-settings?screen=Acer&mode=always")[1]["announce"]
+        self.assertTrue(get())  # on until switched off in the app
+        body = {"name": "Acer", "mode": "always", "saver": {"minutes": 10}}
+        self.assertEqual(self.call("POST", "/api/manage/screen", {**body, "announce": False})[0], 200)
+        self.assertFalse(get())
+        self.call("POST", "/api/manage/screen", body)  # an older app: left as it was
+        self.assertFalse(get())
+        self.assertEqual(self.call("POST", "/api/manage/screen", {**body, "announce": "no"})[0], 400)
+        h = server.household()
+        h["screens"]["Acer"]["announce"] = "x"  # a hand-edited file
+        server.save_household(h)
+        self.assertTrue(server.household()["screens"]["Acer"]["announce"])
+
     def test_save_screen_rejects_bad_minutes(self):
         for m in (0, 241, 1.5, True):
             self.assertEqual(self.call("POST", "/api/manage/screen", {"name": "Acer", "mode": "saver", "saver": {"minutes": m}})[0], 400, m)

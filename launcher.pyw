@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import socket
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -422,6 +423,70 @@ def holy_now(spans, now):
     return any(start <= now < end for start, end in _spans(spans))
 
 
+def weekday_for_certain(spans, now):
+    """Not Shabbat or Yom Tov, and known: a candle lighting still ahead in the server's last answer.
+    With none ahead the calendar is too old to trust, and that counts as Shabbat."""
+    spans = list(_spans(spans))
+    return any(start > now for start, _ in spans) and not any(start <= now < end for start, end in spans)
+
+
+def announce_on():
+    """This screen's "say announcements aloud" switch in the Display Manager; on until switched off."""
+    return _cached_settings().get("announce") is not False
+
+
+def to_say(items, me):
+    """The texts of announcements to say here: not the ones this screen made itself."""
+    out = []
+    for i in items if isinstance(items, list) else []:
+        if isinstance(i, dict) and isinstance(i.get("text"), str) and i["text"].strip() and i.get("from") != me:
+            out.append(i["text"].strip()[:300])
+    return out
+
+
+# The text goes in an environment variable, never in the command, so nothing in it is run.
+SPEAK = ("Add-Type -AssemblyName System.Speech; [System.Media.SystemSounds]::Asterisk.Play(); Start-Sleep -Milliseconds 900; "
+         "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Speak($env:SHABBAT_DISPLAY_SAY)")
+
+
+def say(text):
+    """A chime, then the text in Windows' own voice."""
+    try:
+        subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", SPEAK],
+                       env={**os.environ, "SHABBAT_DISPLAY_SAY": text}, creationflags=NO_WINDOW, timeout=60,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as e:
+        log(f"couldn't say an announcement: {e}")
+
+
+def fetch_announcements(since):
+    with urllib.request.urlopen(URL + "api/announcements?since=" + str(since), timeout=5) as r:
+        return json.loads(r.read())
+
+
+def announce_step(mark, fetch=fetch_announcements, speak=say, now=None):
+    """One look for new announcements; returns the new mark. The first answer only sets the mark,
+    so nothing from before the launcher started is said. Never on Shabbat or Yom Tov."""
+    try:
+        data = fetch(mark or 0)
+        last = int(data["last"])
+    except Exception:  # noqa: BLE001 - the server is down or restarting; ask again
+        return mark
+    if mark is not None and announce_on() and weekday_for_certain(cached_holy(), now or datetime.now().astimezone()):
+        for text in to_say(data.get("items"), screen_name()):
+            if not weekday_for_certain(cached_holy(), now or datetime.now().astimezone()):
+                break  # candle lighting came while an earlier one was being said
+            speak(text)
+    return last  # also after the server restarts and counts from zero again
+
+
+def announce_loop():
+    mark = None
+    while True:
+        mark = announce_step(mark)
+        time.sleep(3)
+
+
 def shabbat_day(spans, now):
     """From midnight of the candle-lighting day until havdalah: the PC must not sleep."""
     return any(start.replace(hour=0, minute=0, second=0, microsecond=0) <= now < end for start, end in _spans(spans))
@@ -645,6 +710,8 @@ def main():
         log(f"showing the display from {URL}" + ("" if server_up() else " (not answering yet)"))
     fetch_screen_settings()
     log(f"this screen is \"{screen_name()}\" in the Display Manager")
+    if WINDOWS:
+        threading.Thread(target=announce_loop, daemon=True).start()
     while True:
         mode = screen_setting("mode", None)
         if mode in ("saver", "off") and WINDOWS:
