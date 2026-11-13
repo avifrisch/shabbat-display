@@ -89,6 +89,18 @@ platform :ios do
     UI.message("RESULT key id #{key.id} saved as #{path}")
   end
 
+  desc "List the developer account's keys: FASTLANE_USER=<apple id> fastlane keys"
+  lane :keys do
+    Spaceship::Portal.login(ENV.fetch("FASTLANE_USER"))
+    Spaceship::Portal.client.teams.each { |t| UI.message("RESULT team #{t['teamId']} #{t['name']} (#{t['type']})") }
+    Spaceship::Portal.client.team_id = ENV["FASTLANE_TEAM_ID"] if ENV["FASTLANE_TEAM_ID"]
+    UI.message("RESULT looking in team #{Spaceship::Portal.client.team_id}")
+    Spaceship::Portal::Key.all.each do |k|
+      k.reload
+      UI.message("RESULT key #{k.id} '#{k.name}' push: #{k.has_apns?} music: #{k.has_music_kit?}")
+    end
+  end
+
   desc "Build and upload to TestFlight"
   lane :beta do
     key_path = File.expand_path(ENV.fetch("ASC_KEY_PATH"))
