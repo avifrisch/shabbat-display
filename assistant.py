@@ -564,11 +564,12 @@ class Assistant:
     so a changed settings file takes effect without rebuilding this."""
 
     def __init__(self, settings, budget, shopping, usuals, post=post_json, log=print, forward=None, announcements=None,
-                 walmart=None):
+                 walmart=None, push=None):
         self.settings, self.budget, self.shopping, self.usuals = settings, budget, shopping, usuals
         self.post, self.log, self.forward = post, log, forward
         self.announcements = announcements or Announcements(budget.now)
         self.walmart = walmart  # a walmart.WalmartCart, or None where there is no browser to use
+        self.push = push        # sends an announcement to the family's phones; returns False if not set up
 
     # -- what the iPad asks
 
@@ -778,7 +779,14 @@ class Assistant:
                 if not message:
                     return {"content": "Say what to announce.", "is_error": True}
                 self.announcements.add(message, self._screen)
-                return {"content": "It is being said on the other displays now. Screens that are off or closed won't hear it."}
+                phones = False
+                if self.push:
+                    try:
+                        phones = self.push(message) is not False
+                    except Exception as e:  # noqa: BLE001 - the displays still get it
+                        self.log(f"assistant: the announcement didn't reach the phones ({e})")
+                return {"content": "It is on the other displays now" + (" and was sent to the family's phones and tablets." if phones
+                                   else ". Screens that are off or closed won't show it.")}
             if name == "play_radio":
                 station = _clean_text(args.get("station"), 80)
                 if not station:

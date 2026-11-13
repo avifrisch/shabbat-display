@@ -392,6 +392,19 @@ class RemindersAnnouncementsRadio(Case):
         self.assertEqual(self.a.announcements.since(0), {"ok": True, "last": 1, "items": []})
         self.assertTrue(self.run_tool("announce", {"message": " "})[1]["is_error"])
 
+    def test_an_announcement_also_goes_to_the_phones_when_that_is_set_up(self):
+        sent = []
+        self.a.push = lambda text: sent.append(text)
+        _, result = self.run_tool("announce", {"message": "Dinner is ready."})
+        self.assertEqual(sent, ["Dinner is ready."])
+        self.assertIn("phones and tablets", result["content"])
+        self.a.push = lambda text: False
+        self.assertNotIn("phones", self.run_tool("announce", {"message": "Bedtime."})[1]["content"])
+        def broken(text): raise OSError("no network")
+        self.a.push = broken
+        self.assertNotIn("phones", self.run_tool("announce", {"message": "Bedtime."})[1]["content"])
+        self.assertEqual(self.a.announcements.since(0)["last"], 3)
+
     def test_radio(self):
         self.assertEqual(self.run_tool("play_radio", {"station": "WNYC"})[0], [{"type": "play_radio", "station": "WNYC"}])
         self.assertTrue(self.run_tool("play_radio", {"station": ""})[1]["is_error"])
@@ -706,6 +719,25 @@ class Route(HouseholdCase):
             state = json.loads(r.read())
         self.assertEqual(state["data"]["shopping"], {"items": ["milk", "eggs"]})
         self.assertIn({"scene": "shopping", "label": "Shopping list"}, server.scene_catalog())
+
+    def test_the_push_address(self):
+        self.assertIs(server._push_announcement("x"), False)
+        got = []
+
+        class Reply:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return b"{}"
+
+        def urlopen(req, timeout=None):
+            got.append((req.full_url, req.data, req.get_header("Title")))
+            return Reply()
+        server.CONFIG["announce_push_url"] = "https://ntfy.sh/a-long-secret-name"
+        with mock.patch.object(server.urllib.request, "urlopen", urlopen):
+            self.assertIsNone(server._push_announcement("Dinner is ready."))
+        self.assertEqual(got, [("https://ntfy.sh/a-long-secret-name", b"Dinner is ready.", "Kitchen display")])
+        server.CONFIG["announce_push_url"] = "http://not-https.example/x"
+        self.assertIs(server._push_announcement("x"), False)
 
     def test_the_phones_shopping_page(self):
         with urllib.request.urlopen(self.base + "/shop", timeout=5) as r:

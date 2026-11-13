@@ -172,8 +172,13 @@ The iPad can also run the display as an app (`apple/`, built with Xcode on a Mac
 - "Hey display, add milk and eggs to the shopping list." "What's on the list?" "Take the eggs off."
 - "Hey display, play some quiet jazz." "Pause." "Next." "Stop the music." Music comes from Apple Music, so the iPad needs to be signed in to an Apple Music subscription. A bar in the corner shows what is playing, with pause, next and stop buttons. The music goes quiet while you talk to the display.
 - "Hey display, turn off the kitchen lights." "Set the thermostat to 70." "Run Good Night." "Is the front door locked?" This is Apple Home: switch on **Control the Home** in the app's settings, and make sure the iPad's Apple ID is a member of your Home. Use the names your devices and scenes have in the Home app. The display will lock a door or close the garage, but it never unlocks or opens one.
-- "Hey display, reorder from Walmart." A code appears on the display; scan it with your phone and Walmart opens with your usual items in the cart. You review the cart and check out on the phone. The display never orders or pays for anything.
-- "Hey display, send the list to my phone." The code opens the shopping list page (below).
+- "Hey display, reorder from Walmart." "Add milk to my Walmart cart." The display computer puts your usual items straight into your Walmart cart; you open the Walmart app, review the cart and pay. The display never orders or pays for anything. This needs a one-time Walmart sign-in on the display computer (see the shopping list page below). Until then, or if Walmart balks, it shows a code to scan instead.
+- "Hey display, remind me at four to take the challah out." "Wake me at seven on weekdays." "Cancel the challah reminder." Reminders chime and are spoken. One that falls on Shabbat or Yom Tov is skipped.
+- "Hey display, tell everyone dinner is ready." Other iPads running the app say it, every display shows it for 45 seconds, and (if you set it up, below) phones and tablets get a notification.
+- "Hey display, play WNYC." "Play the BBC World Service." Live radio; "pause" and "stop" work as for music.
+- "Hey display, good morning." A short briefing: the weather, the agenda (on screens that show it) and candle lighting on a Friday. It also knows the Hebrew date and the day's zmanim ("when is the latest Shema?").
+- When the display asks you something back, just answer; no wake phrase needed for a few seconds.
+- "Hey display, send the list to my phone." A code opens the shopping list page (below).
 - "Hey display, when is candle lighting?" It knows the time, the weather and the Shabbat times on the display, and answers general questions from what Claude knows. It can't search the internet.
 
 **On Shabbat and Yom Tov the microphone is off**, from candle lighting to havdalah, and so are speech and timers. It is also off whenever the iPad can't tell what day it is (no calendar from the computer yet, or one that has run out). The display itself carries on as always.
@@ -186,6 +191,12 @@ The iPad can also run the display as an app (`apple/`, built with Xcode on a Mac
 **What it costs.** Each request goes to Claude's smallest model and costs a small fraction of a cent. The computer keeps count in `assistant-budget.json` and stops for the rest of the month at `assistant_monthly_usd` (5 dollars unless you change it), and after `assistant_daily_requests` requests in a day (300). When it stops, the iPad says so. If that file is ever damaged the assistant stays off rather than start counting from zero; delete the file to start the month's count again.
 
 **The shopping list page.** `http://<computer>:8765/shop`, on any phone on the home Wi-Fi (or scan the code the display shows). It lists what's on the shopping list, with a "Find at Walmart" link beside each item, and it is where you set up your **usual Walmart items**: a name, how many, and the product's link from walmart.com or the Walmart app (Share → Copy link). "Put the usual items in my Walmart cart" opens Walmart with every usual item that has a link. Items without a link are left out of the cart.
+
+**The shopping list on the display.** While the list has items, a "Shopping" screen joins every display's rotation (not on Shabbat).
+
+**Walmart, once.** On the shopping list page, under "Walmart on the display computer": press the first button, and a Walmart sign-in window opens on the display computer. Sign in there with its keyboard, close the window, then press "I've signed in there". From then on the display fills your real Walmart cart. The sign-in lives in its own browser profile (`browser-profile-walmart`) on that computer.
+
+**Announcements on phones and tablets.** Install the free **ntfy** app on each device, subscribe to a long made-up topic name (it works like a password), and put `"announce_push_url": "https://ntfy.sh/<that name>"` in `settings.json`. Announcements then arrive as notifications. The text passes through ntfy's servers.
 
 **MenuApp.** To have spoken items also appear in MenuApp's Grocery tab, copy the URL from MenuApp → Settings → Kitchen Display → Copy Display URL and put it in `settings.json` as `"menuapp_grocery_url"`. Items land in MenuApp's "Kitchen display" list the next time the app is opened.
 

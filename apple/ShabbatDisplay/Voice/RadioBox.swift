@@ -20,7 +20,7 @@ final class RadioBox {
     }
 
     /// The best match in the directory's answer: the most-listened station whose stream has an address.
-    static func pick(from data: Data) -> Station? {
+    nonisolated static func pick(from data: Data) -> Station? {
         guard let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
         for entry in list {
             let address = (entry["url_resolved"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? entry["url"] as? String ?? ""
@@ -31,7 +31,18 @@ final class RadioBox {
         return nil
     }
 
-    static func search(_ name: String) -> URL {
+    /// What to look up, in order: the name as said, then its most distinctive words
+    /// ("1010 WINS" is listed as "WINS 1010").
+    nonisolated static func queries(for name: String) -> [String] {
+        let whole = name.trimmingCharacters(in: .whitespaces)
+        let skip: Set<String> = ["radio", "the", "station", "fm", "am", "news"]
+        let words = whole.split(separator: " ").map(String.init)
+            .filter { $0.count >= 3 && !skip.contains($0.lowercased()) && !$0.allSatisfy(\.isNumber) }
+            .sorted { $0.count > $1.count }
+        return [whole] + words.filter { $0.lowercased() != whole.lowercased() }.prefix(2)
+    }
+
+    nonisolated static func search(_ name: String) -> URL {
         var parts = URLComponents(string: "https://all.api.radio-browser.info/json/stations/search")!
         parts.queryItems = [URLQueryItem(name: "name", value: name), URLQueryItem(name: "limit", value: "5"),
                             URLQueryItem(name: "order", value: "clickcount"), URLQueryItem(name: "reverse", value: "true"),
@@ -41,9 +52,16 @@ final class RadioBox {
 
     /// Returns false when no such station was found.
     func play(_ name: String) async -> Bool {
-        var request = URLRequest(url: Self.search(name), timeoutInterval: 12)
-        request.setValue("ShabbatDisplay/1.0 (personal home display)", forHTTPHeaderField: "User-Agent")
-        guard let (data, _) = try? await URLSession.shared.data(for: request), let found = Self.pick(from: data) else { return false }
+        var found: Station?
+        for query in Self.queries(for: name) {
+            var request = URLRequest(url: Self.search(query), timeoutInterval: 12)
+            request.setValue("ShabbatDisplay/1.0 (personal home display)", forHTTPHeaderField: "User-Agent")
+            if let (data, _) = try? await URLSession.shared.data(for: request), let station = Self.pick(from: data) {
+                found = station
+                break
+            }
+        }
+        guard let found else { return false }
         stop()
         let player = AVPlayer(url: found.stream)
         self.player = player

@@ -38,6 +38,8 @@
   "assistant_daily_requests": 300,
   "_menuapp_help": "Optional: MenuApp's display URL (MenuApp, Settings, Kitchen Display, Copy Display URL), so spoken shopping items also reach MenuApp's Grocery tab. Secret.",
   "menuapp_grocery_url": "",
+  "_announce_help": "Optional: also send announcements ('tell everyone dinner is ready') to phones and tablets. Install the free ntfy app on each device, subscribe to a long made-up topic name, and put https://ntfy.sh/<that name> here. Secret.",
+  "announce_push_url": "",
 
   "bind": "127.0.0.1",
   "port": 8765

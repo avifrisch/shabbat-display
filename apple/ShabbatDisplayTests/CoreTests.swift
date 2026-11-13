@@ -348,6 +348,9 @@ final class FeedsTests: XCTestCase {
         XCTAssertEqual(station, RadioBox.Station(name: "WNYC-FM", stream: URL(string: "https://fm939.wnyc.org/wnycfm")!))
         XCTAssertNil(RadioBox.pick(from: Data("[]".utf8)))
         XCTAssertTrue(RadioBox.search("BBC World").absoluteString.contains("name=BBC%20World"))
+        XCTAssertEqual(RadioBox.queries(for: "1010 WINS"), ["1010 WINS", "WINS"])
+        XCTAssertEqual(RadioBox.queries(for: "WNYC"), ["WNYC"])
+        XCTAssertEqual(RadioBox.queries(for: "the Kol Israel radio station"), ["the Kol Israel radio station", "Israel", "Kol"])
     }
 
     func testReminderAndRadioActions() throws {

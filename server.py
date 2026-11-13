@@ -83,6 +83,10 @@ CONFIG = {
     "assistant_daily_requests": 300,
     # Where new shopping-list items are also sent (MenuApp's recipe server). Secret; empty = kept here only.
     "menuapp_grocery_url": "",
+    # Where announcements ("tell everyone dinner is ready") are also sent as a notification for the
+    # family's phones and tablets: an ntfy topic address such as https://ntfy.sh/<a long secret name>.
+    # Secret; empty = displays only.
+    "announce_push_url": "",
 
     # Server
     "bind": "127.0.0.1",         # use "0.0.0.0" to view from other devices on your network
@@ -2671,10 +2675,24 @@ def _forward_shopping(items):
         r.read()
 
 
+def _push_announcement(text):
+    """Send an announcement to the family's devices through ntfy (a notification relay). False when
+    no address is set."""
+    url = CONFIG.get("announce_push_url")
+    if not (isinstance(url, str) and url.startswith("https://")):
+        return False
+    req = urllib.request.Request(url, data=text.encode("utf-8"), method="POST",
+                                 headers={"Title": "Kitchen display", "Tags": "loudspeaker", "Priority": "high",
+                                          "User-Agent": OWN_UA})
+    with urllib.request.urlopen(req, timeout=8) as r:
+        r.read()
+
+
 ASSISTANT = assistant_mod.Assistant(_assistant_settings, assistant_mod.Budget(BUDGET_FILE),
                                     assistant_mod.ShoppingList(SHOPPING_FILE), assistant_mod.Usuals(USUALS_FILE),
                                     log=log, forward=_forward_shopping,
-                                    walmart=walmart_mod.WalmartCart(WALMART_PROFILE, WALMART_STATE_FILE, log=log))
+                                    walmart=walmart_mod.WalmartCart(WALMART_PROFILE, WALMART_STATE_FILE, log=log),
+                                    push=_push_announcement)
 
 
 def is_holy(n=None):
