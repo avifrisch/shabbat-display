@@ -30,6 +30,10 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         ITSAppUsesNonExemptEncryption: false
+        # Critical alerts (announcements heard through silent mode). Apple has to grant the
+        # entitlement first. Then: set this to true, add the entitlement line below, upload a
+        # build, and set "apns_critical": true in the display computer's settings.json.
+        CriticalAlerts: false
         UILaunchScreen: {}
         UIRequiresFullScreen: true
         UIStatusBarHidden: true
@@ -55,6 +59,7 @@ targets:
         # Announcements as notifications; "time sensitive" lets them through a Focus.
         aps-environment: development
         com.apple.developer.usernotifications.time-sensitive: true
+        # com.apple.developer.usernotifications.critical-alerts: true    (once Apple grants it)
         com.apple.security.application-groups:
           - group.com.avifrischlaw.shabbatdisplay
     settings:

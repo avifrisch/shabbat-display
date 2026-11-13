@@ -44,6 +44,8 @@
   "apns_key_file": "",
   "apns_key_id": "",
   "apns_team_id": "",
+  "_apns_critical_help": "Leave false unless Apple has granted the app Critical Alerts and that build is on the devices. True makes announcements sound through silent mode.",
+  "apns_critical": false,
 
   "bind": "127.0.0.1",
   "port": 8765

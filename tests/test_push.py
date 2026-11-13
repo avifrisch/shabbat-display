@@ -125,6 +125,17 @@ class Sending(unittest.TestCase):
         self.assertEqual(body["aps"]["mutable-content"], 1)
         self.assertTrue(all(link.closed for link in FakeLink.made))
 
+    def test_critical_only_when_switched_on(self):
+        usual = push.payload("Dinner", "Kitchen")["aps"]
+        self.assertEqual((usual["sound"], usual["interruption-level"]), ("default", "time-sensitive"))
+        loud = push.payload("Dinner", "Kitchen", critical=True)["aps"]
+        self.assertEqual(loud["sound"], {"critical": 1, "name": "default", "volume": 0.8})
+        self.assertEqual(loud["interruption-level"], "critical")
+        self.devices.register("aa" * 32, "Kid", "development")
+        self.settings["critical"] = True
+        self.push.announce("Dinner")
+        self.assertEqual(FakeLink.made[0].posts[0][2]["aps"]["interruption-level"], "critical")
+
     def test_a_removed_app_is_forgotten(self):
         self.devices.register("aa" * 32, "Gone", "development")
         self.devices.register("bb" * 32, "Here", "development")

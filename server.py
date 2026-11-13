@@ -95,6 +95,9 @@ CONFIG = {
     "apns_key_id": "",
     "apns_team_id": "",
     "apns_topic": "com.avifrischlaw.shabbatdisplay",
+    # True only once Apple has granted the app the Critical Alerts entitlement and a build with it
+    # is on the devices: announcements then sound through silent mode.
+    "apns_critical": False,
 
     # Server
     "bind": "127.0.0.1",         # use "0.0.0.0" to view from other devices on your network
@@ -2689,7 +2692,7 @@ def _push_settings():
     if isinstance(key_file, str) and key_file and not os.path.isabs(key_file):
         key_file = os.path.join(HERE, key_file)
     return {"key_file": key_file, "key_id": CONFIG.get("apns_key_id"), "team_id": CONFIG.get("apns_team_id"),
-            "topic": CONFIG.get("apns_topic")}
+            "topic": CONFIG.get("apns_topic"), "critical": CONFIG.get("apns_critical") is True}
 
 
 PUSH_DEVICES = push_mod.Devices(PUSH_DEVICES_FILE)

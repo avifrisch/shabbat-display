@@ -24,7 +24,15 @@ final class NotificationService: UNNotificationServiceExtension {
         }
         speech.make(text) { [weak self] name in
             SharedStore.note("extension: speech file \(name ?? "not made"), sounds folder \(SharedStore.soundsFolder == nil ? "missing" : "there"), voice '\(SharedStore.voice)'")
-            if let name { content.sound = UNNotificationSound(named: UNNotificationSoundName(name)) }
+            if let name {
+                let sound = UNNotificationSoundName(name)
+                // A critical alert (once Apple has granted them) is heard through silent mode.
+                if let volume = SpokenFile.criticalVolume(request.content.userInfo) {
+                    content.sound = UNNotificationSound.criticalSoundNamed(sound, withAudioVolume: volume)
+                } else {
+                    content.sound = UNNotificationSound(named: sound)
+                }
+            }
             self?.finish()
         }
     }

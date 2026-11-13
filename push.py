@@ -303,6 +303,18 @@ class Devices:
             self._save({t: d for t, d in data.items() if t not in tokens})
 
 
+def payload(text, origin="", critical=False):
+    """What Apple delivers. `critical` (only once Apple has granted the app Critical Alerts) makes
+    the announcement sound through silent mode and a turned-down alert volume."""
+    aps = {"alert": {"title": "Announcement", "body": text}, "mutable-content": 1,
+           "sound": {"critical": 1, "name": "default", "volume": CRITICAL_VOLUME} if critical else "default",
+           "interruption-level": "critical" if critical else "time-sensitive"}
+    return {"aps": aps, "announcement": text, "from": origin}
+
+
+CRITICAL_VOLUME = 0.8
+
+
 class ApplePush:
     def __init__(self, settings, devices, log=print, connect=Connection, now=time.time):
         self.settings, self.devices, self.log, self.connect, self.now = settings, devices, log, connect, now
@@ -333,9 +345,7 @@ class ApplePush:
         if not targets:
             return False
         s = self.settings()
-        body = json.dumps({"aps": {"alert": {"title": "Announcement", "body": text}, "sound": "default",
-                                   "mutable-content": 1, "interruption-level": "time-sensitive"},
-                           "announcement": text, "from": origin}).encode("utf-8")
+        body = json.dumps(payload(text, origin, critical=s.get("critical") is True)).encode("utf-8")
         reached, gone = 0, set()
         with self.lock:
             bearer = self._bearer(s)

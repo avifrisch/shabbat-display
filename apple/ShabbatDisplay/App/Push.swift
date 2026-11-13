@@ -30,7 +30,11 @@ enum Push {
     /// Asks to show notifications (the first time, iOS asks the person) and for Apple's address.
     @MainActor
     static func ask() async -> Bool {
-        let allowed = (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])) ?? false
+        // Critical alerts are asked for only in a build that has Apple's entitlement for them
+        // (`CriticalAlerts` in Info.plist, set with the entitlement in project.yml).
+        var options: UNAuthorizationOptions = [.alert, .sound]
+        if Bundle.main.object(forInfoDictionaryKey: "CriticalAlerts") as? Bool == true { options.insert(.criticalAlert) }
+        let allowed = (try? await UNUserNotificationCenter.current().requestAuthorization(options: options)) ?? false
         if allowed { UIApplication.shared.registerForRemoteNotifications() }
         return allowed
     }

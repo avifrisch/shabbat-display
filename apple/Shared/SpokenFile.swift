@@ -80,6 +80,14 @@ final class SpokenFile: NSObject, AVSpeechSynthesizerDelegate {
          AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false]
     }
 
+    /// Whether the display computer sent this as a critical alert, and how loud: `aps.sound` is then
+    /// `{"critical": 1, "volume": 0.8}` instead of a name. Nil for an ordinary notification.
+    static func criticalVolume(_ userInfo: [AnyHashable: Any]) -> Float? {
+        guard let aps = userInfo["aps"] as? [String: Any], let sound = aps["sound"] as? [String: Any],
+              (sound["critical"] as? NSNumber)?.intValue == 1 else { return nil }
+        return min(1, max(0.1, (sound["volume"] as? NSNumber)?.floatValue ?? 1))
+    }
+
     /// Removes announcement files older than ten minutes.
     static func clean(_ folder: URL, now: Date = Date()) {
         let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []

@@ -393,6 +393,14 @@ final class PushTests: XCTestCase {
         XCTAssertEqual(settings[AVLinearPCMIsFloatKey] as? Bool, false)
     }
 
+    func testACriticalAlertIsRecognized() {
+        XCTAssertNil(SpokenFile.criticalVolume(["aps": ["sound": "default"]]))
+        XCTAssertNil(SpokenFile.criticalVolume(["announcement": "x"]))
+        XCTAssertEqual(SpokenFile.criticalVolume(["aps": ["sound": ["critical": 1, "name": "default", "volume": 0.8]]]), 0.8)
+        XCTAssertEqual(SpokenFile.criticalVolume(["aps": ["sound": ["critical": 1]]]), 1)
+        XCTAssertNil(SpokenFile.criticalVolume(["aps": ["sound": ["critical": 0, "volume": 0.8]]]))
+    }
+
     func testOldAnnouncementFilesAreRemoved() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
