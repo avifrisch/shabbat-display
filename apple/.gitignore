@@ -7,3 +7,6 @@ xcuserdata/
 build-sim/
 build-sim*/
 AnnouncementSpeaker/Info.plist
+fastlane/.env
+fastlane/report.xml
+fastlane/README.md

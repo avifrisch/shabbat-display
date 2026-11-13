@@ -1,0 +1,34 @@
+# TestFlight for the Shabbat Display app.
+#
+#   fastlane register   once: makes the app's record in App Store Connect. Asks for your Apple ID,
+#                       password and two-factor code (an API key isn't allowed to make a record).
+#   fastlane beta       builds the app and uploads it to TestFlight with the API key in fastlane/.env.
+#
+# Run both from the apple/ folder.
+default_platform(:ios)
+
+BUNDLE = "com.avifrischlaw.shabbatdisplay"
+
+platform :ios do
+  desc "Once: make the app's record in App Store Connect (signs in with your Apple ID)"
+  lane :register do
+    # The name has to be unique across the App Store; it only shows in TestFlight.
+    produce(app_identifier: BUNDLE, app_name: ENV["APP_NAME"] || "Frisch Shabbat Display", sku: BUNDLE,
+            language: "en-US", platforms: ["ios"], skip_devcenter: true)
+  end
+
+  desc "Build and upload to TestFlight"
+  lane :beta do
+    key_path = File.expand_path(ENV.fetch("ASC_KEY_PATH"))
+    app_store_connect_api_key(key_id: ENV.fetch("ASC_KEY_ID"), issuer_id: ENV.fetch("ASC_ISSUER_ID"), key_filepath: key_path)
+    sh("cd .. && xcodegen generate -q")
+    number = latest_testflight_build_number(app_identifier: BUNDLE, initial_build_number: 0) + 1
+    auth = "-allowProvisioningUpdates -authenticationKeyPath #{key_path.shellescape} " \
+           "-authenticationKeyID #{ENV.fetch('ASC_KEY_ID')} -authenticationKeyIssuerID #{ENV.fetch('ASC_ISSUER_ID')}"
+    build_app(project: "ShabbatDisplay.xcodeproj", scheme: "ShabbatDisplay", configuration: "Release",
+              export_method: "app-store", output_directory: "build/testflight", clean: true,
+              xcargs: "#{auth} CURRENT_PROJECT_VERSION=#{number}", export_xcargs: auth,
+              export_options: { signingStyle: "automatic" })
+    upload_to_testflight(skip_waiting_for_build_processing: true)
+  end
+end
