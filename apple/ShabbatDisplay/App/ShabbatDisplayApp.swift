@@ -29,7 +29,7 @@ struct ShabbatDisplayApp: App {
                     voice.setActive(phase == .active)
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .pushTokenChanged)) { _ in
-                    Task { await model.registerForAnnouncements() }
+                    Task { await model.sendPushToken() }
                 }
                 .task { await typedRequest() }
         }

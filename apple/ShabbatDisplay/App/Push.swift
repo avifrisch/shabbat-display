@@ -66,7 +66,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-        Push.token = deviceToken.map { String(format: "%02x", $0) }.joined()
+        // iOS reports the address after every request for it. Only a new one is news: telling the
+        // display computer each time would ask again, and go round without end.
+        let token = deviceToken.map { String(format: "%02x", $0) }.joined()
+        guard token != Push.token else { return }
+        Push.token = token
         NotificationCenter.default.post(name: .pushTokenChanged, object: nil)
     }
 

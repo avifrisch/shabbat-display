@@ -285,6 +285,9 @@ class Devices:
         screen = screen if isinstance(screen, str) else ""
         with self.lock:
             data = self._load()
+            old = data.get(token.lower())
+            if old and old.get("screen") == screen[:40] and old.get("env") == env and time.time() - old.get("at", 0) < 3600:
+                return True      # nothing new: don't write the file again
             data[token.lower()] = {"screen": screen[:40], "env": env, "at": int(time.time())}
             if len(data) > self.LIMIT:
                 for old in sorted(data, key=lambda t: data[t].get("at", 0))[:len(data) - self.LIMIT]:

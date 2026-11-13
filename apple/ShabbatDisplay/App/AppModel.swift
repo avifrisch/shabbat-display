@@ -83,11 +83,17 @@ final class AppModel {
 
     /// Asks for notifications and gives the display computer this device's address for them.
     func registerForAnnouncements() async {
-        guard let server else { return }
+        guard server != nil else { return }
         guard await Push.ask() else {
             push = .refused
             return
         }
+        await sendPushToken()
+    }
+
+    /// Gives the display computer this device's address for announcements, without asking iOS again.
+    func sendPushToken() async {
+        guard let server, push != .refused else { return }
         push = await Push.register(server, screen: screen)
     }
 
