@@ -72,6 +72,23 @@ platform :ios do
     UI.message("RESULT group Family now has: #{have.join(', ')}")
   end
 
+  desc "Once: make the Apple push key for announcements: FASTLANE_USER=<apple id> fastlane push_key folder:<where to save it>"
+  lane :push_key do |options|
+    # A developer-account key, which only the Apple ID can make. Apple allows two push keys per
+    # account and lets each be downloaded once, so the file this saves is the only copy.
+    Spaceship::Portal.login(ENV.fetch("FASTLANE_USER"))
+    Spaceship::Portal.client.team_id = ENV["FASTLANE_TEAM_ID"] if ENV["FASTLANE_TEAM_ID"]
+    have = Spaceship::Portal::Key.all.select { |k| k.reload; k.has_apns? }
+    UI.message("RESULT push keys already in the account: #{have.map(&:name).join(', ')}") unless have.empty?
+    UI.user_error!("The account already has two push keys; one would have to be revoked first") if have.size >= 2
+    key = Spaceship::Portal::Key.create(name: "Shabbat Display announcements", apns: true)
+    folder = File.expand_path(options[:folder] || "~/.shabbat-display")
+    FileUtils.mkdir_p(folder)
+    path = File.join(folder, "AuthKey_#{key.id}.p8")
+    File.write(path, key.download, perm: 0o600)
+    UI.message("RESULT key id #{key.id} saved as #{path}")
+  end
+
   desc "Build and upload to TestFlight"
   lane :beta do
     key_path = File.expand_path(ENV.fetch("ASC_KEY_PATH"))
