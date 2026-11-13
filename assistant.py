@@ -41,9 +41,9 @@ no markdown, no emoji, no symbols a voice would stumble on. Say numbers the way 
 
 Use a tool whenever the request is something a tool does, and only say a thing is done after \
 the tool has answered. You can keep a shopping list, set kitchen timers, play music from \
-Apple Music on the display, and put a code on the display that a phone scans to open the \
-shopping list or a Walmart cart of the family's usual items. You cannot place an order, pay, \
-or send messages; checkout always happens on the phone. When the facts below list home \
+Apple Music on the display, put the family's usual Walmart items into their Walmart cart (walmart_cart), and show a code \
+on the display that a phone scans to open the shopping list. You cannot place an order, pay, \
+or send messages; the family reviews the cart and pays in the Walmart app. When the facts below list home \
 devices, you can also switch them, dim lights, set thermostats, move shades and run scenes with \
 the home tools, using the exact device, room and scene names listed. You can lock a door or \
 close a garage door, but never unlock or open one: tell them to use the Home app for that. Say so briefly \
@@ -119,8 +119,13 @@ TOOLS = [
     {"name": "home_scene",
      "description": "Run one of the home's scenes (Apple Home), by its exact listed name.",
      "input_schema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
+    {"name": "walmart_cart",
+     "description": "Put usual Walmart items into the family's Walmart cart, from the display computer. They review the cart and pay in the Walmart app; this never orders. Use it for 'reorder from Walmart', 'add milk to my Walmart cart' and the like.",
+     "input_schema": {"type": "object", "properties": {
+         "items": {"type": "array", "items": {"type": "string"},
+                   "description": "Names of usual items exactly as listed in the facts. Leave out for all of them."}}}},
     {"name": "send_to_phone",
-     "description": "Show a code on the display for a phone's camera. 'cart' opens Walmart with the family's usual items in the cart, ready for them to check out; 'list' opens the shopping list page, where items can be ticked off and the usual Walmart items are set up.",
+     "description": "Show a code on the display for a phone's camera. 'list' opens the shopping list page, where the usual Walmart items are set up; 'cart' opens Walmart with the usual items in the cart on that phone. Only when they ask for a code or for it on their phone; to fill the cart, use walmart_cart.",
      "input_schema": {"type": "object", "properties": {
          "what": {"type": "string", "enum": ["cart", "list"]}},
          "required": ["what"]}},
@@ -383,18 +388,22 @@ class Usuals:
                 _write_atomic(self.path, {"items": kept})
             return len(kept) != len(items)
 
-    def cart_url(self):
-        """Walmart's add-to-cart link for every usual item that has a product number; "" if none has."""
-        parts = [i["item_id"] if i["qty"] == 1 else f"{i['item_id']}_{i['qty']}" for i in self.items() if i["item_id"]]
+    def cart_url(self, only=None):
+        """Walmart's add-to-cart link for every usual item that has a product number (or just the
+        ones named in `only`); "" if none has."""
+        want = None if only is None else {n.casefold() for n in only}
+        parts = [i["item_id"] if i["qty"] == 1 else f"{i['item_id']}_{i['qty']}" for i in self.items()
+                 if i["item_id"] and (want is None or i["name"].casefold() in want)]
         return WALMART_CART + ",".join(parts) if parts else ""
 
 
-def shop_state(shopping, usuals):
+def shop_state(shopping, usuals, walmart=None):
     """What the phone's shopping page shows."""
-    return {"ok": True, "items": [i["text"] for i in shopping.items()], "usuals": usuals.items(), "cart_url": usuals.cart_url()}
+    return {"ok": True, "items": [i["text"] for i in shopping.items()], "usuals": usuals.items(), "cart_url": usuals.cart_url(),
+            "walmart": {"available": walmart is not None, "signed_in": bool(walmart and walmart.signed_in())}}
 
 
-def shop_change(shopping, usuals, body, forward=None):
+def shop_change(shopping, usuals, body, forward=None, walmart=None):
     """One change from the shopping page. Returns (http status, dict)."""
     if not isinstance(body, dict):
         return 400, {"ok": False, "error": "That request couldn't be read."}
@@ -422,11 +431,30 @@ def shop_change(shopping, usuals, body, forward=None):
                 return 400, {"ok": False, "error": "Give the item a name, or paste its Walmart product link."}
         elif op == "remove_usual":
             usuals.remove(body.get("id") if isinstance(body.get("id"), str) else "")
+        elif op in ("walmart_open_sign_in", "walmart_signed_in", "walmart_forget", "walmart_fill") and walmart is None:
+            return 400, {"ok": False, "error": "This display computer can't open Walmart."}
+        elif op == "walmart_open_sign_in":
+            problem = walmart.open_sign_in()
+            if problem:
+                return 500, {"ok": False, "error": problem}
+        elif op == "walmart_signed_in":
+            walmart.set_signed_in(True)
+        elif op == "walmart_forget":
+            walmart.set_signed_in(False)
+        elif op == "walmart_fill":
+            cart = usuals.cart_url()
+            if not cart:
+                return 400, {"ok": False, "error": "No usual item has a Walmart link yet."}
+            ok, why = walmart.add(cart)
+            if not ok:
+                from walmart import SENTENCES
+                return 502, {"ok": False, "error": SENTENCES.get(why, "It did not work.")}
+            return 200, {**shop_state(shopping, usuals, walmart), "note": "The usual items are in your Walmart cart. Review it and check out in the Walmart app."}
         else:
             return 400, {"ok": False, "error": "That request couldn't be read."}
     except OSError:
         return 500, {"ok": False, "error": "That couldn't be saved on the display computer."}
-    return 200, shop_state(shopping, usuals)
+    return 200, shop_state(shopping, usuals, walmart)
 
 
 def _clean_items(value):
@@ -535,10 +563,12 @@ class Assistant:
     """One per server. `settings()` gives {"api_key", "monthly_usd", "daily_requests"} each time,
     so a changed settings file takes effect without rebuilding this."""
 
-    def __init__(self, settings, budget, shopping, usuals, post=post_json, log=print, forward=None, announcements=None):
+    def __init__(self, settings, budget, shopping, usuals, post=post_json, log=print, forward=None, announcements=None,
+                 walmart=None):
         self.settings, self.budget, self.shopping, self.usuals = settings, budget, shopping, usuals
         self.post, self.log, self.forward = post, log, forward
         self.announcements = announcements or Announcements(budget.now)
+        self.walmart = walmart  # a walmart.WalmartCart, or None where there is no browser to use
 
     # -- what the iPad asks
 
@@ -739,7 +769,7 @@ class Assistant:
                     return {"content": "A reminder can be up to a year ahead.", "is_error": True}
                 actions.append({"type": "set_reminder", "when": when.strftime("%Y-%m-%dT%H:%M"), "text": text, "repeat": repeat})
                 return {"content": f"Set for {when:%A %B} {when.day} at {when:%I:%M %p}".replace(" 0", " ")
-                                   + ("" if repeat == "none" else f", {repeat}") + ". The display skips reminders that fall on Shabbat or Yom Tov."}
+                                   + ("" if repeat == "none" else f", {repeat}") + "."}
             if name == "cancel_reminder":
                 actions.append({"type": "cancel_reminder", "text": _clean_text(args.get("text"), 120) or "all"})
                 return {"content": "Cancelled if there was one."}
@@ -757,6 +787,33 @@ class Assistant:
                 return {"content": f"The display is looking for the station '{station}' and will play it, or say that it couldn't."}
             if name in ("home_set", "home_scene"):
                 return self._home_tool(name, args, actions, home)
+            if name == "walmart_cart":
+                usual = self.usuals.items()
+                asked = _clean_items(args.get("items")) or None
+                if asked:
+                    known = {u["name"].casefold() for u in usual}
+                    unknown = [n for n in asked if n.casefold() not in known]
+                    if unknown:
+                        return {"content": f"Not usual items: {', '.join(unknown)}. Only the listed usual items can go in the cart; "
+                                           "anything else can go on the shopping list.", "is_error": True}
+                chosen = [u for u in usual if asked is None or u["name"].casefold() in {n.casefold() for n in asked}]
+                cart = self.usuals.cart_url(asked)
+                missing = [u["name"] for u in chosen if not u["item_id"]]
+                if not cart:
+                    actions.append({"type": "show_code", "path": "/shop", "title": "Set up your usual items"})
+                    return {"content": "None of those has a Walmart product link yet, so nothing was added. A code is on the display: "
+                                       "it opens the page where the usual items are set up."}
+                ok, why = self.walmart.add(cart) if self.walmart else (False, "no_browser")
+                left = f" Left out, no product link yet: {', '.join(missing)}." if missing else ""
+                if ok:
+                    names = ", ".join((f"{u['qty']} x " if u["qty"] > 1 else "") + u["name"] for u in chosen if u["item_id"])
+                    return {"content": f"In the Walmart cart now: {names}. They review it and pay in the Walmart app or on walmart.com.{left}"}
+                actions.append({"type": "show_code", "url": cart, "title": "Walmart cart"})
+                from walmart import SENTENCES
+                fix = (" Someone signs in once from the shopping list page (the Walmart section), on the display computer."
+                       if why in ("not_signed_in", "signin") else "")
+                return {"content": f"Not added: {SENTENCES.get(why, 'It did not work.')}{fix} Instead, a code is on the display: "
+                                   f"scanning it with a phone opens Walmart with the items in that phone's cart.{left}"}
             if name == "send_to_phone":
                 if args.get("what") == "list":
                     actions.append({"type": "show_code", "path": "/shop", "title": "Shopping list"})

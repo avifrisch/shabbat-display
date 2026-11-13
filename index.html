@@ -750,6 +750,7 @@ const SCENES = {
   shul: {title: () => !shulShabbatOn() ? "Davening times" : (shabbatSpan() || {}).yt ? "Yom Tov times" : "Shabbat times",
          tab: "Shul", render: sceneShul},
   business: {title: () => "Markets", tab: "Business", render: sceneBusiness},
+  shopping: {title: () => "Shopping list", tab: "Shopping", render: sceneShopping},
 };
 const sceneTab = (s) => typeof SCENES[s].tab === "function" ? SCENES[s].tab() : SCENES[s].tab;
 const mlbFav = () => (CFG().sports || {}).mlb || {};
@@ -895,6 +896,20 @@ function sceneIsrael() {
     <div class="grid2" style="flex:1"><div class="col">${li(rest.slice(0, half))}</div><div class="col">${li(rest.slice(half))}</div></div>`;
 }
 
+// The shopping list kept by the voice assistant, in up to three columns. No taps: it is edited
+// by voice or on the phone page (/shop).
+function shoppingItems() { const v = D("shopping"); return (v && v.items) || []; }
+function sceneShopping() {
+  const items = shoppingItems();
+  if (!items.length) return `<div class="col"><div class="hl"><div class="s">Nothing on the list. Say "add milk to the shopping list".</div></div></div>`;
+  const shown = items.slice(0, 36), per = Math.ceil(shown.length / (shown.length > 24 ? 3 : shown.length > 10 ? 2 : 1));
+  const cols = [];
+  for (let i = 0; i < shown.length; i += per) cols.push(shown.slice(i, i + per));
+  const more = items.length > shown.length ? `<div class="hl"><div class="w">and ${items.length - shown.length} more</div></div>` : "";
+  return `<div style="flex:1;display:grid;grid-template-columns:repeat(${cols.length},minmax(0,1fr));column-gap:2.6rem;min-height:0">` +
+    cols.map((c, n) => `<div class="col">${c.map((t) => `<div class="hl" style="padding:.55rem 0"><div class="t" style="font-size:2.1rem">${esc(t)}</div></div>`).join("")}${n === cols.length - 1 ? more : ""}</div>`).join("") + `</div>`;
+}
+
 // rotation
 let order = [], idx = 0, sceneStart = Date.now(), current = null, front = "layerA";
 const HOLD = Q.get("hold") === "1";
@@ -902,9 +917,11 @@ const HOLD = Q.get("hold") === "1";
 // this screen's scenes and seconds, from the server (the Display Manager); today's order without one
 function rotationList() {
   const r = CFG().rotation;
-  if (Array.isArray(r) && r.length) return r;
   const secs = CFG().rotation_seconds || {};
-  return ["agenda", "shul", "yankees", "mlb", "news", "israel"].map((scene) => ({scene, seconds: secs[scene] || 30}));
+  const list = Array.isArray(r) && r.length ? r
+    : ["agenda", "shul", "yankees", "mlb", "news", "israel"].map((scene) => ({scene, seconds: secs[scene] || 30}));
+  // The shopping list joins every rotation while it has items, unless the rotation already places it.
+  return shoppingItems().length && !list.some((x) => x.scene === "shopping") ? [...list, {scene: "shopping", seconds: 20}] : list;
 }
 // live team scenes repeat every other turn: L1 s1 L2 s2 L1 s3 ...
 function withLive(seq, live) {
@@ -923,7 +940,7 @@ function buildOrder() {
   const shul = D("shul"), team = D("team") || {};
   const ok = {agenda: agendaOn(), yankees: !team.off, mlb: !team.off, news: has("nyt") || has("cnn"), israel: has("toi"),
               shul: !!(shul && (isHoly() ? shul.bulletin || D("calendar") : shul.chart || shulShabbatOn())),
-              business: bizOn()};
+              business: bizOn(), shopping: !isHoly() && shoppingItems().length > 0};
   for (const k of sportKeys()) {
     const v = D("sport_" + k), on = !!(v && v.on && v.in_season);
     ok[k + "_team"] = on && !!v.team;

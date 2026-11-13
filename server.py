@@ -35,6 +35,7 @@ from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import assistant as assistant_mod
+import walmart as walmart_mod
 
 # --------------------------------------------------------------------------
 # Settings - these are the defaults. To change one, put it in settings.json
@@ -119,6 +120,8 @@ SHUL_DIR = os.path.join(HERE, "shul")
 BUDGET_FILE = os.path.join(HERE, "assistant-budget.json")
 SHOPPING_FILE = os.path.join(HERE, "shopping.json")
 USUALS_FILE = os.path.join(HERE, "usuals.json")
+WALMART_PROFILE = os.path.join(HERE, "browser-profile-walmart")
+WALMART_STATE_FILE = os.path.join(HERE, "walmart.json")
 SHOP_PAGE_FILE = os.path.join(HERE, "shop.html")
 SHUL_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "pdf": "application/pdf"}
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -2608,6 +2611,8 @@ def _state_json(screen, fallback=None, preview=False):
     data = snap["data"]
     if "agenda" not in [r["scene"] for r in rot]:
         data = {k: v for k, v in data.items() if k != "agenda"}
+    # The shopping list, for the page's "shopping" scene (it shows itself while the list has items).
+    data = {**data, "shopping": {"items": [i["text"] for i in ASSISTANT.shopping.items()]}}
     cfg = {k: CONFIG[k] for k in ("location_name", "team_abbr", "division_name", "zmanim_labels",
                                   "dim_start", "dim_end", "dim_level", "rotation_seconds")}
     fav = mlb_favorite() if fallback is None else {"abbr": CONFIG["team_abbr"], "division_name": CONFIG["division_name"]}
@@ -2668,7 +2673,8 @@ def _forward_shopping(items):
 
 ASSISTANT = assistant_mod.Assistant(_assistant_settings, assistant_mod.Budget(BUDGET_FILE),
                                     assistant_mod.ShoppingList(SHOPPING_FILE), assistant_mod.Usuals(USUALS_FILE),
-                                    log=log, forward=_forward_shopping)
+                                    log=log, forward=_forward_shopping,
+                                    walmart=walmart_mod.WalmartCart(WALMART_PROFILE, WALMART_STATE_FILE, log=log))
 
 
 def is_holy(n=None):
@@ -2757,12 +2763,13 @@ def shopping_route():
 def shop_route(body=None):
     """The phone's shopping page (shop.html): GET gives the list and the usual items, POST changes one."""
     if body is None:
-        return 200, json.dumps(assistant_mod.shop_state(ASSISTANT.shopping, ASSISTANT.usuals))
+        return 200, json.dumps(assistant_mod.shop_state(ASSISTANT.shopping, ASSISTANT.usuals, ASSISTANT.walmart))
     try:
         req = json.loads(body.decode("utf-8")) if body else None
     except (ValueError, UnicodeDecodeError):
         req = None
-    status, answer = assistant_mod.shop_change(ASSISTANT.shopping, ASSISTANT.usuals, req, forward=_forward_shopping)
+    status, answer = assistant_mod.shop_change(ASSISTANT.shopping, ASSISTANT.usuals, req, forward=_forward_shopping,
+                                               walmart=ASSISTANT.walmart)
     return status, json.dumps(answer)
 
 
@@ -2772,7 +2779,7 @@ def shop_route(body=None):
 
 STARTED = time.time()
 BUILTIN_SCENES = [("agenda", "Agenda (private)"), ("shul", "Shul"), ("yankees", "MLB team"), ("mlb", "Around the majors"),
-                  ("news", "Headlines"), ("israel", "Israel"), ("business", "Business")]
+                  ("news", "Headlines"), ("israel", "Israel"), ("business", "Business"), ("shopping", "Shopping list")]
 TICKER = re.compile(r"[A-Z][A-Z0-9.\-]{0,9}")
 
 

@@ -13,6 +13,7 @@ from unittest import mock
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 import assistant  # noqa: E402
+import walmart  # noqa: E402
 import server  # noqa: E402
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 from test_household import HouseholdCase  # noqa: E402
@@ -396,6 +397,115 @@ class RemindersAnnouncementsRadio(Case):
         self.assertTrue(self.run_tool("play_radio", {"station": ""})[1]["is_error"])
 
 
+class FakeBrowser:
+    """Stands in for Chrome: remembers how it was started and reports the tabs it is told to."""
+
+    def __init__(self, pages):
+        self.pages, self.started, self.closed, self.now = list(pages), [], False, 0.0
+
+    def popen(self, args, **extra):
+        self.started.append((args, extra))
+        return self
+
+    def tabs(self, port):
+        url = self.pages.pop(0) if len(self.pages) > 1 else self.pages[0]
+        return [] if url is None else [{"type": "page", "id": "T1", "url": url}]
+
+    def sleep(self, seconds): self.now += seconds
+    def clock(self): return self.now
+    def wait(self, timeout=None): return 0
+    def terminate(self): self.closed = True
+
+
+class WalmartCartTests(Case):
+    CART = "https://www.walmart.com/sc/cart/addToCart?items=10450114_2"
+
+    def cart(self, pages, signed_in=True, find=lambda: "/usr/bin/chrome"):
+        self.browser = FakeBrowser(pages)
+        w = walmart.WalmartCart(os.path.join(self.dir.name, "profile"), os.path.join(self.dir.name, "walmart.json"),
+                                log=self.logged.append, find=find, popen=self.browser.popen, tabs=self.browser.tabs,
+                                sleep=self.browser.sleep, clock=self.browser.clock)
+        if signed_in:
+            w.set_signed_in(True)
+        return w
+
+    def test_the_link_is_opened_in_its_own_profile_and_the_cart_is_reached(self):
+        w = self.cart([None, "https://www.walmart.com/sc/cart/addToCart?items=10450114_2", "https://www.walmart.com/shoppingcart"])
+        with mock.patch.object(walmart.urllib.request, "urlopen", side_effect=OSError):
+            self.assertEqual(w.add(self.CART), (True, ""))
+        args = self.browser.started[0][0]
+        self.assertEqual(args[0], "/usr/bin/chrome")
+        self.assertIn("--user-data-dir=" + os.path.join(self.dir.name, "profile"), args)
+        self.assertEqual(args[-1], self.CART)
+        self.assertFalse(any("headless" in a for a in args))
+
+    def test_what_stops_it(self):
+        self.assertEqual(self.cart(["x"], signed_in=False).add(self.CART), (False, "not_signed_in"))
+        self.assertEqual(self.browser.started, [])
+        self.assertEqual(self.cart(["x"], find=lambda: None).add(self.CART), (False, "no_browser"))
+        with mock.patch.object(walmart.urllib.request, "urlopen", side_effect=OSError):
+            self.assertEqual(self.cart(["https://www.walmart.com/blocked?url=x"]).add(self.CART), (False, "blocked"))
+            self.assertEqual(self.cart(["https://www.walmart.com/"]).add(self.CART, wait=5), (False, "timeout"))
+            w = self.cart(["https://www.walmart.com/account/login?vid=oaoh"])
+            self.assertEqual(w.add(self.CART), (False, "signin"))
+            self.assertFalse(w.signed_in(), "a sign-in page means the sign-in was lost")
+
+    def test_the_voice_tool_fills_the_cart_or_falls_back_to_the_code(self):
+        self.a.usuals.add("Milk", "10450114", 2)
+        self.a.usuals.add("Eggs")
+        self.a.usuals.add("Challah", "555666777")
+        self.a.walmart = mock.Mock()
+        self.a.walmart.add.return_value = (True, "")
+        self.answers = [tool("walmart_cart", {}), text("Your usual items are in the cart.")]
+        out = self.ask("reorder from walmart")[1]
+        self.a.walmart.add.assert_called_once_with("https://www.walmart.com/sc/cart/addToCart?items=10450114_2,555666777")
+        self.assertEqual(out["actions"], [])
+        result = self.sent[-1]["messages"][2]["content"][0]["content"]
+        self.assertIn("In the Walmart cart now: 2 x Milk, Challah.", result)
+        self.assertIn("Left out, no product link yet: Eggs.", result)
+
+        self.a.walmart.add.reset_mock()
+        self.answers = [tool("walmart_cart", {"items": ["milk"]}), text("Milk is in the cart.")]
+        self.ask("add milk to my walmart cart")
+        self.a.walmart.add.assert_called_once_with("https://www.walmart.com/sc/cart/addToCart?items=10450114_2")
+
+        self.answers = [tool("walmart_cart", {"items": ["caviar"]}), text("That isn't a usual item.")]
+        self.ask("add caviar to my walmart cart")
+        self.assertTrue(self.sent[-1]["messages"][2]["content"][0]["is_error"])
+
+        self.a.walmart.add.return_value = (False, "not_signed_in")
+        self.answers = [tool("walmart_cart", {}), text("Walmart isn't signed in yet.")]
+        out = self.ask("reorder from walmart")[1]
+        self.assertEqual(out["actions"], [{"type": "show_code", "title": "Walmart cart",
+                                           "url": "https://www.walmart.com/sc/cart/addToCart?items=10450114_2,555666777"}])
+        self.assertIn("Someone signs in once", self.sent[-1]["messages"][2]["content"][0]["content"])
+
+    def test_the_phone_page_can_sign_in_and_fill_the_cart(self):
+        w = mock.Mock()
+        w.signed_in.return_value = False
+        w.open_sign_in.return_value = ""
+        change = lambda body: assistant.shop_change(self.a.shopping, self.a.usuals, body, walmart=w)
+        self.assertEqual(change({"op": "walmart_open_sign_in"})[0], 200)
+        w.open_sign_in.assert_called_once()
+        change({"op": "walmart_signed_in"})
+        w.set_signed_in.assert_called_with(True)
+        self.assertEqual(change({"op": "walmart_fill"})[0], 400)          # no usual item has a link
+        self.a.usuals.add("Milk", "10450114")
+        w.add.return_value = (True, "")
+        status, state = change({"op": "walmart_fill"})
+        self.assertEqual(status, 200)
+        self.assertIn("in your Walmart cart", state["note"])
+        w.add.return_value = (False, "blocked")
+        self.assertEqual(change({"op": "walmart_fill"})[0], 502)
+        self.assertEqual(assistant.shop_change(self.a.shopping, self.a.usuals, {"op": "walmart_fill"})[0], 400)
+
+    def test_tab_reading(self):
+        self.assertEqual(walmart.where([{"url": "https://www.walmart.com/cart"}]), "cart")
+        self.assertEqual(walmart.where([{"url": "about:blank"}, {"url": "https://www.walmart.com/shoppingcart?x=1"}]), "cart")
+        self.assertEqual(walmart.where([]), "other")
+        self.assertEqual(walmart.read_tabs(1), [])
+
+
 class Spending(Case):
     def test_every_answer_is_counted(self):
         self.answers = [tool("set_timer", {"seconds": 60}, tokens_in=2000, tokens_out=100),
@@ -482,6 +592,8 @@ class Route(HouseholdCase):
                 (a, "budget", assistant.Budget(os.path.join(self.dir.name, "b.json"))),
                 (a, "shopping", assistant.ShoppingList(os.path.join(self.dir.name, "s.json"))),
                 (a, "usuals", assistant.Usuals(os.path.join(self.dir.name, "u.json"))),
+                (a, "walmart", walmart.WalmartCart(os.path.join(self.dir.name, "wp"), os.path.join(self.dir.name, "w.json"),
+                                                   find=lambda: None)),
                 (a, "post", self.post)):
             p = mock.patch.object(target, name, value)
             p.start()
@@ -588,12 +700,20 @@ class Route(HouseholdCase):
         self.at("2026-11-14T12:00:00-05:00")
         self.assertEqual(self.call("/api/announcements?since=0")[1]["items"], [])
 
+    def test_the_shopping_list_is_in_every_screens_state(self):
+        server.ASSISTANT.shopping.add(["milk", "eggs"])
+        with urllib.request.urlopen(self.base + "/api/state?screen=iPad&preview=1", timeout=5) as r:
+            state = json.loads(r.read())
+        self.assertEqual(state["data"]["shopping"], {"items": ["milk", "eggs"]})
+        self.assertIn({"scene": "shopping", "label": "Shopping list"}, server.scene_catalog())
+
     def test_the_phones_shopping_page(self):
         with urllib.request.urlopen(self.base + "/shop", timeout=5) as r:
             page = r.read()
             self.assertIn("text/html", r.headers["Content-Type"])
         self.assertIn(b"Usual Walmart items", page)
-        self.assertEqual(self.call("/api/shop"), (200, {"ok": True, "items": [], "usuals": [], "cart_url": ""}))
+        self.assertEqual(self.call("/api/shop"), (200, {"ok": True, "items": [], "usuals": [], "cart_url": "",
+                                                        "walmart": {"available": True, "signed_in": False}}))
         status, state = self.call("/api/shop", {"op": "add_usual", "name": "Milk", "link": "10450114", "qty": 1})
         self.assertEqual((status, state["cart_url"]), (200, "https://www.walmart.com/sc/cart/addToCart?items=10450114"))
         self.assertEqual(self.call("/api/shop", {"op": "add_item", "text": "eggs"})[1]["items"], ["eggs"])

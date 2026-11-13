@@ -49,7 +49,15 @@ input.qty { flex: 0 0 76px; }
     <input id="usual-link" placeholder="Walmart product link" autocomplete="off" inputmode="url">
     <button>Save</button>
   </form>
-  <a id="cart" class="big" target="_blank" rel="noopener" hidden>Put the usual items in my Walmart cart</a>
+  <button id="fill" class="go" type="button" hidden>Put the usual items in our Walmart cart</button>
+  <a id="cart" class="big" target="_blank" rel="noopener" hidden>Open them in Walmart on this phone instead</a>
+
+  <h2>Walmart on the display computer</h2>
+  <p class="note" id="walmart-note"></p>
+  <button id="signin" type="button" hidden>Open Walmart's sign-in on the display computer</button>
+  <button id="signed" type="button" hidden>I've signed in there</button>
+  <button id="forget" type="button" class="x" hidden>Stop using this sign-in</button>
+  <p id="done" class="note" role="status"></p>
   <p id="error" role="alert"></p>
 </main>
 <script>
@@ -98,6 +106,16 @@ function show(state) {
   const cart = $("cart");
   cart.hidden = !state.cart_url;
   if (state.cart_url) cart.href = state.cart_url;
+
+  const w = state.walmart || {};
+  $("fill").hidden = !(w.signed_in && state.cart_url);
+  $("signin").hidden = !w.available || w.signed_in;
+  $("signed").hidden = !w.available || w.signed_in;
+  $("forget").hidden = !w.signed_in;
+  $("walmart-note").textContent = !w.available ? "This display computer can't open Walmart."
+    : w.signed_in ? "Signed in. \"Reorder from Walmart\" on the display, or the button above, puts your usual items straight into your Walmart cart. You check out in the Walmart app."
+    : "Sign in once and the display can put items straight into your Walmart cart. The first button opens Walmart's sign-in in a window on the display computer; sign in there with its keyboard, close the window, then press the second button here.";
+  $("done").textContent = state.note || "";
 }
 
 async function send(change) {
@@ -123,6 +141,15 @@ $("add-usual").onsubmit = async (e) => {
   e.preventDefault();
   const change = {op: "add_usual", name: $("usual-name").value.trim(), link: $("usual-link").value.trim(), qty: parseInt($("usual-qty").value, 10) || 1};
   if (await send(change)) { $("usual-name").value = ""; $("usual-link").value = ""; $("usual-qty").value = "1"; }
+};
+$("signin").onclick = () => send({op: "walmart_open_sign_in"});
+$("signed").onclick = () => send({op: "walmart_signed_in"});
+$("forget").onclick = () => send({op: "walmart_forget"});
+$("fill").onclick = async () => {
+  $("fill").disabled = true;
+  $("done").textContent = "Filling the cart on the display computer. This takes about half a minute.";
+  await send({op: "walmart_fill"});
+  $("fill").disabled = false;
 };
 send();
 document.addEventListener("visibilitychange", () => { if (!document.hidden) send(); });
