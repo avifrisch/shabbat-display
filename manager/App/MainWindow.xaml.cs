@@ -12,6 +12,7 @@ public sealed partial class MainWindow : Window
         ["Live"] = typeof(LivePage),
         ["Sports"] = typeof(SportsPage),
         ["Business"] = typeof(BusinessPage),
+        ["Lists"] = typeof(ListsPage),
         ["Screens"] = typeof(ScreensPage),
         ["Shul"] = typeof(ShulPage),
         ["NYT"] = typeof(NytPage),

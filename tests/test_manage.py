@@ -149,6 +149,24 @@ class ManageTests(ManageCase):
         self.assertIn("nba_team", scenes)
         self.assertEqual(j["leagues"]["nba"], "NBA")
 
+    def test_lists_need_the_key_and_are_changed(self):
+        import tempfile
+        from unittest import mock
+        folder = tempfile.mkdtemp()
+        a = server.ASSISTANT
+        with mock.patch.object(a.shopping, "path", folder + "/shopping.json"), mock.patch.object(a.usuals, "path", folder + "/usuals.json"):
+            self.assertEqual(self.call("GET", "/api/manage/lists", key=None)[0], 401)
+            status, state = self.call("POST", "/api/manage/lists", {"op": "create_list", "name": "Kids", "kind": "todo"})
+            self.assertEqual((status, [(one["name"], one["kind"]) for one in state["lists"]]),
+                             (200, [("Shopping", "shopping"), ("Kids", "todo")]))
+            self.call("POST", "/api/manage/lists", {"op": "add_item", "list": state["lists"][1]["id"], "text": "Set the table"})
+            status, state = self.call("GET", "/api/manage/lists")
+            self.assertEqual((status, state["lists"][1]["items"], state["sets"][0]["name"]), (200, ["Set the table"], "Usuals"))
+            status, out = self.call("POST", "/api/manage/lists", {"op": "delete_list", "list": "main"})
+            self.assertEqual((status, out["error"]), (400, "The main list can't be deleted."))
+            shown = self.get("/api/state")[1]["data"]["shopping"]
+            self.assertEqual(shown, {"items": [], "lists": [{"name": "Kids", "kind": "todo", "items": ["Set the table"]}]})
+
     def test_log_tail(self):
         with mock.patch.object(server, "LOG_FILE", os.path.join(self._dir.name, "server.log")):
             with open(server.LOG_FILE, "w", encoding="utf-8") as f:

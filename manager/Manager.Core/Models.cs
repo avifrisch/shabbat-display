@@ -68,3 +68,21 @@ public record Result<T>(T? Value, string? Error)
 {
     public bool Ok => Error is null;
 }
+
+/// <summary>One of the family's lists. Kind is "shopping" or "todo"; the first list is the main shopping list.</summary>
+public record ShopList(string Id, string Name, string Kind, List<string> Items)
+{
+    public bool IsTodo => Kind == "todo";
+}
+
+/// <summary>A usual Walmart item. ItemId is Walmart's product number, "" until a link is given.</summary>
+public record UsualItem(string Id, string Name, string ItemId, int Qty)
+{
+    public string Label => Qty > 1 ? $"{Qty} × {Name}" : Name;
+}
+
+/// <summary>A named set of usual items ("Weekly", "Shabbat").</summary>
+public record UsualSet(string Id, string Name, List<UsualItem> Items);
+
+/// <summary>GET and POST /api/manage/lists: every list and every set of usual items.</summary>
+public record ListsState(List<ShopList>? Lists, List<UsualSet>? Sets);

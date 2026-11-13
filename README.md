@@ -192,7 +192,9 @@ The iPad can also run the display as an app (`apple/`, built with Xcode on a Mac
 
 **The shopping list page.** `http://<computer>:8765/shop`, on any phone on the home Wi-Fi (or scan the code the display shows). It lists what's on the shopping list, with a "Find at Walmart" link beside each item, and it is where you set up your **usual Walmart items**: a name, how many, and the product's link from walmart.com or the Walmart app (Share → Copy link). "Put the usual items in my Walmart cart" opens Walmart with every usual item that has a link. Items without a link are left out of the cart.
 
-**The shopping list on the display.** While the list has items, a "Shopping" screen joins every display's rotation (not on Shabbat).
+**The lists on the display.** While any list has items, a "Lists" screen joins every display's rotation (not on Shabbat), with each list under its name.
+
+**More than one list.** In the Display Manager app, the Lists page makes more lists: another shopping list ("Hardware", "Costco") or a to-do list ("Kids"). Then: "Hey display, add nails to the hardware list", "add clean your room to the kids list", "take set the table off the kids list". The usual Walmart items can be split into sets the same way ("Weekly", "Shabbat"): "put the Shabbat list in the Walmart cart", "add the weekly list to the shopping list". The phone page has a chooser for the list and the set.
 
 **Walmart, once.** On the shopping list page, under "Walmart on the display computer": press the first button, and a Walmart sign-in window opens on the display computer. Sign in there with its keyboard, close the window, then press "I've signed in there". From then on the display fills your real Walmart cart. The sign-in lives in its own browser profile (`browser-profile-walmart`) on that computer.
 

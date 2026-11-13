@@ -34,6 +34,28 @@ public class ClientTests
     }
 
     [Fact]
+    public async Task Lists_are_read_and_changed()
+    {
+        const string answer = """
+            {"ok": true, "items": ["Milk"], "usuals": [],
+             "lists": [{"id": "main", "name": "Shopping", "kind": "shopping", "items": ["Milk"]},
+                       {"id": "a1", "name": "Kids", "kind": "todo", "items": ["Set the table"]}],
+             "sets": [{"id": "usuals", "name": "Usuals", "cart_url": "", "items": [{"id": "u1", "name": "Eggs", "item_id": "193637719", "qty": 2}]}]}
+            """;
+        var h = new FakeHandler(answer); var c = Client(h);
+        var r = await c.ChangeListsAsync("add_item", ("list", "a1"), ("text", "Set the table"));
+        Assert.Equal("http://test:8765/api/manage/lists", h.Last!.RequestUri!.ToString());
+        Assert.Equal("""{"op":"add_item","list":"a1","text":"Set the table"}""", h.LastBody);
+        Assert.True(r.Value!.Lists![1].IsTodo);
+        Assert.False(r.Value.Lists[0].IsTodo);
+        Assert.Equal("2 × Eggs", r.Value.Sets![0].Items[0].Label);
+        Assert.Equal("193637719", r.Value.Sets[0].Items[0].ItemId);
+
+        var refused = await Client(new FakeHandler("{\"ok\":false,\"error\":\"The main list can't be deleted.\"}", 400)).ChangeListsAsync("delete_list", ("list", "main"));
+        Assert.Equal("The main list can't be deleted.", refused.Error);
+    }
+
+    [Fact]
     public void Cookie_paste_is_trimmed_and_required()
     {
         Assert.Equal("abc", ManageClient.CleanCookie("  NYT-S=abc; "));

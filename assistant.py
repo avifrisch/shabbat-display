@@ -40,7 +40,8 @@ Your answer is read aloud. Keep it to one or two short sentences in plain words:
 no markdown, no emoji, no symbols a voice would stumble on. Say numbers the way people say them.
 
 Use a tool whenever the request is something a tool does, and only say a thing is done after \
-the tool has answered. You can keep a shopping list, set kitchen timers, play music from \
+the tool has answered. You can keep the family's lists (shopping lists and to-do lists; new lists are made in the \
+Display Manager app or on the shopping page, not by you), set kitchen timers, play music from \
 Apple Music on the display, put the family's usual Walmart items into their Walmart cart (walmart_cart), and show a code \
 on the display that a phone scans to open the shopping list. You cannot place an order, pay, \
 or send messages; the family reviews the cart and pays in the Walmart app. When the facts below list home \
@@ -73,9 +74,10 @@ TOOLS = [
          "label": {"type": "string", "description": "The timer's label, or 'all'."}},
          "required": ["label"]}},
     {"name": "add_to_shopping_list",
-     "description": "Add items to the family's shopping list. One entry per item, with any amount in the entry ('2 dozen eggs').",
+     "description": "Add items to one of the family's lists: a shopping list, or a to-do list (a job for the kids). One entry per item, with any amount in the entry ('2 dozen eggs').",
      "input_schema": {"type": "object", "properties": {
-         "items": {"type": "array", "items": {"type": "string"}}},
+         "items": {"type": "array", "items": {"type": "string"}},
+         "list": {"type": "string", "description": "The list's name exactly as in the facts. Leave out for the main shopping list."}},
          "required": ["items"]}},
     {"name": "play_music",
      "description": "Play music on the display from Apple Music. Replaces whatever is playing.",
@@ -123,19 +125,23 @@ TOOLS = [
      "description": "Put usual Walmart items into the family's Walmart cart, from the display computer. They review the cart and pay in the Walmart app; this never orders. Use it for 'reorder from Walmart', 'add milk to my Walmart cart' and the like.",
      "input_schema": {"type": "object", "properties": {
          "items": {"type": "array", "items": {"type": "string"},
-                   "description": "Names of usual items exactly as listed in the facts. Leave out for all of them."}}}},
+                   "description": "Names of usual items exactly as listed in the facts. Leave out for all of them."},
+         "set": {"type": "string", "description": "A set of usual items, by its name in the facts ('the Shabbat list from Walmart'). Leave out when they didn't name one."}}}},
     {"name": "send_to_phone",
      "description": "Show a code on the display for a phone's camera. 'list' opens the shopping list page, where the usual Walmart items are set up; 'cart' opens Walmart with the usual items in the cart on that phone. Only when they ask for a code or for it on their phone; to fill the cart, use walmart_cart.",
      "input_schema": {"type": "object", "properties": {
          "what": {"type": "string", "enum": ["cart", "list"]}},
          "required": ["what"]}},
     {"name": "add_usuals_to_shopping_list",
-     "description": "Copy the family's usual Walmart items onto the shopping list.",
-     "input_schema": {"type": "object", "properties": {}}},
-    {"name": "remove_from_shopping_list",
-     "description": "Take items off the shopping list. Use the items' names as they appear on the list.",
+     "description": "Copy a set of the family's usual items onto a shopping list.",
      "input_schema": {"type": "object", "properties": {
-         "items": {"type": "array", "items": {"type": "string"}}},
+         "set": {"type": "string", "description": "The set's name exactly as in the facts. Leave out for the first set."},
+         "list": {"type": "string", "description": "The shopping list's name. Leave out for the main one."}}}},
+    {"name": "remove_from_shopping_list",
+     "description": "Take items off a list (when something was bought, or a job is done). Use the items' names as they appear on the list; 'all' alone empties the list.",
+     "input_schema": {"type": "object", "properties": {
+         "items": {"type": "array", "items": {"type": "string"}},
+         "list": {"type": "string", "description": "The list's name exactly as in the facts. Leave out for the main shopping list."}},
          "required": ["items"]}},
 ]
 
@@ -241,7 +247,39 @@ class Budget:
             return True
 
 
+MAX_LISTS = 12
+MAX_NAME_LEN = 30
+
+
+def _pick(groups, which):
+    """The group (a shopping list, or a set of usual items) that `which` names: "" is the first,
+    otherwise its id or its name with case ignored (and a trailing "list" or "set" dropped). None if there is none."""
+    if not groups:
+        return None
+    if not isinstance(which, str) or not which.strip():
+        return groups[0]
+    want = " ".join(which.split()).casefold()
+    bare = re.sub(r"^the\s+|\s+(shopping list|list|set|items)$", "", want).strip()
+    return next((g for g in groups if g["id"] == which), None) \
+        or next((g for g in groups if g["name"].casefold() == want), None) \
+        or next((g for g in groups if g["name"].casefold() == bare), None)
+
+
+def _group_name(groups, name, skip=None):
+    """`name` cleaned, or "" when it is empty or another group has it already."""
+    name = _clean_text(name, MAX_NAME_LEN)
+    return "" if not name or any(g is not skip and g["name"].casefold() == name.casefold() for g in groups) else name
+
+
 class ShoppingList:
+    """The family's shopping lists, in shopping.json: {"lists": [{id, name, items: [{text, added, sent}]}]}.
+    `kind` is "shopping" or "todo" (a to-do list: jobs for the kids, say; the display shows it under
+    its name). The first is the main one: the one meant when no list is named, the one passed on to MenuApp,
+    and the one that can't be deleted. A file from before there were several lists
+    ({"items": [...]}) is read as the main list."""
+
+    MAIN = "Shopping"
+
     def __init__(self, path, now=datetime.now):
         self.path, self.now = path, now
         self.lock = threading.Lock()
@@ -249,20 +287,46 @@ class ShoppingList:
     def _load(self):
         try:
             with open(self.path, encoding="utf-8") as f:
-                items = json.load(f)["items"]
-            return [i for i in items if isinstance(i, dict) and isinstance(i.get("text"), str)]
-        except (OSError, ValueError, KeyError, TypeError):
-            return []
+                data = json.load(f)
+        except (OSError, ValueError):
+            data = None
+        data = data if isinstance(data, dict) else {}
 
-    def items(self):
+        def items(value):
+            return [i for i in value if isinstance(i, dict) and isinstance(i.get("text"), str)] if isinstance(value, list) else []
+
+        lists = []
+        for one in data["lists"] if isinstance(data.get("lists"), list) else []:
+            if isinstance(one, dict) and isinstance(one.get("id"), str) and isinstance(one.get("name"), str) and one["name"].strip():
+                lists.append({"id": one["id"], "name": one["name"], "kind": "todo" if one.get("kind") == "todo" else "shopping",
+                              "items": items(one.get("items"))})
+        return lists or [{"id": "main", "name": self.MAIN, "kind": "shopping", "items": items(data.get("items"))}]
+
+    def _save(self, lists):
+        _write_atomic(self.path, {"lists": lists})
+
+    def lists(self):
         with self.lock:
             return self._load()
 
-    def add(self, texts):
+    def name_of(self, which):
+        """The name of the list `which` means, or None."""
+        one = _pick(self.lists(), which)
+        return one["name"] if one else None
+
+    def items(self, which=""):
+        one = _pick(self.lists(), which)
+        return one["items"] if one else []
+
+    def add(self, texts, which=""):
         """Add what isn't already there. Returns (added, already_there)."""
         added, dup = [], []
         with self.lock:
-            items = self._load()
+            lists = self._load()
+            one = _pick(lists, which)
+            if one is None:
+                return added, dup
+            items = one["items"]
             have = {i["text"].casefold() for i in items}
             for text in texts:
                 if text.casefold() in have:
@@ -272,14 +336,16 @@ class ShoppingList:
                     have.add(text.casefold())
                     added.append(text)
             if added:
-                _write_atomic(self.path, {"items": items})
+                self._save(lists)
         return added, dup
 
-    def remove(self, texts):
+    def remove(self, texts, which=""):
         """Remove by name (case ignored; a name that is part of an item's text also matches)."""
         removed = []
         with self.lock:
-            items = self._load()
+            lists = self._load()
+            one = _pick(lists, which)
+            items = one["items"] if one else []
             for text in texts:
                 want = text.casefold()
                 hit = next((i for i in items if i["text"].casefold() == want), None) \
@@ -288,26 +354,72 @@ class ShoppingList:
                     items.remove(hit)
                     removed.append(hit["text"])
             if removed:
-                _write_atomic(self.path, {"items": items})
+                self._save(lists)
         return removed
 
-    def remove_exact(self, text):
+    def remove_exact(self, text, which=""):
         with self.lock:
-            items = self._load()
-            kept = [i for i in items if i["text"].casefold() != text.casefold()]
-            if len(kept) != len(items):
-                _write_atomic(self.path, {"items": kept})
+            lists = self._load()
+            one = _pick(lists, which)
+            if one is None:
+                return
+            kept = [i for i in one["items"] if i["text"].casefold() != text.casefold()]
+            if len(kept) != len(one["items"]):
+                one["items"] = kept
+                self._save(lists)
+
+    def clear(self, which):
+        with self.lock:
+            lists = self._load()
+            one = _pick(lists, which)
+            if one and one["items"]:
+                one["items"] = []
+                self._save(lists)
+
+    def create(self, name, kind="shopping"):
+        """A new empty list: a shopping list, or a to-do list ("todo"). Returns it, or None (no name,
+        a name in use, or too many lists)."""
+        with self.lock:
+            lists = self._load()
+            name = _group_name(lists, name)
+            if not name or len(lists) >= MAX_LISTS:
+                return None
+            one = {"id": os.urandom(4).hex(), "name": name, "kind": "todo" if kind == "todo" else "shopping", "items": []}
+            self._save(lists + [one])
+            return one
+
+    def rename(self, which, name):
+        with self.lock:
+            lists = self._load()
+            one = _pick(lists, which)
+            name = _group_name(lists, name, skip=one)
+            if one is None or not name:
+                return False
+            one["name"] = name
+            self._save(lists)
+            return True
+
+    def delete(self, which):
+        """Delete a list and its items. The main list stays."""
+        with self.lock:
+            lists = self._load()
+            one = _pick(lists, which)
+            if one is None or one is lists[0]:
+                return False
+            lists.remove(one)
+            self._save(lists)
+            return True
 
     def mark_sent(self, texts):
         with self.lock:
-            items = self._load()
+            lists = self._load()
             names = {t.casefold() for t in texts}
             changed = False
-            for i in items:
+            for i in lists[0]["items"]:
                 if i["text"].casefold() in names and not i.get("sent"):
                     i["sent"] = changed = True
             if changed:
-                _write_atomic(self.path, {"items": items})
+                self._save(lists)
 
     def unsent(self):
         return [i["text"] for i in self.items() if not i.get("sent")]
@@ -334,8 +446,12 @@ def walmart_item_name(link):
 
 
 class Usuals:
-    """The things the family buys again and again: [{id, name, item_id, qty}] in usuals.json.
-    `item_id` is Walmart's number for the product ("" until a product link is given)."""
+    """The things the family buys again and again, in named sets ("Weekly", "Shabbat"), in usuals.json:
+    {"sets": [{id, name, items: [{id, name, item_id, qty}]}]}. `item_id` is Walmart's number for the
+    product ("" until a product link is given). The first set is the one meant when none is named.
+    A file from before there were sets ({"items": [...]}) is read as one set."""
+
+    FIRST = "Usuals"
 
     def __init__(self, path):
         self.path = path
@@ -344,76 +460,171 @@ class Usuals:
     def _load(self):
         try:
             with open(self.path, encoding="utf-8") as f:
-                items = json.load(f)["items"]
-        except (OSError, ValueError, KeyError, TypeError):
-            return []
-        out = []
-        for i in items if isinstance(items, list) else []:
-            if isinstance(i, dict) and isinstance(i.get("id"), str) and isinstance(i.get("name"), str):
-                qty = i.get("qty")
-                out.append({"id": i["id"], "name": i["name"],
-                            "item_id": i["item_id"] if isinstance(i.get("item_id"), str) and i["item_id"].isdigit() else "",
-                            "qty": qty if isinstance(qty, int) and not isinstance(qty, bool) and 1 <= qty <= 24 else 1})
-        return out
+                data = json.load(f)
+        except (OSError, ValueError):
+            data = None
+        data = data if isinstance(data, dict) else {}
 
-    def items(self):
+        def items(value):
+            out = []
+            for i in value if isinstance(value, list) else []:
+                if isinstance(i, dict) and isinstance(i.get("id"), str) and isinstance(i.get("name"), str):
+                    qty = i.get("qty")
+                    out.append({"id": i["id"], "name": i["name"],
+                                "item_id": i["item_id"] if isinstance(i.get("item_id"), str) and i["item_id"].isdigit() else "",
+                                "qty": qty if isinstance(qty, int) and not isinstance(qty, bool) and 1 <= qty <= 24 else 1})
+            return out
+
+        sets = []
+        for one in data["sets"] if isinstance(data.get("sets"), list) else []:
+            if isinstance(one, dict) and isinstance(one.get("id"), str) and isinstance(one.get("name"), str) and one["name"].strip():
+                sets.append({"id": one["id"], "name": one["name"], "items": items(one.get("items"))})
+        return sets or [{"id": "usuals", "name": self.FIRST, "items": items(data.get("items"))}]
+
+    def _save(self, sets):
+        _write_atomic(self.path, {"sets": sets})
+
+    def sets(self):
         with self.lock:
             return self._load()
 
-    def add(self, name, link="", qty=1):
-        """Add an item, or update the one with this name. Returns it, or None if there is no name."""
+    def name_of(self, which):
+        one = _pick(self.sets(), which)
+        return one["name"] if one else None
+
+    def items(self, which=None):
+        """Every usual item (None), or one set's."""
+        sets = self.sets()
+        if which is None:
+            return [i for one in sets for i in one["items"]]
+        one = _pick(sets, which)
+        return one["items"] if one else []
+
+    def add(self, name, link="", qty=1, which=""):
+        """Add an item to a set, or update the one with this name there. Returns it, or None if there is no name."""
         name = _clean_text(name, MAX_ITEM_LEN) or walmart_item_name(link)
         if not name:
             return None
         qty = qty if isinstance(qty, int) and not isinstance(qty, bool) and 1 <= qty <= 24 else 1
         item_id = walmart_item_id(link)
         with self.lock:
-            items = self._load()
-            item = next((i for i in items if i["name"].casefold() == name.casefold()), None)
+            sets = self._load()
+            one = _pick(sets, which)
+            if one is None:
+                return None
+            item = next((i for i in one["items"] if i["name"].casefold() == name.casefold()), None)
             if item:
                 item.update(qty=qty, item_id=item_id or item["item_id"])
-            elif len(items) < MAX_ITEMS:
+            elif sum(len(x["items"]) for x in sets) < MAX_ITEMS:
                 item = {"id": os.urandom(4).hex(), "name": name, "item_id": item_id, "qty": qty}
-                items.append(item)
+                one["items"].append(item)
             else:
                 return None
-            _write_atomic(self.path, {"items": items})
+            self._save(sets)
             return item
 
     def remove(self, item_id):
         with self.lock:
-            items = self._load()
-            kept = [i for i in items if i["id"] != item_id]
-            if len(kept) != len(items):
-                _write_atomic(self.path, {"items": kept})
-            return len(kept) != len(items)
+            sets = self._load()
+            before = sum(len(x["items"]) for x in sets)
+            for one in sets:
+                one["items"] = [i for i in one["items"] if i["id"] != item_id]
+            changed = before != sum(len(x["items"]) for x in sets)
+            if changed:
+                self._save(sets)
+            return changed
 
-    def cart_url(self, only=None):
-        """Walmart's add-to-cart link for every usual item that has a product number (or just the
-        ones named in `only`); "" if none has."""
+    def move(self, item_id, which):
+        """Move an item to another set (replacing one of the same name there)."""
+        with self.lock:
+            sets = self._load()
+            to = _pick(sets, which)
+            item = next((i for one in sets for i in one["items"] if i["id"] == item_id), None)
+            if to is None or item is None or not which:
+                return False
+            for one in sets:
+                one["items"] = [i for i in one["items"] if i["id"] != item_id]
+            to["items"] = [i for i in to["items"] if i["name"].casefold() != item["name"].casefold()] + [item]
+            self._save(sets)
+            return True
+
+    def create(self, name):
+        with self.lock:
+            sets = self._load()
+            name = _group_name(sets, name)
+            if not name or len(sets) >= MAX_LISTS:
+                return None
+            one = {"id": os.urandom(4).hex(), "name": name, "items": []}
+            self._save(sets + [one])
+            return one
+
+    def rename(self, which, name):
+        with self.lock:
+            sets = self._load()
+            one = _pick(sets, which)
+            name = _group_name(sets, name, skip=one)
+            if one is None or not name:
+                return False
+            one["name"] = name
+            self._save(sets)
+            return True
+
+    def delete(self, which):
+        """Delete a set and its items. The last set stays."""
+        with self.lock:
+            sets = self._load()
+            one = _pick(sets, which)
+            if one is None or len(sets) == 1 or not which:
+                return False
+            sets.remove(one)
+            self._save(sets)
+            return True
+
+    def cart_url(self, only=None, which=None):
+        """Walmart's add-to-cart link for every usual item that has a product number (in one set,
+        and/or just the ones named in `only`); "" if none has."""
         want = None if only is None else {n.casefold() for n in only}
-        parts = [i["item_id"] if i["qty"] == 1 else f"{i['item_id']}_{i['qty']}" for i in self.items()
-                 if i["item_id"] and (want is None or i["name"].casefold() in want)]
+        seen, parts = set(), []
+        for i in self.items(which):
+            if i["item_id"] and i["item_id"] not in seen and (want is None or i["name"].casefold() in want):
+                seen.add(i["item_id"])
+                parts.append(i["item_id"] if i["qty"] == 1 else f"{i['item_id']}_{i['qty']}")
         return WALMART_CART + ",".join(parts) if parts else ""
 
 
 def shop_state(shopping, usuals, walmart=None):
-    """What the phone's shopping page shows."""
+    """What the phone's shopping page and the Display Manager's Lists page show. `items`, `usuals`
+    and `cart_url` (the main list, every usual item) are what an older page reads."""
     return {"ok": True, "items": [i["text"] for i in shopping.items()], "usuals": usuals.items(), "cart_url": usuals.cart_url(),
+            "lists": [{"id": one["id"], "name": one["name"], "kind": one["kind"], "items": [i["text"] for i in one["items"]]}
+                      for one in shopping.lists()],
+            "sets": [{**one, "cart_url": usuals.cart_url(which=one["id"])} for one in usuals.sets()],
             "walmart": {"available": walmart is not None, "signed_in": bool(walmart and walmart.signed_in())}}
 
 
 def shop_change(shopping, usuals, body, forward=None, walmart=None):
-    """One change from the shopping page. Returns (http status, dict)."""
+    """One change from the shopping page or the Display Manager. Returns (http status, dict).
+    `list` and `set` are a list's or set's id; without one, the main list or the first set."""
     if not isinstance(body, dict):
         return 400, {"ok": False, "error": "That request couldn't be read."}
     op = body.get("op")
+
+    def which(key):
+        return body.get(key) if isinstance(body.get(key), str) else ""
+
+    def bad(sentence, status=400):
+        return status, {"ok": False, "error": sentence}
+
     try:
+        if op in ("add_item", "remove_item", "clear_list", "rename_list", "delete_list") and shopping.name_of(which("list")) is None:
+            return bad("That list isn't there any more.")
+        if op in ("add_usual", "rename_set", "delete_set", "move_usual", "set_to_list") and usuals.name_of(which("set")) is None:
+            return bad("That set isn't there any more.")
         if op == "add_item":
             items = _clean_items([body.get("text")])
             if not items:
-                return 400, {"ok": False, "error": "Type an item first."}
-            shopping.add(items)
+                return bad("Type an item first.")
+            shopping.add(items, which("list"))
             if forward:
                 try:
                     pending = shopping.unsent()
@@ -422,38 +633,71 @@ def shop_change(shopping, usuals, body, forward=None, walmart=None):
                 except Exception:  # noqa: BLE001 - the item is saved here either way
                     pass
         elif op == "remove_item":
-            shopping.remove_exact(_clean_text(body.get("text"), MAX_ITEM_LEN))
+            shopping.remove_exact(_clean_text(body.get("text"), MAX_ITEM_LEN), which("list"))
+        elif op == "clear_list":
+            shopping.clear(which("list"))
+        elif op == "create_list":
+            if not shopping.create(body.get("name"), body.get("kind")):
+                return bad("Give the list a name that no other list has." if len(shopping.lists()) < MAX_LISTS
+                           else f"There can be {MAX_LISTS} lists.")
+        elif op == "rename_list":
+            if not shopping.rename(which("list"), body.get("name")):
+                return bad("Give the list a name that no other list has.")
+        elif op == "delete_list":
+            if not shopping.delete(which("list")):
+                return bad("The main list can't be deleted.")
         elif op == "add_usual":
             link = body.get("link") if isinstance(body.get("link"), str) else ""
             if link.strip() and not walmart_item_id(link):
-                return 400, {"ok": False, "error": "That doesn't look like a Walmart product link. Open the product on walmart.com and copy its link."}
-            if not usuals.add(body.get("name"), link, body.get("qty")):
-                return 400, {"ok": False, "error": "Give the item a name, or paste its Walmart product link."}
+                return bad("That doesn't look like a Walmart product link. Open the product on walmart.com and copy its link.")
+            if not usuals.add(body.get("name"), link, body.get("qty"), which("set")):
+                return bad("Give the item a name, or paste its Walmart product link.")
         elif op == "remove_usual":
-            usuals.remove(body.get("id") if isinstance(body.get("id"), str) else "")
+            usuals.remove(which("id"))
+        elif op == "move_usual":
+            if not which("set") or not usuals.move(which("id"), which("set")):
+                return bad("That item isn't there any more.")
+        elif op == "create_set":
+            if not usuals.create(body.get("name")):
+                return bad("Give the set a name that no other set has." if len(usuals.sets()) < MAX_LISTS
+                           else f"There can be {MAX_LISTS} sets.")
+        elif op == "rename_set":
+            if not usuals.rename(which("set"), body.get("name")):
+                return bad("Give the set a name that no other set has.")
+        elif op == "delete_set":
+            if not which("set") or not usuals.delete(which("set")):
+                return bad("The last set can't be deleted.")
+        elif op == "set_to_list":
+            if shopping.name_of(which("list")) is None:
+                return bad("That list isn't there any more.")
+            shopping.add([(f"{u['qty']} x " if u["qty"] > 1 else "") + u["name"] for u in usuals.items(which("set"))], which("list"))
         elif op in ("walmart_open_sign_in", "walmart_signed_in", "walmart_forget", "walmart_fill") and walmart is None:
-            return 400, {"ok": False, "error": "This display computer can't open Walmart."}
+            return bad("This display computer can't open Walmart.")
         elif op == "walmart_open_sign_in":
             problem = walmart.open_sign_in()
             if problem:
-                return 500, {"ok": False, "error": problem}
+                return bad(problem, 500)
         elif op == "walmart_signed_in":
             walmart.set_signed_in(True)
         elif op == "walmart_forget":
             walmart.set_signed_in(False)
         elif op == "walmart_fill":
-            cart = usuals.cart_url()
+            one = which("set") or None
+            if one and usuals.name_of(one) is None:
+                return bad("That set isn't there any more.")
+            cart = usuals.cart_url(which=one)
             if not cart:
-                return 400, {"ok": False, "error": "No usual item has a Walmart link yet."}
+                return bad("No usual item has a Walmart link yet.")
             ok, why = walmart.add(cart)
             if not ok:
                 from walmart import SENTENCES
-                return 502, {"ok": False, "error": SENTENCES.get(why, "It did not work.")}
-            return 200, {**shop_state(shopping, usuals, walmart), "note": "The usual items are in your Walmart cart. Review it and check out in the Walmart app."}
+                return bad(SENTENCES.get(why, "It did not work."), 502)
+            what = f"The {usuals.name_of(one)} items are" if one else "The usual items are"
+            return 200, {**shop_state(shopping, usuals, walmart), "note": what + " in your Walmart cart. Review it and check out in the Walmart app."}
         else:
-            return 400, {"ok": False, "error": "That request couldn't be read."}
+            return bad("That request couldn't be read.")
     except OSError:
-        return 500, {"ok": False, "error": "That couldn't be saved on the display computer."}
+        return bad("That couldn't be saved on the display computer.", 500)
     return 200, shop_state(shopping, usuals, walmart)
 
 
@@ -645,8 +889,10 @@ class Assistant:
 
     def _facts(self, facts, timers, music=None, home=None, reminders=()):
         lines = [facts.strip()] if facts and facts.strip() else []
-        items = [i["text"] for i in self.shopping.items()]
-        lines.append("Shopping list: " + ("; ".join(items) if items else "empty") + ".")
+        for n, one in enumerate(self.shopping.lists()):
+            items = [i["text"] for i in one["items"]]
+            what = "Shopping list" if n == 0 else f"{'To-do' if one['kind'] == 'todo' else 'Shopping'} list \"{one['name']}\""
+            lines.append(what + ": " + ("; ".join(items) if items else "empty") + ".")
         if timers:
             lines.append("Timers: " + "; ".join(
                 f"{t['label'] or 'unnamed'} ({'ringing now' if t['ringing'] else _span(t['seconds_left']) + ' left'})"
@@ -661,13 +907,14 @@ class Assistant:
             f"{r['text']} at {r['when'].replace('T', ' ')}" + ("" if r["repeat"] == "none" else f", {r['repeat']}")
             for r in reminders) if reminders else "none") + ".")
         lines += self._home_facts(home)
-        usual = self.usuals.items()
-        if usual:
-            lines.append("Usual Walmart items: " + "; ".join(
-                (f"{u['qty']} x " if u["qty"] > 1 else "") + u["name"] + ("" if u["item_id"] else " (no product link yet)")
-                for u in usual) + ".")
-        else:
+        sets = self.usuals.sets()
+        if not any(one["items"] for one in sets):
             lines.append("Usual Walmart items: none set up.")
+        for one in sets:
+            if one["items"] or len(sets) > 1:
+                lines.append(("Usual Walmart items" if len(sets) == 1 else f"Usual Walmart items, set \"{one['name']}\"") + ": " + ("; ".join(
+                    (f"{u['qty']} x " if u["qty"] > 1 else "") + u["name"] + ("" if u["item_id"] else " (no product link yet)")
+                    for u in one["items"]) or "empty") + ".")
         return "\n".join(lines)
 
     def _home_facts(self, home):
@@ -738,11 +985,14 @@ class Assistant:
                 items = _clean_items(args.get("items"))
                 if not items:
                     return {"content": "No items were given.", "is_error": True}
-                added, dup = self.shopping.add(items)
+                where = self._list(args.get("list"))
+                if where is None:
+                    return self._no_list()
+                added, dup = self.shopping.add(items, where)
                 self._send_on()
                 note = (f" Already on the list: {', '.join(dup)}." if dup else "") + \
                        ("" if len(added) + len(dup) == len(items) else " The list is full.")
-                return {"content": (f"Added: {', '.join(added)}." if added else "Nothing new was added.") + note}
+                return {"content": (f"Added{self._to(where)}: {', '.join(added)}." if added else "Nothing new was added.") + note}
             if name == "play_music":
                 query = _clean_text(args.get("query"), 120)
                 if not query:
@@ -798,7 +1048,10 @@ class Assistant:
             if name in ("home_set", "home_scene"):
                 return self._home_tool(name, args, actions, home)
             if name == "walmart_cart":
-                usual = self.usuals.items()
+                one = _clean_text(args.get("set"), 40) or None
+                if one and self.usuals.name_of(one) is None:
+                    return self._no_set()
+                usual = self.usuals.items(one)
                 asked = _clean_items(args.get("items")) or None
                 if asked:
                     known = {u["name"].casefold() for u in usual}
@@ -807,7 +1060,7 @@ class Assistant:
                         return {"content": f"Not usual items: {', '.join(unknown)}. Only the listed usual items can go in the cart; "
                                            "anything else can go on the shopping list.", "is_error": True}
                 chosen = [u for u in usual if asked is None or u["name"].casefold() in {n.casefold() for n in asked}]
-                cart = self.usuals.cart_url(asked)
+                cart = self.usuals.cart_url(asked, one)
                 missing = [u["name"] for u in chosen if not u["item_id"]]
                 if not cart:
                     actions.append({"type": "show_code", "path": "/shop", "title": "Set up your usual items"})
@@ -838,20 +1091,48 @@ class Assistant:
                 return {"content": "A code is on the display. Scanning it with a phone opens Walmart with the usual items in the cart; "
                                    "they review it and check out there." + (f" Left out, no product link yet: {', '.join(missing)}." if missing else "")}
             if name == "add_usuals_to_shopping_list":
-                names = [(f"{u['qty']} x " if u["qty"] > 1 else "") + u["name"] for u in self.usuals.items()]
+                one = _clean_text(args.get("set"), 40)
+                if self.usuals.name_of(one) is None:
+                    return self._no_set()
+                where = self._list(args.get("list"))
+                if where is None:
+                    return self._no_list()
+                names = [(f"{u['qty']} x " if u["qty"] > 1 else "") + u["name"] for u in self.usuals.items(one)]
                 if not names:
-                    return {"content": "No usual items are set up yet."}
-                added, dup = self.shopping.add(names)
+                    return {"content": "That set has no items yet." if self.usuals.items() else "No usual items are set up yet."}
+                added, dup = self.shopping.add(names, where)
                 self._send_on()
-                return {"content": (f"Added: {', '.join(added)}." if added else "They were all on the list already.")}
+                return {"content": (f"Added{self._to(where)}: {', '.join(added)}." if added else "They were all on the list already.")}
             if name == "remove_from_shopping_list":
                 items = _clean_items(args.get("items"))
-                removed = self.shopping.remove(items)
-                return {"content": f"Removed: {', '.join(removed)}." if removed else "None of those were on the list."}
+                where = self._list(args.get("list"))
+                if where is None:
+                    return self._no_list()
+                if [i.casefold() for i in items] == ["all"]:
+                    self.shopping.clear(where)
+                    return {"content": f"{where} is empty now."}
+                removed = self.shopping.remove(items, where)
+                return {"content": f"Removed from {where}: {', '.join(removed)}." if removed else "None of those were on that list."}
         except OSError as e:
             self.log(f"assistant: {name} failed ({e})")
             return {"content": "That couldn't be saved on the display computer.", "is_error": True}
         return {"content": f"There is no tool called {name}.", "is_error": True}
+
+    def _list(self, said):
+        """The name of the list a tool call means (the main one when none was given), or None."""
+        return self.shopping.name_of(_clean_text(said, 40))
+
+    def _to(self, where):
+        """" to <list>" for any list but the main one."""
+        return "" if where == self.shopping.name_of("") else f" to {where}"
+
+    def _no_list(self):
+        return {"content": "There is no list with that name. The lists are: " + "; ".join(one["name"] for one in self.shopping.lists())
+                           + ". A new list is made in the Display Manager app or on the shopping page.", "is_error": True}
+
+    def _no_set(self):
+        return {"content": "There is no set of usual items with that name. The sets are: "
+                           + "; ".join(one["name"] for one in self.usuals.sets()) + ".", "is_error": True}
 
     def _send_on(self):
         """Pass new items on (to MenuApp, when the server is set up for it). Failures wait for next time."""

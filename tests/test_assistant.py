@@ -717,8 +717,9 @@ class Route(HouseholdCase):
         server.ASSISTANT.shopping.add(["milk", "eggs"])
         with urllib.request.urlopen(self.base + "/api/state?screen=iPad&preview=1", timeout=5) as r:
             state = json.loads(r.read())
-        self.assertEqual(state["data"]["shopping"], {"items": ["milk", "eggs"]})
-        self.assertIn({"scene": "shopping", "label": "Shopping list"}, server.scene_catalog())
+        self.assertEqual(state["data"]["shopping"], {"items": ["milk", "eggs"], "lists": [
+            {"name": "Shopping", "kind": "shopping", "items": ["milk", "eggs"]}]})
+        self.assertIn({"scene": "shopping", "label": "Lists"}, server.scene_catalog())
 
     def test_the_push_address(self):
         self.assertIs(server._push_announcement("x"), False)
@@ -744,8 +745,11 @@ class Route(HouseholdCase):
             page = r.read()
             self.assertIn("text/html", r.headers["Content-Type"])
         self.assertIn(b"Usual Walmart items", page)
-        self.assertEqual(self.call("/api/shop"), (200, {"ok": True, "items": [], "usuals": [], "cart_url": "",
-                                                        "walmart": {"available": True, "signed_in": False}}))
+        self.assertEqual(self.call("/api/shop"), (200, {
+            "ok": True, "items": [], "usuals": [], "cart_url": "",
+            "lists": [{"id": "main", "name": "Shopping", "kind": "shopping", "items": []}],
+            "sets": [{"id": "usuals", "name": "Usuals", "items": [], "cart_url": ""}],
+            "walmart": {"available": True, "signed_in": False}}))
         status, state = self.call("/api/shop", {"op": "add_usual", "name": "Milk", "link": "10450114", "qty": 1})
         self.assertEqual((status, state["cart_url"]), (200, "https://www.walmart.com/sc/cart/addToCart?items=10450114"))
         self.assertEqual(self.call("/api/shop", {"op": "add_item", "text": "eggs"})[1]["items"], ["eggs"])
@@ -754,6 +758,129 @@ class Route(HouseholdCase):
     def test_the_key_never_reaches_a_screen(self):
         with urllib.request.urlopen(self.base + "/api/state", timeout=5) as r:
             self.assertNotIn(b"sk-test", r.read())
+
+
+class Lists(Case):
+    """Several shopping lists, to-do lists, and named sets of usual items."""
+
+    def change(self, **body):
+        return assistant.shop_change(self.a.shopping, self.a.usuals, body)
+
+    def test_an_old_file_is_the_main_list(self):
+        with open(self.a.shopping.path, "w", encoding="utf-8") as f:
+            json.dump({"items": [{"text": "Milk", "added": "x", "sent": True}, "junk"]}, f)
+        with open(self.a.usuals.path, "w", encoding="utf-8") as f:
+            json.dump({"items": [{"id": "a1", "name": "Eggs", "item_id": "123456", "qty": 2}]}, f)
+        self.assertEqual([(one["id"], one["name"], one["kind"]) for one in self.a.shopping.lists()], [("main", "Shopping", "shopping")])
+        self.assertEqual([i["text"] for i in self.a.shopping.items()], ["Milk"])
+        self.assertEqual([(one["name"], [i["name"] for i in one["items"]]) for one in self.a.usuals.sets()], [("Usuals", ["Eggs"])])
+        self.a.shopping.add(["Bread"])
+        with open(self.a.shopping.path, encoding="utf-8") as f:
+            self.assertEqual([i["text"] for i in json.load(f)["lists"][0]["items"]], ["Milk", "Bread"])
+
+    def test_lists_are_made_renamed_and_deleted(self):
+        status, state = self.change(op="create_list", name=" Kids ", kind="todo")
+        kids = state["lists"][1]
+        self.assertEqual((status, kids["name"], kids["kind"]), (200, "Kids", "todo"))
+        self.assertEqual(self.change(op="create_list", name="kids")[0], 400)      # the name is taken
+        self.assertEqual(self.change(op="create_list", name="  ")[0], 400)
+        self.change(op="add_item", list=kids["id"], text="Set the table")
+        self.change(op="add_item", text="Milk")
+        state = self.change(op="rename_list", list=kids["id"], name="Jobs")[1]
+        self.assertEqual([(one["name"], one["items"]) for one in state["lists"]], [("Shopping", ["Milk"]), ("Jobs", ["Set the table"])])
+        self.assertEqual(state["items"], ["Milk"])
+        self.assertEqual(self.forwarded, [])                                       # shop_change was given no forwarder here
+        self.assertEqual(self.change(op="delete_list", list="main")[0], 400)       # the main list stays
+        self.assertEqual(self.change(op="add_item", list="gone", text="x")[0], 400)
+        self.assertEqual(self.change(op="clear_list", list=kids["id"])[1]["lists"][1]["items"], [])
+        self.assertEqual(len(self.change(op="delete_list", list=kids["id"])[1]["lists"]), 1)
+        for n in range(assistant.MAX_LISTS):
+            self.change(op="create_list", name=f"List {n}")
+        self.assertEqual(len(self.a.shopping.lists()), assistant.MAX_LISTS)
+
+    def test_only_the_main_list_goes_to_menuapp(self):
+        self.a.shopping.create("Hardware")
+        self.answers = [tool("add_to_shopping_list", {"items": ["nails"], "list": "the hardware list"}), text("Added.")]
+        self.ask("add nails to the hardware list")
+        self.assertEqual(self.result()["content"], "Added to Hardware: nails.")
+        self.assertEqual([i["text"] for i in self.a.shopping.items("Hardware")], ["nails"])
+        self.assertEqual(self.a.shopping.items(), [])
+        self.assertEqual(self.forwarded, [])
+        self.assertIn('Shopping list "Hardware": nails.', self.facts_after())
+
+    def test_a_job_for_the_kids_by_voice(self):
+        self.a.shopping.create("Kids", "todo")
+        self.answers = [tool("add_to_shopping_list", {"items": ["Clean your room"], "list": "Kids"}), text("Added.")]
+        self.ask("add clean your room to the kids list")
+        self.assertIn('To-do list "Kids": Clean your room.', self.facts_after())
+        self.answers = [tool("remove_from_shopping_list", {"items": ["room"], "list": "kids"}), text("Done.")]
+        self.ask("the room is clean")
+        self.assertEqual(self.result()["content"], "Removed from Kids: Clean your room.")
+        self.a.shopping.add(["a", "b"], "Kids")
+        self.answers = [tool("remove_from_shopping_list", {"items": ["all"], "list": "Kids"}), text("Done.")]
+        self.ask("clear the kids list")
+        self.assertEqual(self.a.shopping.items("Kids"), [])
+
+    def test_a_list_that_isnt_there_is_refused_with_the_names(self):
+        self.answers = [tool("add_to_shopping_list", {"items": ["x"], "list": "Costco"}), text("There is no Costco list.")]
+        self.ask("add x to the costco list")
+        self.assertTrue(self.result()["is_error"])
+        self.assertIn("The lists are: Shopping.", self.result()["content"])
+        self.assertEqual(self.a.shopping.items(), [])
+
+    def test_sets_of_usual_items(self):
+        shabbat = self.change(op="create_set", name="Shabbat")[1]["sets"][1]
+        self.change(op="add_usual", name="Milk", link="10450114", qty=2)
+        self.change(op="add_usual", set=shabbat["id"], name="Challah", link="222222")
+        self.change(op="add_usual", set=shabbat["id"], name="Grape juice")
+        state = assistant.shop_state(self.a.shopping, self.a.usuals)
+        self.assertEqual([(one["name"], [i["name"] for i in one["items"]], one["cart_url"]) for one in state["sets"]],
+                         [("Usuals", ["Milk"], "https://www.walmart.com/sc/cart/addToCart?items=10450114_2"),
+                          ("Shabbat", ["Challah", "Grape juice"], "https://www.walmart.com/sc/cart/addToCart?items=222222")])
+        self.assertEqual(state["cart_url"], "https://www.walmart.com/sc/cart/addToCart?items=10450114_2,222222")
+
+        self.answers = [tool("add_usuals_to_shopping_list", {"set": "shabbat"}), text("Added.")]
+        self.ask("add the shabbat list")
+        self.assertEqual([i["text"] for i in self.a.shopping.items()], ["Challah", "Grape juice"])
+        self.assertIn('Usual Walmart items, set "Shabbat": Challah; Grape juice (no product link yet).', self.sent[-1]["system"])
+        self.answers = [tool("add_usuals_to_shopping_list", {"set": "Pesach"}), text("No such set.")]
+        self.ask("add the pesach list")
+        self.assertIn("The sets are: Usuals; Shabbat.", self.result()["content"])
+
+        milk = self.a.usuals.items("Usuals")[0]
+        state = self.change(op="move_usual", id=milk["id"], set=shabbat["id"])[1]
+        self.assertEqual([[i["name"] for i in one["items"]] for one in state["sets"]], [[], ["Challah", "Grape juice", "Milk"]])
+        self.assertEqual(self.change(op="move_usual", id="nope", set=shabbat["id"])[0], 400)
+        self.assertEqual(self.change(op="set_to_list", set=shabbat["id"])[1]["items"], ["Challah", "Grape juice", "2 x Milk"])
+        self.assertEqual(len(self.change(op="delete_set", set=shabbat["id"])[1]["sets"]), 1)
+        self.assertEqual(self.change(op="delete_set", set="usuals")[0], 400)       # the last set stays
+
+    def test_the_cart_takes_one_set(self):
+        self.a.usuals.add("Milk", "10450114")
+        self.a.usuals.create("Shabbat")
+        self.a.usuals.add("Challah", "222222", 1, "Shabbat")
+        added = []
+
+        class Cart:
+            def add(self, url):
+                added.append(url)
+                return True, ""
+        self.a.walmart = Cart()
+        self.answers = [tool("walmart_cart", {"set": "Shabbat"}), text("Done.")]
+        self.ask("put the shabbat list in the walmart cart")
+        self.assertEqual(added, ["https://www.walmart.com/sc/cart/addToCart?items=222222"])
+        self.assertIn("In the Walmart cart now: Challah.", self.result()["content"])
+        self.answers = [tool("walmart_cart", {}), text("Done.")]
+        self.ask("reorder from walmart")
+        self.assertEqual(added[-1], "https://www.walmart.com/sc/cart/addToCart?items=10450114,222222")
+
+    def result(self):
+        return self.sent[-1]["messages"][2]["content"][0]
+
+    def facts_after(self):
+        self.answers = [text("ok")]
+        self.ask("what is on the lists")
+        return self.sent[-1]["system"]
 
 
 if __name__ == "__main__":

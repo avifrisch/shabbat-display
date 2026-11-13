@@ -57,6 +57,16 @@ public class ManageClient(HttpClient http, Uri baseUri, string key)
     public async Task<Result<bool>> SetNytCookieAsync(string cookie) =>
         Pick(await Send<JsonObject>(HttpMethod.Post, "nyt", new { cookie }), j => j["nyt_signed_in"]?.GetValue<bool>() ?? false);
 
+    public Task<Result<ListsState>> GetListsAsync() => Send<ListsState>(HttpMethod.Get, "lists");
+
+    /// <summary>One change to the lists or the usual items (`op` plus what it needs); the answer is everything as it now stands.</summary>
+    public Task<Result<ListsState>> ChangeListsAsync(string op, params (string Key, object? Value)[] more)
+    {
+        var body = new Dictionary<string, object?> { ["op"] = op };
+        foreach (var (k, v) in more) body[k] = v;
+        return Send<ListsState>(HttpMethod.Post, "lists", body);
+    }
+
     public Task<Result<ShulUpdate>> UpdateShulAsync() => Send<ShulUpdate>(HttpMethod.Post, "shul-update", new { });
 
     /// <summary>Whether /health answers, for after a restart.</summary>

@@ -2628,7 +2628,11 @@ def _state_json(screen, fallback=None, preview=False):
     if "agenda" not in [r["scene"] for r in rot]:
         data = {k: v for k, v in data.items() if k != "agenda"}
     # The shopping list, for the page's "shopping" scene (it shows itself while the list has items).
-    data = {**data, "shopping": {"items": [i["text"] for i in ASSISTANT.shopping.items()]}}
+    # `lists` has every list with something on it (shopping and to-do); `items` is the main one, for an older page.
+    lists = ASSISTANT.shopping.lists()
+    data = {**data, "shopping": {"items": [i["text"] for i in lists[0]["items"]],
+                                 "lists": [{"name": one["name"], "kind": one["kind"], "items": [i["text"] for i in one["items"]]}
+                                           for one in lists if one["items"]]}}
     cfg = {k: CONFIG[k] for k in ("location_name", "team_abbr", "division_name", "zmanim_labels",
                                   "dim_start", "dim_end", "dim_level", "rotation_seconds")}
     fav = mlb_favorite() if fallback is None else {"abbr": CONFIG["team_abbr"], "division_name": CONFIG["division_name"]}
@@ -2843,7 +2847,7 @@ def shop_route(body=None):
 
 STARTED = time.time()
 BUILTIN_SCENES = [("agenda", "Agenda (private)"), ("shul", "Shul"), ("yankees", "MLB team"), ("mlb", "Around the majors"),
-                  ("news", "Headlines"), ("israel", "Israel"), ("business", "Business"), ("shopping", "Shopping list")]
+                  ("news", "Headlines"), ("israel", "Israel"), ("business", "Business"), ("shopping", "Lists")]
 TICKER = re.compile(r"[A-Z][A-Z0-9.\-]{0,9}")
 
 
@@ -3105,6 +3109,8 @@ def manage_route(method, path, query, key, body):
             return 200, json.dumps(_manage_status())
         if method == "GET" and name == "household":
             return 200, json.dumps(_public_household(household()))
+        if method == "GET" and name == "lists":
+            return shop_route()
         if method == "GET" and name == "log":
             try:
                 n = max(1, min(500, int((q.get("lines") or ["200"])[0])))
@@ -3127,6 +3133,8 @@ def manage_route(method, path, query, key, body):
             data = json.loads(body or b"{}")
         except ValueError:
             raise BadRequest("The request wasn't valid JSON.") from None
+        if name == "lists":
+            return shop_route(body or b"{}")
         if name in SAVERS:
             with _household_lock:
                 h = household()

@@ -1,0 +1,51 @@
+<Page
+    x:Class="ShabbatManager.Pages.ListsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    NavigationCacheMode="Required">
+    <ScrollViewer>
+        <StackPanel Spacing="8" MaxWidth="760" HorizontalAlignment="Left" Padding="0,0,24,24">
+            <Grid>
+                <TextBlock Text="Lists" Style="{StaticResource TitleTextBlockStyle}" />
+                <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right">
+                    <ProgressRing x:Name="Busy" IsActive="False" Width="20" Height="20" />
+                    <Button Content="Refresh" Click="Refresh_Click" />
+                </StackPanel>
+            </Grid>
+            <InfoBar x:Name="Message" IsClosable="True" />
+            <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="Shopping lists and to-do lists show on the screens while they have something on them, except on Shabbat and Yom Tov. Changes here are saved at once. By voice: &quot;add nails to the hardware list&quot;, &quot;add clean your room to the kids list&quot;." />
+
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
+                <ComboBox x:Name="ListPick" Header="List" Width="240" SelectionChanged="ListPick_SelectionChanged" />
+                <Button Content="New list" VerticalAlignment="Bottom" Click="NewList_Click" />
+                <Button x:Name="RenameList" Content="Rename" VerticalAlignment="Bottom" Click="RenameList_Click" />
+                <Button x:Name="ClearList" Content="Empty it" VerticalAlignment="Bottom" Click="ClearList_Click" />
+                <Button x:Name="DeleteList" Content="Delete" VerticalAlignment="Bottom" Click="DeleteList_Click" />
+            </StackPanel>
+            <StackPanel x:Name="Items" Spacing="2" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBox x:Name="ItemText" PlaceholderText="Add an item" Width="360" MaxLength="80" KeyDown="ItemText_KeyDown" />
+                <Button Content="Add" Click="AddItem_Click" />
+            </StackPanel>
+
+            <TextBlock Text="Usual Walmart items" Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,24,0,0" />
+            <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="The things bought again and again, in sets. By voice: &quot;put the Shabbat list in the Walmart cart&quot;, &quot;add the weekly list to the shopping list&quot;. An item needs its Walmart product link (or item number) to go in the cart." />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <ComboBox x:Name="SetPick" Header="Set" Width="240" SelectionChanged="SetPick_SelectionChanged" />
+                <Button Content="New set" VerticalAlignment="Bottom" Click="NewSet_Click" />
+                <Button x:Name="RenameSet" Content="Rename" VerticalAlignment="Bottom" Click="RenameSet_Click" />
+                <Button x:Name="SetToList" Content="Add to the shopping list" VerticalAlignment="Bottom" Click="SetToList_Click" />
+                <Button x:Name="DeleteSet" Content="Delete" VerticalAlignment="Bottom" Click="DeleteSet_Click" />
+            </StackPanel>
+            <StackPanel x:Name="Usuals" Spacing="2" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBox x:Name="UsualName" PlaceholderText="Name (optional with a link)" Width="220" MaxLength="80" />
+                <NumberBox x:Name="UsualQty" Value="1" Minimum="1" Maximum="24" SpinButtonPlacementMode="Compact" Width="90" AutomationProperties.Name="How many" />
+                <TextBox x:Name="UsualLink" PlaceholderText="Walmart product link or item number" Width="280" />
+                <Button Content="Add" Click="AddUsual_Click" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

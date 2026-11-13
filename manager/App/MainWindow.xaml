@@ -21,6 +21,7 @@
                 <NavigationViewItem Content="Live view" Tag="Live" Icon="Play" />
                 <NavigationViewItem Content="Sports" Tag="Sports" Icon="Favorite" />
                 <NavigationViewItem Content="Business" Tag="Business" Icon="Shop" />
+                <NavigationViewItem Content="Lists" Tag="Lists" Icon="List" />
                 <NavigationViewItem Content="Screens" Tag="Screens" Icon="TwoPage" />
                 <NavigationViewItem Content="Shul" Tag="Shul" Icon="Calendar" />
                 <NavigationViewItem Content="NYT" Tag="NYT" Icon="Contact" />

@@ -28,12 +28,14 @@ button.go, a.big { display: block; width: 100%; text-align: center; text-decorat
 form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 input { font: inherit; flex: 1 1 160px; min-width: 0; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--line); background: #0f1a2b; color: var(--text); }
 input.qty { flex: 0 0 76px; }
+select { font: inherit; width: 100%; padding: 11px 12px; margin: 0 0 10px; border-radius: 10px; border: 1px solid var(--line); background: #0f1a2b; color: var(--text); }
 #error { color: var(--red); min-height: 1.4em; margin: 12px 0 0; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Shopping list</h1>
+  <h1 id="title">Shopping list</h1>
+  <select id="list-pick" aria-label="Which list" hidden></select>
   <ul id="items"></ul>
   <form id="add-item">
     <input id="item-text" placeholder="Add an item" maxlength="80" autocomplete="off" enterkeyhint="done">
@@ -42,6 +44,7 @@ input.qty { flex: 0 0 76px; }
 
   <h2>Usual Walmart items</h2>
   <p class="note">The things you buy again and again. Paste each one's Walmart product link (open the product on walmart.com or in the app, Share, Copy link); the name fills itself in. The button below then puts all of them in your Walmart cart. You review the cart and check out at Walmart.</p>
+  <select id="set-pick" aria-label="Which set of usual items" hidden></select>
   <ul id="usuals"></ul>
   <form id="add-usual">
     <input id="usual-name" placeholder="Name (optional with a link)" maxlength="80" autocomplete="off">
@@ -49,6 +52,7 @@ input.qty { flex: 0 0 76px; }
     <input id="usual-link" placeholder="Walmart product link" autocomplete="off" inputmode="url">
     <button>Save</button>
   </form>
+  <button id="to-list" type="button" hidden>Add these to the shopping list</button>
   <button id="fill" class="go" type="button" hidden>Put the usual items in our Walmart cart</button>
   <a id="cart" class="big" target="_blank" rel="noopener" hidden>Open them in Walmart on this phone instead</a>
 
@@ -82,26 +86,60 @@ function removeButton(label, change) {
   return b;
 }
 
+let listId = "", setId = "";   // the list and the set of usual items being shown ("" = the first)
+
+function pick(select, groups, chosen) {
+  select.hidden = groups.length < 2;
+  select.replaceChildren();
+  groups.forEach((g) => {
+    const o = el("option", "", g.name);
+    o.value = g.id;
+    o.selected = g.id === chosen;
+    select.appendChild(o);
+  });
+}
+
 function show(state) {
+  const lists = state.lists || [], sets = state.sets || [];
+  const list = lists.find((l) => l.id === listId) || lists[0];
+  const set = sets.find((x) => x.id === setId) || sets[0];
+  listId = list.id; setId = set.id;
+  pick($("list-pick"), lists, listId);
+  pick($("set-pick"), sets, setId);
+  const todo = list.kind === "todo";
+  $("title").textContent = list === lists[0] ? "Shopping list" : list.name;
+  $("item-text").placeholder = todo ? "Add a job" : "Add an item";
+
   const items = $("items");
   items.replaceChildren();
-  if (!state.items.length) items.appendChild(el("li", "empty", "Nothing on the list."));
-  state.items.forEach((text) => {
-    const find = el("a", "find", "Find at Walmart");
-    find.href = "https://www.walmart.com/search?q=" + encodeURIComponent(text);
-    find.target = "_blank";
-    find.rel = "noopener";
-    items.appendChild(row([el("span", "name", text), find, removeButton(text, {op: "remove_item", text})]));
+  if (!list.items.length) items.appendChild(el("li", "empty", "Nothing on the list."));
+  list.items.forEach((text) => {
+    const parts = [el("span", "name", text)];
+    if (!todo) {
+      const find = el("a", "find", "Find at Walmart");
+      find.href = "https://www.walmart.com/search?q=" + encodeURIComponent(text);
+      find.target = "_blank";
+      find.rel = "noopener";
+      parts.push(find);
+    }
+    const done = removeButton(text, {op: "remove_item", list: listId, text});
+    if (todo) done.textContent = "Done";
+    parts.push(done);
+    items.appendChild(row(parts));
   });
 
   const usuals = $("usuals");
   usuals.replaceChildren();
-  if (!state.usuals.length) usuals.appendChild(el("li", "empty", "No usual items yet."));
-  state.usuals.forEach((u) => {
+  if (!set.items.length) usuals.appendChild(el("li", "empty", "No usual items yet."));
+  set.items.forEach((u) => {
     const name = el("span", "name", (u.qty > 1 ? u.qty + " × " : "") + u.name);
     name.appendChild(el("span", "sub", u.item_id ? "Walmart item " + u.item_id : "No product link yet: left out of the cart"));
     usuals.appendChild(row([name, removeButton(u.name, {op: "remove_usual", id: u.id})]));
   });
+  const several = sets.length > 1;
+  $("to-list").hidden = !set.items.length;
+  $("fill").textContent = several ? "Put the " + set.name + " items in our Walmart cart" : "Put the usual items in our Walmart cart";
+  state = {...state, cart_url: set.cart_url};
 
   const cart = $("cart");
   cart.hidden = !state.cart_url;
@@ -135,20 +173,23 @@ async function send(change) {
 $("add-item").onsubmit = async (e) => {
   e.preventDefault();
   const text = $("item-text").value.trim();
-  if (text && await send({op: "add_item", text})) $("item-text").value = "";
+  if (text && await send({op: "add_item", list: listId, text})) $("item-text").value = "";
 };
 $("add-usual").onsubmit = async (e) => {
   e.preventDefault();
-  const change = {op: "add_usual", name: $("usual-name").value.trim(), link: $("usual-link").value.trim(), qty: parseInt($("usual-qty").value, 10) || 1};
+  const change = {op: "add_usual", set: setId, name: $("usual-name").value.trim(), link: $("usual-link").value.trim(), qty: parseInt($("usual-qty").value, 10) || 1};
   if (await send(change)) { $("usual-name").value = ""; $("usual-link").value = ""; $("usual-qty").value = "1"; }
 };
+$("list-pick").onchange = () => { listId = $("list-pick").value; send(); };
+$("set-pick").onchange = () => { setId = $("set-pick").value; send(); };
+$("to-list").onclick = async () => { if (await send({op: "set_to_list", set: setId})) $("done").textContent = "Added to the shopping list."; };
 $("signin").onclick = () => send({op: "walmart_open_sign_in"});
 $("signed").onclick = () => send({op: "walmart_signed_in"});
 $("forget").onclick = () => send({op: "walmart_forget"});
 $("fill").onclick = async () => {
   $("fill").disabled = true;
   $("done").textContent = "Filling the cart on the display computer. This takes about half a minute.";
-  await send({op: "walmart_fill"});
+  await send({op: "walmart_fill", set: setId});
   $("fill").disabled = false;
 };
 send();

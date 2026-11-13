@@ -750,7 +750,7 @@ const SCENES = {
   shul: {title: () => !shulShabbatOn() ? "Davening times" : (shabbatSpan() || {}).yt ? "Yom Tov times" : "Shabbat times",
          tab: "Shul", render: sceneShul},
   business: {title: () => "Markets", tab: "Business", render: sceneBusiness},
-  shopping: {title: () => "Shopping list", tab: "Shopping", render: sceneShopping},
+  shopping: {title: () => listsTitle(), tab: "Lists", render: sceneShopping},
 };
 const sceneTab = (s) => typeof SCENES[s].tab === "function" ? SCENES[s].tab() : SCENES[s].tab;
 const mlbFav = () => (CFG().sports || {}).mlb || {};
@@ -896,18 +896,52 @@ function sceneIsrael() {
     <div class="grid2" style="flex:1"><div class="col">${li(rest.slice(0, half))}</div><div class="col">${li(rest.slice(half))}</div></div>`;
 }
 
-// The shopping list kept by the voice assistant, in up to three columns. No taps: it is edited
-// by voice or on the phone page (/shop).
-function shoppingItems() { const v = D("shopping"); return (v && v.items) || []; }
+// The family's lists (shopping lists and to-do lists), each under its name, in up to three
+// columns. No taps: they are edited by voice, on the phone page (/shop) or in the Display Manager.
+function shoppingLists() {
+  const v = D("shopping") || {};
+  const lists = Array.isArray(v.lists) ? v.lists : (v.items && v.items.length ? [{name: "Shopping", kind: "shopping", items: v.items}] : []);
+  return lists.filter((l) => l && Array.isArray(l.items) && l.items.length);
+}
+function shoppingItems() { return shoppingLists().flatMap((l) => l.items); }
+function listsTitle() { const l = shoppingLists(); return l.length === 1 ? (l[0].kind === "todo" ? l[0].name : "Shopping list") : "Lists"; }
 function sceneShopping() {
-  const items = shoppingItems();
-  if (!items.length) return `<div class="col"><div class="hl"><div class="s">Nothing on the list. Say "add milk to the shopping list".</div></div></div>`;
-  const shown = items.slice(0, 36), per = Math.ceil(shown.length / (shown.length > 24 ? 3 : shown.length > 10 ? 2 : 1));
-  const cols = [];
-  for (let i = 0; i < shown.length; i += per) cols.push(shown.slice(i, i + per));
-  const more = items.length > shown.length ? `<div class="hl"><div class="w">and ${items.length - shown.length} more</div></div>` : "";
+  const lists = shoppingLists();
+  if (!lists.length) return `<div class="col"><div class="hl"><div class="s">Nothing on the list. Say "add milk to the shopping list".</div></div></div>`;
+  // rows: a heading per list (when there are several) and its items; a list cut short says how many more
+  const room = 36, named = lists.length > 1, rows = [];
+  const share = Math.max(3, Math.floor((room - (named ? lists.length : 0)) / lists.length));
+  let spare = lists.reduce((n, l) => n + Math.max(0, share - l.items.length), 0);
+  lists.forEach((l) => {
+    const extra = Math.min(spare, Math.max(0, l.items.length - share));
+    spare -= extra;
+    const shown = l.items.slice(0, share + extra);
+    if (named) rows.push({head: l.name});
+    shown.forEach((t) => rows.push({text: t}));
+    if (l.items.length > shown.length) rows.push({more: l.items.length - shown.length});
+  });
+  // one list fills up to three columns; several lists stay whole, packed into up to three columns in order
+  let cols = [];
+  if (!named) {
+    const n = rows.length > 24 ? 3 : rows.length > 10 ? 2 : 1, per = Math.ceil(rows.length / n);
+    for (let i = 0; i < rows.length; i += per) cols.push(rows.slice(i, i + per));
+  } else {
+    const groups = [];
+    rows.forEach((r) => (r.head != null ? groups.push([r]) : groups[groups.length - 1].push(r)));
+    const n = Math.min(3, groups.length), per = rows.length / n;
+    groups.forEach((g, i) => {
+      const last = cols[cols.length - 1];
+      const left = groups.length - i;                       // lists still to place, this one included
+      if (!last || (cols.length < n && (last.length + g.length / 2 > per || left <= n - cols.length))) cols.push([...g]);
+      else last.push(...g);
+    });
+  }
+  const one = (r) => r.head != null ? `<div style="font-size:1.5rem;font-weight:600;color:var(--gold);letter-spacing:.06em;text-transform:uppercase;margin:0 0 .3rem">${esc(r.head)}</div>`
+    : r.more ? `<div class="hl"><div class="w">and ${r.more} more</div></div>`
+    : `<div class="hl" style="padding:.55rem 0"><div class="t" style="font-size:2.1rem">${esc(r.text)}</div></div>`;
+  const gap = (c, i) => (i && c[i].head != null ? `<div style="height:1.6rem"></div>` : "");
   return `<div style="flex:1;display:grid;grid-template-columns:repeat(${cols.length},minmax(0,1fr));column-gap:2.6rem;min-height:0">` +
-    cols.map((c, n) => `<div class="col">${c.map((t) => `<div class="hl" style="padding:.55rem 0"><div class="t" style="font-size:2.1rem">${esc(t)}</div></div>`).join("")}${n === cols.length - 1 ? more : ""}</div>`).join("") + `</div>`;
+    cols.map((c) => `<div class="col">${c.map((r, i) => gap(c, i) + one(r)).join("")}</div>`).join("") + `</div>`;
 }
 
 // rotation
