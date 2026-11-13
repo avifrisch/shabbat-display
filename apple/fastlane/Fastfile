@@ -27,7 +27,8 @@ platform :ios do
            "-authenticationKeyID #{ENV.fetch('ASC_KEY_ID')} -authenticationKeyIssuerID #{ENV.fetch('ASC_ISSUER_ID')}"
     build_app(project: "ShabbatDisplay.xcodeproj", scheme: "ShabbatDisplay", configuration: "Release",
               export_method: "app-store", output_directory: "build/testflight", clean: true,
-              xcargs: "#{auth} CURRENT_PROJECT_VERSION=#{number}", export_xcargs: auth,
+              # (fastlane hands the key to the export step by itself.)
+              xcargs: "#{auth} CURRENT_PROJECT_VERSION=#{number}", export_xcargs: "-allowProvisioningUpdates",
               export_options: { signingStyle: "automatic" })
     upload_to_testflight(skip_waiting_for_build_processing: true)
   end
