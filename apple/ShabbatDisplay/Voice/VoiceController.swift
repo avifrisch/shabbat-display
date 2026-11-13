@@ -237,6 +237,19 @@ final class VoiceController {
 
     func dismissCode() { code = nil }
 
+    var voiceID: String { settings.voiceID }
+
+    /// Saves the answering voice and says a sentence in it (weekdays only).
+    func tryVoice(_ id: String) {
+        settings.voiceID = id
+        guard model.holy.weekdayForCertain, !busy else { return }
+        Task {
+            listener.mute(true)
+            await sounds.say("This is how I sound. Candle lighting is at four twenty-one.")
+            listener.mute(false)
+        }
+    }
+
     // MARK: - Timers
 
     /// Stops whatever is ringing (a tap, or "stop").

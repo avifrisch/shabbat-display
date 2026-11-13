@@ -18,7 +18,7 @@ final class Sounds: NSObject, AVSpeechSynthesizerDelegate {
         guard !sentence.isEmpty else { return }
         stopSpeaking()
         let utterance = AVSpeechUtterance(string: sentence)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        utterance.voice = SpokenVoice.chosen(Settings().voiceID)
         await withCheckedContinuation { done in
             finished = done
             synthesizer.speak(utterance)
@@ -74,5 +74,47 @@ final class Sounds: NSObject, AVSpeechSynthesizerDelegate {
         data.append(contentsOf: Array("data".utf8)); put(bytes)
         samples.forEach(put)
         return data
+    }
+}
+
+/// The voices the iPad can answer in. Apple's better ones ("Enhanced", "Premium") are free
+/// downloads in the iPad's Settings; Siri's own voices aren't offered to apps.
+enum SpokenVoice {
+    struct Choice: Identifiable, Equatable {
+        let id: String
+        let name: String
+        /// 0 standard, 1 enhanced, 2 premium.
+        let rank: Int
+
+        var label: String { name + (rank == 2 ? " (Premium)" : rank == 1 ? " (Enhanced)" : "") }
+    }
+
+    /// The English voices on this iPad, best first, without the novelty ones.
+    static func choices(from voices: [AVSpeechSynthesisVoice] = AVSpeechSynthesisVoice.speechVoices()) -> [Choice] {
+        voices
+            .filter { $0.language.hasPrefix("en") && !$0.voiceTraits.contains(.isNoveltyVoice) && !$0.voiceTraits.contains(.isPersonalVoice) }
+            .map { Choice(id: $0.identifier, name: $0.name + ($0.language == "en-US" ? "" : " · " + accent($0.language)), rank: rank($0.quality)) }
+            .sorted { ($1.rank, $0.name) < ($0.rank, $1.name) }
+    }
+
+    /// The saved voice if it is still installed, else the best American English one.
+    static func chosen(_ id: String) -> AVSpeechSynthesisVoice? {
+        if !id.isEmpty, let saved = AVSpeechSynthesisVoice(identifier: id) { return saved }
+        let american = AVSpeechSynthesisVoice.speechVoices()
+            .filter { $0.language == "en-US" && !$0.voiceTraits.contains(.isNoveltyVoice) && !$0.voiceTraits.contains(.isPersonalVoice) }
+            .max { rank($0.quality) < rank($1.quality) }
+        return american ?? AVSpeechSynthesisVoice(language: "en-US")
+    }
+
+    static func rank(_ quality: AVSpeechSynthesisVoiceQuality) -> Int {
+        switch quality {
+        case .premium: 2
+        case .enhanced: 1
+        default: 0
+        }
+    }
+
+    private static func accent(_ language: String) -> String {
+        ["en-GB": "British", "en-AU": "Australian", "en-IE": "Irish", "en-ZA": "South African", "en-IN": "Indian"][language] ?? language
     }
 }

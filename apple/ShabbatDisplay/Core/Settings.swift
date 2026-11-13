@@ -33,6 +33,12 @@ struct Settings {
         nonmutating set { store.set(newValue, forKey: "wakePhrase") }
     }
 
+    /// The voice answers are spoken in; empty = the best one installed.
+    var voiceID: String {
+        get { store.string(forKey: "voiceID") ?? "" }
+        nonmutating set { store.set(newValue, forKey: "voiceID") }
+    }
+
     /// Running timers, so one set before the app restarts still rings.
     var timers: [KitchenTimer] {
         get {

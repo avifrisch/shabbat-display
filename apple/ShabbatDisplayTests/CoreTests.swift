@@ -225,3 +225,20 @@ final class AssistantReplyTests: XCTestCase {
         XCTAssertEqual((json["timers"] as? [[String: Any]])?.first?["seconds_left"] as? Int, 60)
     }
 }
+
+final class SpokenVoiceTests: XCTestCase {
+    func testQualityRanksAndLabels() {
+        XCTAssertEqual(SpokenVoice.rank(.premium), 2)
+        XCTAssertEqual(SpokenVoice.rank(.enhanced), 1)
+        XCTAssertEqual(SpokenVoice.rank(.default), 0)
+        XCTAssertEqual(SpokenVoice.Choice(id: "a", name: "Zoe", rank: 2).label, "Zoe (Premium)")
+        XCTAssertEqual(SpokenVoice.Choice(id: "b", name: "Samantha", rank: 0).label, "Samantha")
+    }
+
+    func testChoicesAreEnglishBestFirstAndAFallbackAlwaysExists() {
+        let choices = SpokenVoice.choices()
+        XCTAssertEqual(choices.map(\.rank), choices.map(\.rank).sorted(by: >))
+        XCTAssertNotNil(SpokenVoice.chosen(""))
+        XCTAssertNotNil(SpokenVoice.chosen("com.example.not-installed"))
+    }
+}

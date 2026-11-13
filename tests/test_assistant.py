@@ -209,6 +209,18 @@ class MusicAndWalmart(Case):
                            ("https://www.walmart.com/ip/Milk/12", ""), ("", ""), (None, "")):
             self.assertEqual(assistant.walmart_item_id(link), want, link)
 
+    def test_a_pasted_link_names_the_item(self):
+        self.assertEqual(assistant.walmart_item_name("https://www.walmart.com/ip/Great-Value-Whole-Vitamin-D-Milk-Gallon/10450114?from=/search"),
+                         "Great Value Whole Vitamin D Milk Gallon")
+        self.assertEqual(assistant.walmart_item_name("https://www.walmart.com/ip/10450114"), "")
+        self.assertEqual(assistant.walmart_item_name("10450114"), "")
+        item = self.a.usuals.add("", "https://www.walmart.com/ip/Kedem-Grape-Juice-64-fl-oz/555666777", 3)
+        self.assertEqual((item["name"], item["item_id"], item["qty"]), ("Kedem Grape Juice 64 fl oz", "555666777", 3))
+        self.assertEqual(self.a.usuals.add("Grape juice", "https://www.walmart.com/ip/Kedem-Grape-Juice-64-fl-oz/555666777")["name"], "Grape juice")
+        self.assertIsNone(self.a.usuals.add("", "10450114"))
+        status, state = assistant.shop_change(self.a.shopping, self.a.usuals, {"op": "add_usual", "name": "", "link": ""})
+        self.assertEqual(status, 400)
+
     def test_the_cart_link_has_only_items_with_a_product_number(self):
         u = self.a.usuals
         self.assertEqual(u.cart_url(), "")

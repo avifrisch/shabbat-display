@@ -18,6 +18,7 @@ import os
 import re
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime
 
@@ -280,6 +281,14 @@ def walmart_item_id(link):
     return m.group(1) if m else ""
 
 
+def walmart_item_name(link):
+    """A readable name from a Walmart product link's own words (.../ip/Great-Value-Whole-Milk/123); "" if it has none."""
+    m = re.search(r"walmart\.com/ip/([^/?#]+)/\d{4,15}(?:[/?#]|$)", link.strip() if isinstance(link, str) else "")
+    if not m or m.group(1).isdigit():
+        return ""
+    return _clean_text(urllib.parse.unquote(m.group(1)).replace("-", " "), MAX_ITEM_LEN)
+
+
 class Usuals:
     """The things the family buys again and again: [{id, name, item_id, qty}] in usuals.json.
     `item_id` is Walmart's number for the product ("" until a product link is given)."""
@@ -309,7 +318,7 @@ class Usuals:
 
     def add(self, name, link="", qty=1):
         """Add an item, or update the one with this name. Returns it, or None if there is no name."""
-        name = _clean_text(name, MAX_ITEM_LEN)
+        name = _clean_text(name, MAX_ITEM_LEN) or walmart_item_name(link)
         if not name:
             return None
         qty = qty if isinstance(qty, int) and not isinstance(qty, bool) and 1 <= qty <= 24 else 1
@@ -371,7 +380,7 @@ def shop_change(shopping, usuals, body, forward=None):
             if link.strip() and not walmart_item_id(link):
                 return 400, {"ok": False, "error": "That doesn't look like a Walmart product link. Open the product on walmart.com and copy its link."}
             if not usuals.add(body.get("name"), link, body.get("qty")):
-                return 400, {"ok": False, "error": "Give the item a name."}
+                return 400, {"ok": False, "error": "Give the item a name, or paste its Walmart product link."}
         elif op == "remove_usual":
             usuals.remove(body.get("id") if isinstance(body.get("id"), str) else "")
         else:

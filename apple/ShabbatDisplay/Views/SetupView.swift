@@ -9,6 +9,8 @@ struct SetupView: View {
     @State private var screen = ""
     @State private var voiceOn = false
     @State private var wakePhrase = ""
+    @State private var voiceID = ""
+    @State private var voices: [SpokenVoice.Choice] = []
     @State private var checking = false
     @State private var problem: String?
 
@@ -43,11 +45,23 @@ struct SetupView: View {
                                 .autocorrectionDisabled()
                         }
                     }
+                    if voiceOn {
+                        Picker("Answers in", selection: $voiceID) {
+                            Text("Best available").tag("")
+                            ForEach(voices) { voice in
+                                Text(voice.label).tag(voice.id)
+                            }
+                        }
+                        Button("Hear this voice") { voice.tryVoice(voiceID) }
+                    }
                 } header: {
                     Text("Voice")
                 } footer: {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Say the wake phrase, then a request: a timer, the shopping list, a question. The microphone is off from candle lighting to havdalah, and whenever the calendar can't be read.")
+                        if voiceOn {
+                            Text("For a more natural voice, download one marked Enhanced or Premium in the iPad's Settings → Accessibility → Spoken Content → Voices → English. It then appears here.")
+                        }
                         if voiceOn && !voice.recognizesOnDevice {
                             Text("This iPad can't recognize speech by itself, so what it hears after a sound is sent to Apple to be turned into words.")
                         }
@@ -84,6 +98,8 @@ struct SetupView: View {
                 screen = model.screen
                 voiceOn = voice.voiceOn
                 wakePhrase = voice.wakePhrase
+                voiceID = voice.voiceID
+                voices = SpokenVoice.choices()
             }
         }
         .interactiveDismissDisabled(model.server == nil)
@@ -111,6 +127,7 @@ struct SetupView: View {
             return
         }
         model.save(server: server, screen: name.isEmpty ? "iPad" : name)
+        Settings().voiceID = voiceID
         await voice.save(voiceOn: voiceOn, wakePhrase: phrase.isEmpty ? WakePhrase.standard : phrase)
         // A refused microphone stays on screen; everything else is done.
         if voiceOn && !voice.voiceOn {

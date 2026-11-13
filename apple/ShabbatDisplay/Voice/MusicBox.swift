@@ -10,11 +10,13 @@ final class MusicBox {
     private(set) var title: String?
     private(set) var playing = false
 
-    private let player = ApplicationMusicPlayer.shared
+    /// Made on first use: the simulator has no music player, and asking it for one can hang.
+    @ObservationIgnored private var player: ApplicationMusicPlayer { ApplicationMusicPlayer.shared }
+    @ObservationIgnored private var used = false
     private var pausedForSpeech = false
 
     enum Trouble: Error {
-        case notAllowed, noSubscription, notFound, failed
+        case notAllowed, noSubscription, notFound, failed, musicAppNotOpened
 
         /// What the display says.
         var sentence: String {
@@ -22,9 +24,25 @@ final class MusicBox {
             case .notAllowed: "I'm not allowed to use Apple Music. Turn it on for Shabbat Display in the iPad's Settings."
             case .noSubscription: "This iPad isn't signed in to an Apple Music subscription."
             case .notFound: "I couldn't find that on Apple Music."
+            case .musicAppNotOpened: "Apple Music hasn't been set up on this iPad. Open the Music app once, tap Continue, then ask me again."
             case .failed: "Apple Music didn't answer. This app may still need MusicKit switched on in the developer account."
             }
         }
+    }
+
+    private static var isSimulator: Bool {
+        #if targetEnvironment(simulator)
+        true
+        #else
+        false
+        #endif
+    }
+
+    /// A line in the console of a development build, for finding out why music won't play.
+    private static func note(_ text: String) {
+        #if DEBUG
+        print("MUSIC " + text)
+        #endif
     }
 
     /// For the assistant: what is on now.
@@ -32,6 +50,7 @@ final class MusicBox {
 
     /// Reads the player's state; called once a second.
     func look() {
+        guard used else { return }
         let status = player.state.playbackStatus
         playing = status == .playing
         if let entry = player.queue.currentEntry, status != .stopped {
@@ -42,18 +61,30 @@ final class MusicBox {
     }
 
     func play(query: String, kind: String) async throws {
-        guard await MusicAuthorization.request() == .authorized else { throw Trouble.notAllowed }
+        guard !Self.isSimulator else { throw Trouble.failed }
+        used = true
+        let allowed = await MusicAuthorization.request()
+        Self.note("permission: \(allowed)")
+        guard allowed == .authorized else { throw Trouble.notAllowed }
         do {
-            guard try await MusicSubscription.current.canPlayCatalogContent else { throw Trouble.noSubscription }
+            let subscription = try await MusicSubscription.current
+            Self.note("subscription can play: \(subscription.canPlayCatalogContent)")
+            guard subscription.canPlayCatalogContent else { throw Trouble.noSubscription }
             try await queue(query: query, kind: kind)
             try await player.play()
         } catch let trouble as Trouble {
+            Self.note("couldn't play '\(query)': \(trouble)")
             throw trouble
+        } catch MusicSubscription.Error.privacyAcknowledgementRequired {
+            Self.note("couldn't play '\(query)': the Music app's welcome screen hasn't been accepted")
+            throw Trouble.musicAppNotOpened
         } catch {
+            Self.note("couldn't play '\(query)': \(error)")
             throw Trouble.failed
         }
         pausedForSpeech = false
         look()
+        Self.note("playing: \(title ?? "?")")
     }
 
     private func queue(query: String, kind: String) async throws {
@@ -112,6 +143,7 @@ final class MusicBox {
     }
 
     func control(_ command: String) async {
+        guard used else { return }
         pausedForSpeech = false
         switch command {
         case "pause": player.pause()
@@ -125,6 +157,7 @@ final class MusicBox {
     }
 
     func stop() {
+        guard used else { return }
         pausedForSpeech = false
         guard title != nil || player.state.playbackStatus != .stopped else { return }
         player.stop()
@@ -134,6 +167,7 @@ final class MusicBox {
 
     /// Goes quiet while someone is talking to the display or it is answering…
     func holdForSpeech() {
+        guard used else { return }
         look()
         guard playing else { return }
         player.pause()
