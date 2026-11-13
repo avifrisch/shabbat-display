@@ -22,8 +22,8 @@ public sealed partial class ListsPage : Page
 
     private void Refresh_Click(object sender, RoutedEventArgs e) => _ = Load();
 
-    private ShopList? List => state.Lists?.FirstOrDefault(l => l.Id == listId) ?? state.Lists?.FirstOrDefault();
-    private UsualSet? Set => state.Sets?.FirstOrDefault(s => s.Id == setId) ?? state.Sets?.FirstOrDefault();
+    private ShopList? ThisList => state.Lists?.FirstOrDefault(l => l.Id == listId) ?? state.Lists?.FirstOrDefault();
+    private UsualSet? ThisSet => state.Sets?.FirstOrDefault(s => s.Id == setId) ?? state.Sets?.FirstOrDefault();
 
     private async Task Load()
     {
@@ -59,8 +59,8 @@ public sealed partial class ListsPage : Page
     private void Build()
     {
         building = true;
-        var list = List!;
-        var set = Set!;
+        var list = ThisList!;
+        var set = ThisSet!;
         listId = list.Id;
         setId = set.Id;
         ListPick.ItemsSource = state.Lists!.Select(l => l.IsTodo ? l.Name + " (to-do)" : l.Name).ToList();
@@ -172,19 +172,19 @@ public sealed partial class ListsPage : Page
 
     private async void RenameList_Click(object sender, RoutedEventArgs e)
     {
-        if (List is not { } list || await AskName("Rename the list", list.Name, "Rename") is not { } name) return;
+        if (ThisList is not { } list || await AskName("Rename the list", list.Name, "Rename") is not { } name) return;
         await Change("rename_list", null, ("list", list.Id), ("name", name));
     }
 
     private async void ClearList_Click(object sender, RoutedEventArgs e)
     {
-        if (List is not { } list || !await Confirm($"Take everything off {list.Name}?", "Empty it")) return;
+        if (ThisList is not { } list || !await Confirm($"Take everything off {list.Name}?", "Empty it")) return;
         await Change("clear_list", null, ("list", list.Id));
     }
 
     private async void DeleteList_Click(object sender, RoutedEventArgs e)
     {
-        if (List is not { } list || !await Confirm($"Delete the list {list.Name} and what is on it?", "Delete")) return;
+        if (ThisList is not { } list || !await Confirm($"Delete the list {list.Name} and what is on it?", "Delete")) return;
         await Change("delete_list", null, ("list", list.Id));
     }
 
@@ -211,19 +211,19 @@ public sealed partial class ListsPage : Page
 
     private async void RenameSet_Click(object sender, RoutedEventArgs e)
     {
-        if (Set is not { } set || await AskName("Rename the set", set.Name, "Rename") is not { } name) return;
+        if (ThisSet is not { } set || await AskName("Rename the set", set.Name, "Rename") is not { } name) return;
         await Change("rename_set", null, ("set", set.Id), ("name", name));
     }
 
     private async void SetToList_Click(object sender, RoutedEventArgs e)
     {
-        if (Set is not { } set) return;
+        if (ThisSet is not { } set) return;
         await Change("set_to_list", $"The {set.Name} items are on the shopping list.", ("set", set.Id));
     }
 
     private async void DeleteSet_Click(object sender, RoutedEventArgs e)
     {
-        if (Set is not { } set || !await Confirm($"Delete the set {set.Name} and its {set.Items.Count} items?", "Delete")) return;
+        if (ThisSet is not { } set || !await Confirm($"Delete the set {set.Name} and its {set.Items.Count} items?", "Delete")) return;
         await Change("delete_set", null, ("set", set.Id));
     }
 
