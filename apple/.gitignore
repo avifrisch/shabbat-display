@@ -5,3 +5,5 @@ build/
 DerivedData/
 xcuserdata/
 build-sim/
+build-sim*/
+AnnouncementSpeaker/Info.plist

@@ -19,6 +19,13 @@ struct Settings {
         nonmutating set { store.set(newValue, forKey: "screen") }
     }
 
+    /// Whether this device shows the display itself. Nil = never chosen (an iPad shows it; a
+    /// phone only receives announcements).
+    var displayOn: Bool? {
+        get { store.object(forKey: "displayOn") as? Bool }
+        nonmutating set { store.set(newValue, forKey: "displayOn") }
+    }
+
     /// Listening is off until someone turns it on in the settings.
     var voiceOn: Bool {
         get { store.bool(forKey: "voiceOn") }

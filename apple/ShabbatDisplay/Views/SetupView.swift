@@ -11,6 +11,7 @@ struct SetupView: View {
     @State private var wakePhrase = ""
     @State private var voiceID = ""
     @State private var homeOn = false
+    @State private var showsDisplay = true
     @State private var voices: [SpokenVoice.Choice] = []
     @State private var checking = false
     @State private var problem: String?
@@ -34,7 +35,17 @@ struct SetupView: View {
                 } header: {
                     Text("This screen's name")
                 } footer: {
-                    Text("The Display Manager lists this screen under this name, so it can have its own rotation.")
+                    Text("The Display Manager lists this screen under this name, so it can have its own rotation. Give each device its own name.")
+                }
+                Section {
+                    Toggle("Show the display here", isOn: $showsDisplay)
+                } header: {
+                    Text("Announcements")
+                } footer: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Announcements made at a display (\"tell everyone dinner is ready\") arrive here as a notification and are said aloud, even while this app is closed. Not on Shabbat or Yom Tov. Switch the display off on a phone or a tablet that should only get announcements.")
+                        Text(announcementStatus).foregroundStyle(model.push == .refused ? .red : .secondary)
+                    }
                 }
                 Section {
                     Toggle("Listen for requests", isOn: $voiceOn)
@@ -105,10 +116,20 @@ struct SetupView: View {
                 wakePhrase = voice.wakePhrase
                 voiceID = voice.voiceID
                 homeOn = voice.homeOn
+                showsDisplay = model.showsDisplay
                 voices = SpokenVoice.choices()
             }
         }
         .interactiveDismissDisabled(model.server == nil)
+    }
+
+    private var announcementStatus: String {
+        switch model.push {
+        case .ready: "Announcements are set up on this device."
+        case .refused: "Notifications are off for Shabbat Display. Turn them on in Settings → Notifications → Shabbat Display."
+        case .serverNotSetUp: "This device is ready. The display computer still needs its Apple push key."
+        case .waiting, .unknown: model.server == nil ? "Set up once the display computer is connected." : "Setting up…"
+        }
     }
 
     private func connect() async {
@@ -132,7 +153,7 @@ struct SetupView: View {
             problem = "The display isn't answering at \(server.display). Check that the computer is on, that this iPad is on the home Wi-Fi, and that the iPad was allowed to find devices on the local network (Settings → Shabbat Display)."
             return
         }
-        model.save(server: server, screen: name.isEmpty ? "iPad" : name)
+        model.save(server: server, screen: name.isEmpty ? "iPad" : name, showsDisplay: showsDisplay)
         Settings().voiceID = voiceID
         await voice.save(voiceOn: voiceOn, wakePhrase: phrase.isEmpty ? WakePhrase.standard : phrase, homeOn: homeOn)
         // A refused microphone stays on screen; everything else is done.

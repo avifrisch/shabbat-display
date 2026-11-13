@@ -9,7 +9,7 @@ settings:
     SWIFT_VERSION: "5.9"
     DEVELOPMENT_TEAM: "668K42535W"
     CODE_SIGN_STYLE: Automatic
-    TARGETED_DEVICE_FAMILY: "2"
+    TARGETED_DEVICE_FAMILY: "1,2"
 
 targets:
   ShabbatDisplay:
@@ -18,6 +18,9 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: ShabbatDisplay
+      - path: Shared
+    dependencies:
+      - target: AnnouncementSpeaker
     info:
       path: ShabbatDisplay/Info.plist
       properties:
@@ -28,6 +31,8 @@ targets:
         UILaunchScreen: {}
         UIRequiresFullScreen: true
         UIStatusBarHidden: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
         UISupportedInterfaceOrientations~ipad:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
@@ -45,10 +50,44 @@ targets:
       path: ShabbatDisplay/ShabbatDisplay.entitlements
       properties:
         com.apple.developer.homekit: true
+        # Announcements as notifications; "time sensitive" lets them through a Focus.
+        aps-environment: development
+        com.apple.developer.usernotifications.time-sensitive: true
+        com.apple.security.application-groups:
+          - group.com.avifrischlaw.shabbatdisplay
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.avifrischlaw.shabbatdisplay
         PRODUCT_NAME: ShabbatDisplay
+
+  # Speaks an announcement that arrives while the app is closed.
+  AnnouncementSpeaker:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: AnnouncementSpeaker
+      - path: Shared
+      - path: ShabbatDisplay/Core/HolySpans.swift
+    info:
+      path: AnnouncementSpeaker/Info.plist
+      properties:
+        CFBundleDisplayName: Shabbat Display
+        CFBundleVersion: "1"
+        CFBundleShortVersionString: "0.1.0"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+    entitlements:
+      path: AnnouncementSpeaker/AnnouncementSpeaker.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.avifrischlaw.shabbatdisplay
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.avifrischlaw.shabbatdisplay.speaker
+        PRODUCT_NAME: AnnouncementSpeaker
+        SKIP_INSTALL: true
 
   ShabbatDisplayTests:
     type: bundle.unit-test

@@ -574,6 +574,7 @@ class Assistant:
     # -- what the iPad asks
 
     _screen = ""
+    _device = ""
 
     def handle(self, body, facts="", holy=False):
         """Answer one spoken request. Returns (http status, dict); the dict's `say` is read aloud."""
@@ -592,6 +593,7 @@ class Assistant:
         home = _clean_home(body.get("home"))
         reminders = _clean_reminders(body.get("reminders"))
         self._screen = _clean_text(body.get("screen"), 40)
+        self._device = _clean_text(body.get("device"), 200).lower()
         messages = []
         for h in _clean_history(body.get("history")):
             messages += [{"role": "user", "content": h["q"]}, {"role": "assistant", "content": h["a"]}]
@@ -782,7 +784,7 @@ class Assistant:
                 phones = False
                 if self.push:
                     try:
-                        phones = self.push(message) is not False
+                        phones = self.push(message, self._screen, self._device) is not False
                     except Exception as e:  # noqa: BLE001 - the displays still get it
                         self.log(f"assistant: the announcement didn't reach the phones ({e})")
                 return {"content": "It is on the other displays now" + (" and was sent to the family's phones and tablets." if phones

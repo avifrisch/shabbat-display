@@ -77,8 +77,8 @@ enum AssistantClient {
     struct Exchange { let q: String; let a: String }
 
     static func body(text: String, timers: [[String: Any]], history: [Exchange], music: [String: Any] = [:],
-                     home: [String: Any]? = nil, reminders: [[String: Any]] = [], screen: String = "") -> Data {
-        var json: [String: Any] = ["text": text, "timers": timers, "music": music, "reminders": reminders, "screen": screen,
+                     home: [String: Any]? = nil, reminders: [[String: Any]] = [], screen: String = "", device: String = "") -> Data {
+        var json: [String: Any] = ["text": text, "timers": timers, "music": music, "reminders": reminders, "screen": screen, "device": device,
                                    "history": history.map { ["q": $0.q, "a": $0.a] }]
         if let home { json["home"] = home }
         return (try? JSONSerialization.data(withJSONObject: json)) ?? Data()
@@ -87,11 +87,11 @@ enum AssistantClient {
     /// Nil when the display computer didn't answer at all.
     static func ask(_ server: ServerAddress, text: String, timers: [[String: Any]], history: [Exchange],
                     music: [String: Any] = [:], home: [String: Any]? = nil, reminders: [[String: Any]] = [],
-                    screen: String = "") async -> AssistantReply? {
+                    screen: String = "", device: String = "") async -> AssistantReply? {
         var request = URLRequest(url: server.base.appendingPathComponent("api/assistant"), timeoutInterval: 45)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = body(text: text, timers: timers, history: history, music: music, home: home, reminders: reminders, screen: screen)
+        request.httpBody = body(text: text, timers: timers, history: history, music: music, home: home, reminders: reminders, screen: screen, device: device)
         guard let (data, _) = try? await URLSession.shared.data(for: request) else { return nil }
         return AssistantReply.parse(data)
     }

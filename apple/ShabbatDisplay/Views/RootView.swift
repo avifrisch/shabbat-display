@@ -9,7 +9,9 @@ struct RootView: View {
         @Bindable var model = model
         ZStack(alignment: .topLeading) {
             Theme.background.ignoresSafeArea()
-            if let url = model.pageURL {
+            if !model.showsDisplay {
+                AnnouncementsOnlyView()
+            } else if let url = model.pageURL {
                 DisplayWebView(url: url, reloadToken: model.reloadToken,
                                loaded: { model.pageLoaded = $0 },
                                opened: { if !model.holy.isHoly { link = $0 } })
@@ -47,6 +49,43 @@ enum Theme {
     static let background = Color(red: 0x0D / 255, green: 0x17 / 255, blue: 0x26 / 255)
     static let text = Color(red: 0.93, green: 0.90, blue: 0.84)
     static let gold = Color(red: 0xE5 / 255, green: 0xBA / 255, blue: 0x5E / 255)
+}
+
+/// A phone, or a tablet that only receives announcements: nothing to watch, just where it stands.
+struct AnnouncementsOnlyView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(spacing: 22) {
+            Image(systemName: "megaphone.fill")
+                .font(.system(size: 54))
+                .foregroundStyle(Theme.gold)
+            Text("Announcements")
+                .font(.largeTitle.weight(.semibold))
+                .foregroundStyle(Theme.text)
+            Text(status)
+                .font(.title3)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(Theme.text.opacity(0.7))
+            if !model.holy.isHoly {
+                Button("Settings") { model.showingSettings = true }
+                    .buttonStyle(.bordered)
+                    .tint(Theme.gold)
+            }
+        }
+        .padding(32)
+        .frame(maxWidth: 520)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var status: String {
+        switch model.push {
+        case .ready: "Announcements from the kitchen display arrive on this device, even while this app is closed. You can close it."
+        case .refused: "Notifications are off for Shabbat Display. Turn them on in Settings → Notifications → Shabbat Display."
+        case .serverNotSetUp: "This device is ready. The display computer still needs its Apple push key."
+        case .waiting, .unknown: model.server == nil ? "Enter the display computer's address in the settings." : "Setting up. This device has to be on the home Wi-Fi once."
+        }
+    }
 }
 
 /// A clock for while the display can't be shown, like the Windows screen saver's.

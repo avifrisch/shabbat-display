@@ -35,6 +35,7 @@ from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import assistant as assistant_mod
+import push as push_mod
 import walmart as walmart_mod
 
 # --------------------------------------------------------------------------
@@ -87,6 +88,13 @@ CONFIG = {
     # family's phones and tablets: an ntfy topic address such as https://ntfy.sh/<a long secret name>.
     # Secret; empty = displays only.
     "announce_push_url": "",
+    # Announcements as Apple notifications on the family's iPhones and iPads that have the app:
+    # a push key from the developer account (Keys, with Apple Push Notifications ticked). The .p8
+    # file is secret; give its path, the key's ID and the team ID. Empty = not used.
+    "apns_key_file": "",
+    "apns_key_id": "",
+    "apns_team_id": "",
+    "apns_topic": "com.avifrischlaw.shabbatdisplay",
 
     # Server
     "bind": "127.0.0.1",         # use "0.0.0.0" to view from other devices on your network
@@ -126,6 +134,7 @@ SHOPPING_FILE = os.path.join(HERE, "shopping.json")
 USUALS_FILE = os.path.join(HERE, "usuals.json")
 WALMART_PROFILE = os.path.join(HERE, "browser-profile-walmart")
 WALMART_STATE_FILE = os.path.join(HERE, "walmart.json")
+PUSH_DEVICES_FILE = os.path.join(HERE, "push-devices.json")
 SHOP_PAGE_FILE = os.path.join(HERE, "shop.html")
 SHUL_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "pdf": "application/pdf"}
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -2675,9 +2684,43 @@ def _forward_shopping(items):
         r.read()
 
 
-def _push_announcement(text):
-    """Send an announcement to the family's devices through ntfy (a notification relay). False when
-    no address is set."""
+def _push_settings():
+    key_file = CONFIG.get("apns_key_file") or ""
+    if isinstance(key_file, str) and key_file and not os.path.isabs(key_file):
+        key_file = os.path.join(HERE, key_file)
+    return {"key_file": key_file, "key_id": CONFIG.get("apns_key_id"), "team_id": CONFIG.get("apns_team_id"),
+            "topic": CONFIG.get("apns_topic")}
+
+
+PUSH_DEVICES = push_mod.Devices(PUSH_DEVICES_FILE)
+APPLE_PUSH = push_mod.ApplePush(_push_settings, PUSH_DEVICES, log=lambda m: log(m))
+
+
+def _push_announcement(text, origin="", device=""):
+    """Send an announcement to the family's devices: as an Apple notification to the ones with the
+    app, and through ntfy (a notification relay) when its address is set. False when neither
+    reached anything."""
+    apple = False
+    try:
+        apple = APPLE_PUSH.announce(text, origin, skip=device)
+    except Exception as e:  # noqa: BLE001 - ntfy and the displays still get it
+        log(f"push: {type(e).__name__}: {e}")
+    relayed = _relay_announcement(text)
+    return False if not apple and relayed is False else None
+
+
+def push_register_route(body):
+    """A device with the app asks for announcements: {token, screen, env}."""
+    try:
+        req = json.loads(body.decode("utf-8")) if body else None
+    except (ValueError, UnicodeDecodeError):
+        req = None
+    if not isinstance(req, dict) or not PUSH_DEVICES.register(req.get("token"), req.get("screen"), req.get("env")):
+        return 400, json.dumps({"ok": False, "error": "That isn't a device's push token."})
+    return 200, json.dumps({"ok": True, "set_up": APPLE_PUSH.ready()})
+
+
+def _relay_announcement(text):
     url = CONFIG.get("announce_push_url")
     if not (isinstance(url, str) and url.startswith("https://")):
         return False
@@ -3211,7 +3254,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         try:
-            if parsed.path not in ("/api/assistant", "/api/shop") and not parsed.path.startswith("/api/manage/"):
+            if parsed.path not in ("/api/assistant", "/api/shop", "/api/push-register") and not parsed.path.startswith("/api/manage/"):
                 self._send(404, "not found", "text/plain")
                 return
             try:
@@ -3227,6 +3270,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/shop":
                 self._send(*shop_route(body), "application/json")
+                return
+            if parsed.path == "/api/push-register":
+                self._send(*push_register_route(body), "application/json")
                 return
             self._send(*manage_route("POST", parsed.path, parsed.query, self.headers.get("X-Manage-Key"), body),
                        "application/json")

@@ -34,3 +34,6 @@ usuals.json
 usuals.json.tmp
 browser-profile-walmart/
 walmart.json
+push-devices.json
+push-devices.json.tmp
+*.p8

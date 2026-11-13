@@ -40,6 +40,10 @@
   "menuapp_grocery_url": "",
   "_announce_help": "Optional: also send announcements ('tell everyone dinner is ready') to phones and tablets. Install the free ntfy app on each device, subscribe to a long made-up topic name, and put https://ntfy.sh/<that name> here. Secret.",
   "announce_push_url": "",
+  "_apns_help": "Optional: announcements as spoken notifications on the family's iPhones and iPads that have the Shabbat Display app, even while it is closed. In the Apple developer account make a key (Keys, tick Apple Push Notifications), save the .p8 file on this computer, and give its path, the key's ID and the team ID here. The key file is secret.",
+  "apns_key_file": "",
+  "apns_key_id": "",
+  "apns_team_id": "",
 
   "bind": "127.0.0.1",
   "port": 8765

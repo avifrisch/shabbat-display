@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import Observation
 
 @MainActor
@@ -17,6 +18,10 @@ final class AppModel {
     /// Raised to make the web view load the page again.
     private(set) var reloadToken = 0
     var showingSettings = false
+    /// Whether this device shows the display, or only receives announcements (a phone).
+    private(set) var showsDisplay: Bool
+    /// Where announcements as notifications stand on this device.
+    private(set) var push: Push.State = .unknown
 
     private var watcher: Task<Void, Never>?
 
@@ -24,6 +29,8 @@ final class AppModel {
         server = settings.server
         screen = settings.screen
         marks = settings.marks
+        showsDisplay = settings.displayOn ?? (UIDevice.current.userInterfaceIdiom == .pad)
+        SharedStore.marks = settings.marks
         showingSettings = settings.server == nil
     }
 
@@ -31,7 +38,9 @@ final class AppModel {
 
     var pageURL: URL? { server?.page(screen: screen) }
 
-    func save(server: ServerAddress, screen: String) {
+    func save(server: ServerAddress, screen: String, showsDisplay: Bool) {
+        settings.displayOn = showsDisplay
+        self.showsDisplay = showsDisplay
         settings.server = server
         settings.screen = screen
         self.server = server
@@ -52,6 +61,8 @@ final class AppModel {
         watcher?.cancel()
         guard let server else { return }
         let screen = screen
+        SharedStore.voice = SpokenVoice.chosen(settings.voiceID)?.identifier ?? ""
+        Task { await self.registerForAnnouncements() }
         watcher = Task { [weak self] in
             var tick = 0
             while !Task.isCancelled {
@@ -62,11 +73,22 @@ final class AppModel {
                 if up && tick % 45 == 0, let marks = await Self.fetchMarks(server.state(screen: screen)) {
                     self.marks = marks
                     self.settings.marks = marks
+                    SharedStore.marks = marks
                 }
                 if up || tick % 45 != 0 { tick += 1 }
                 try? await Task.sleep(for: .seconds(20))
             }
         }
+    }
+
+    /// Asks for notifications and gives the display computer this device's address for them.
+    func registerForAnnouncements() async {
+        guard let server else { return }
+        guard await Push.ask() else {
+            push = .refused
+            return
+        }
+        push = await Push.register(server, screen: screen)
     }
 
     func stop() {

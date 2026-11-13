@@ -202,7 +202,7 @@ final class VoiceController {
         if Date().timeIntervalSince(lastExchange) > 180 { history = [] }
         let reply = await AssistantClient.ask(server, text: request, timers: timers.report(now: Date()), history: history,
                                               music: radio.station.map { ["playing": radio.playing, "title": "Radio: " + $0] } ?? music.report,
-                                              home: home.report, reminders: reminders.report(), screen: model.screen)
+                                              home: home.report, reminders: reminders.report(), screen: model.screen, device: Push.token)
         // Shabbat may have begun while the answer was on its way.
         if model.holy.weekdayForCertain {
             var say: String

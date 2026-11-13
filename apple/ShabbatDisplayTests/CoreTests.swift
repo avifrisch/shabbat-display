@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 import HomeKit
 @testable import ShabbatDisplay
@@ -357,5 +358,51 @@ final class FeedsTests: XCTestCase {
         let json = #"{"ok": true, "say": "Okay.", "actions": [{"type": "set_reminder", "when": "2026-11-12T16:00", "text": "challah", "repeat": "none"}, {"type": "cancel_reminder", "text": "challah"}, {"type": "play_radio", "station": "WNYC"}, {"type": "play_radio", "station": ""}]}"#
         XCTAssertEqual(try XCTUnwrap(AssistantReply.parse(Data(json.utf8))).actions,
                        [.setReminder(when: "2026-11-12T16:00", text: "challah", again: "none"), .cancelReminder("challah"), .playRadio("WNYC")])
+    }
+}
+
+final class PushTests: XCTestCase {
+    func testRegistration() throws {
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: Push.body(token: "ab12", screen: "Dov's iPhone", environment: "development")) as? [String: String])
+        XCTAssertEqual(body, ["token": "ab12", "screen": "Dov's iPhone", "env": "development"])
+        XCTAssertEqual(Push.parse(Data(#"{"ok": true, "set_up": true}"#.utf8)), .ready)
+        XCTAssertEqual(Push.parse(Data(#"{"ok": true, "set_up": false}"#.utf8)), .serverNotSetUp)
+        XCTAssertNil(Push.parse(Data(#"{"ok": false, "error": "no"}"#.utf8)))
+        XCTAssertNil(Push.parse(Data("not found".utf8)))
+    }
+
+    func testTheRequestSaysWhichDeviceAsked() throws {
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: AssistantClient.body(text: "x", timers: [], history: [], device: "ab12")) as? [String: Any])
+        XCTAssertEqual(body["device"] as? String, "ab12")
+    }
+
+    func testWhetherTheDisplayShowsIsRemembered() {
+        let store = UserDefaults(suiteName: "push-tests")!
+        store.removePersistentDomain(forName: "push-tests")
+        let settings = Settings(store: store)
+        XCTAssertNil(settings.displayOn)
+        settings.displayOn = false
+        XCTAssertEqual(settings.displayOn, false)
+    }
+
+    func testASoundFileANotificationCanPlay() {
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 22_050, channels: 1, interleaved: false)!
+        let settings = SpokenFile.settings(format)
+        XCTAssertEqual(settings[AVFormatIDKey] as? AudioFormatID, kAudioFormatLinearPCM)
+        XCTAssertEqual(settings[AVLinearPCMBitDepthKey] as? Int, 16)
+        XCTAssertEqual(settings[AVLinearPCMIsFloatKey] as? Bool, false)
+    }
+
+    func testOldAnnouncementFilesAreRemoved() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let old = folder.appendingPathComponent(SpokenFile.prefix + "old.caf"), other = folder.appendingPathComponent("chime.caf")
+        try Data("x".utf8).write(to: old)
+        try Data("x".utf8).write(to: other)
+        SpokenFile.clean(folder, now: Date().addingTimeInterval(5))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: old.path))
+        SpokenFile.clean(folder, now: Date().addingTimeInterval(700))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: old.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: other.path))
     }
 }

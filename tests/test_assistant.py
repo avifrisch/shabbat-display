@@ -394,11 +394,11 @@ class RemindersAnnouncementsRadio(Case):
 
     def test_an_announcement_also_goes_to_the_phones_when_that_is_set_up(self):
         sent = []
-        self.a.push = lambda text: sent.append(text)
+        self.a.push = lambda text, origin, device: sent.append(text)
         _, result = self.run_tool("announce", {"message": "Dinner is ready."})
         self.assertEqual(sent, ["Dinner is ready."])
         self.assertIn("phones and tablets", result["content"])
-        self.a.push = lambda text: False
+        self.a.push = lambda text, origin, device: False
         self.assertNotIn("phones", self.run_tool("announce", {"message": "Bedtime."})[1]["content"])
         def broken(text): raise OSError("no network")
         self.a.push = broken
