@@ -21,6 +21,15 @@ enum SharedStore {
         set { store?.set(newValue, forKey: "voice") }
     }
 
+    /// The last few things the notification extension did, for finding out why an announcement
+    /// wasn't spoken (a DEBUG build prints them when the app starts).
+    static var trail: [String] { store?.stringArray(forKey: "trail") ?? [] }
+
+    static func note(_ line: String) {
+        let stamp = Date().formatted(date: .omitted, time: .standard)
+        store?.set(Array((trail + ["\(stamp) \(line)"]).suffix(30)), forKey: "trail")
+    }
+
     /// Where a notification's sound file has to be for iOS to play it.
     static var soundsFolder: URL? {
         guard let base = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return nil }

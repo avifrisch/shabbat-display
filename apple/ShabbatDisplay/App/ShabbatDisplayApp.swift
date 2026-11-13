@@ -38,6 +38,9 @@ struct ShabbatDisplayApp: App {
     /// For trying the assistant without a microphone: launch with `-say "set a timer for ten minutes"`.
     private func typedRequest() async {
         #if DEBUG
+        for line in SharedStore.trail { print("PUSH trail: \(line)") }
+        let sounds = (try? FileManager.default.contentsOfDirectory(atPath: SharedStore.soundsFolder?.path ?? "")) ?? []
+        print("PUSH sound files: \(sounds.count)")
         if let text = UserDefaults.standard.string(forKey: "speakfile"), !text.isEmpty {
             // Tries the closed-app path without Apple's push service: the sentence becomes a sound
             // file and a notification plays it in five seconds (put the app in the background).
