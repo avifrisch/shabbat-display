@@ -17,6 +17,61 @@ platform :ios do
             language: "en-US", platforms: ["ios"], skip_devcenter: true)
   end
 
+  desc "Who can test: fastlane who emails:a@x.com,b@y.com says which are on the App Store Connect team"
+  lane :who do |options|
+    app_store_connect_api_key(key_id: ENV.fetch("ASC_KEY_ID"), issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+                              key_filepath: File.expand_path(ENV.fetch("ASC_KEY_PATH")))
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(**lane_context[SharedValues::APP_STORE_CONNECT_API_KEY].slice(:key_id, :issuer_id, :key))
+    team = Spaceship::ConnectAPI::User.all.map { |u| u.username.to_s.downcase }
+    app = Spaceship::ConnectAPI::App.find(BUNDLE)
+    groups = app.get_beta_groups.map { |g| "#{g.name}#{g.is_internal_group ? ' (internal)' : ' (external)'}" }
+    builds = app.get_builds.map { |b| "#{b.version} #{b.processing_state}" }
+    UI.message("RESULT team size #{team.size}; groups: #{groups.join(', ')}; builds: #{builds.join(', ')}")
+    app.get_beta_groups.each do |g|
+      testers = Spaceship::ConnectAPI.get_beta_testers(filter: { betaGroups: g.id }).to_models
+      UI.message("RESULT #{g.name}: #{testers.map { |t| "#{t.email} (#{t.respond_to?(:beta_tester_state) ? t.beta_tester_state : t.invite_type})" }.join(', ')}")
+    end
+    options[:emails].to_s.split(",").each do |email|
+      UI.message("RESULT #{email.strip}: #{team.include?(email.strip.downcase) ? 'on the team' : 'not on the team'}")
+    end
+  end
+
+  desc "Add testers who are on the team: FASTLANE_USER=<apple id> fastlane testers emails:a@x.com,b@y.com (internal group Family, every build)"
+  lane :testers do |options|
+    # Signed in with the Apple ID fastlane remembers (FASTLANE_USER): Apple refuses an API key
+    # here with "Tester(s) cannot be assigned".
+    Spaceship::ConnectAPI.login(ENV.fetch("FASTLANE_USER"), use_portal: false, use_tunes: true)
+    app = Spaceship::ConnectAPI::App.find(BUNDLE)
+    group = app.get_beta_groups.find { |g| g.name == "Family" } ||
+            app.create_beta_group(group_name: "Family", is_internal_group: true, has_access_to_all_builds: true,
+                                  public_link_enabled: nil, public_link_limit: nil, public_link_limit_enabled: nil)
+    team = Spaceship::ConnectAPI::User.all
+    wanted = options[:emails].to_s.split(",").map { |e| e.strip.downcase }
+    people = wanted.map do |email|
+      user = team.find { |u| u.username.to_s.downcase == email }
+      UI.user_error!("#{email} isn't on the App Store Connect team") unless user
+      { email: user.username, firstName: user.first_name, lastName: user.last_name }
+    end
+    people.each do |person|
+      # Someone on the team already has a tester record (from any app); a new one can't be made for them.
+      known = Spaceship::ConnectAPI.get_beta_testers(filter: { email: person[:email] }).to_models.first
+      user = team.find { |u| u.username == person[:email] }
+      begin
+        # A team member who doesn't see every app has to be given this one first, or the add is quietly dropped.
+        unless user.all_apps_visible || user.get_visible_apps.any? { |a| a.id == app.id }
+          Spaceship::ConnectAPI.post_user_visible_apps(user_id: user.id, app_ids: [app.id])
+          UI.message("RESULT gave #{person[:email]} access to this app")
+        end
+        group.post_bulk_beta_tester_assignments(beta_testers: [person])
+        UI.message("RESULT added #{person[:email]}")
+      rescue Spaceship::UnexpectedResponse => e
+        UI.message("RESULT couldn't add #{person[:email]} (roles #{user.roles.join('/')}, sees all apps: #{user.all_apps_visible}, tester record: #{known ? 'yes' : 'no'}): #{e.message.lines.first.to_s.strip}")
+      end
+    end
+    have = group.fetch_beta_testers.map { |t| t.email.to_s.downcase } rescue []
+    UI.message("RESULT group Family now has: #{have.join(', ')}")
+  end
+
   desc "Build and upload to TestFlight"
   lane :beta do
     key_path = File.expand_path(ENV.fetch("ASC_KEY_PATH"))
