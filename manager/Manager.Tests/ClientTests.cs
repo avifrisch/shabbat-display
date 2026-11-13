@@ -62,7 +62,7 @@ public class ClientTests
             {"ok": true, "note": null, "holy": false, "key_set": true, "monthly_usd": 5.0, "daily_requests": 300.0,
              "budget_ok": true, "spent_usd": 0.4213, "requests_today": 12,
              "push": {"key_file": "AuthKey.p8", "key_id": "FZ5YNX7JN6", "team_id": "TEAM123456", "critical": false, "ready": true, "key_found": true},
-             "ntfy_set": false, "menuapp_set": true,
+             "ntfy_set": false, "menuapp_set": true, "alexa": {"token_set": true, "devices": "kitchen-echo, den_show"},
              "devices": [{"id": "abababababab", "screen": "Kitchen iPad", "env": "production", "at": 1794500000}]}
             """;
         var h = new FakeHandler(answer); var c = Client(h);
@@ -83,6 +83,11 @@ public class ClientTests
         Assert.Equal(("The key file isn't on the display computer at that path", false), VoiceSummary.Push(v.Push! with { KeyFound = false }));
         Assert.False(VoiceSummary.Push(null).Good);
 
+        Assert.Equal(("Set up: announcements are said on 2 speakers.", true), VoiceSummary.Alexa(v.Alexa));
+        Assert.Equal(("No speaker is chosen yet.", false), VoiceSummary.Alexa(new AlexaSetup(true, " ")));
+        Assert.Equal(("The token is missing.", false), VoiceSummary.Alexa(new AlexaSetup(false, "a")));
+        Assert.Equal(("Not set up.", false), VoiceSummary.Alexa(new AlexaSetup(false, "")));
+        Assert.False(VoiceSummary.Alexa(null).Good);
         var refused = await Client(new FakeHandler("{\"ok\":false,\"error\":\"Nothing is announced on Shabbat or Yom Tov.\"}", 403)).ChangeVoiceAsync("announce", ("text", "Dinner"));
         Assert.Equal("Nothing is announced on Shabbat or Yom Tov.", refused.Error);
     }

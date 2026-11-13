@@ -88,6 +88,11 @@ CONFIG = {
     # family's phones and tablets: an ntfy topic address such as https://ntfy.sh/<a long secret name>.
     # Secret; empty = displays only.
     "announce_push_url": "",
+    # Announcements said by Alexa (Echo devices), through the Voice Monkey skill: its API token
+    # (secret) and the IDs of the Voice Monkey speakers to say them, separated by commas (10 at
+    # most; the free plan allows 200 a month, counted per speaker). Empty = not used.
+    "alexa_token": "",
+    "alexa_devices": "",
     # Announcements as Apple notifications on the family's iPhones and iPads that have the app:
     # a push key from the developer account (Keys, with Apple Push Notifications ticked). The .p8
     # file is secret; give its path, the key's ID and the team ID. Empty = not used.
@@ -366,10 +371,11 @@ def _number(v):
 
 
 # Settings the Display Manager can set (its Voice assistant and Phones pages). The secret ones are write-only.
-VOICE_SECRETS = ("anthropic_api_key", "announce_push_url", "menuapp_grocery_url")
+VOICE_SECRETS = ("anthropic_api_key", "announce_push_url", "menuapp_grocery_url", "alexa_token")
 VOICE_CHECKS = {"assistant_monthly_usd": _number, "assistant_daily_requests": _number,
                 "apns_key_file": lambda v: isinstance(v, str), "apns_key_id": lambda v: isinstance(v, str),
-                "apns_team_id": lambda v: isinstance(v, str), "apns_critical": lambda v: isinstance(v, bool)}
+                "apns_team_id": lambda v: isinstance(v, str), "apns_critical": lambda v: isinstance(v, bool),
+                "alexa_devices": lambda v: isinstance(v, str)}
 
 
 def app_setting(key):
@@ -2738,8 +2744,13 @@ def _push_announcement(text, origin="", device=""):
         apple = APPLE_PUSH.announce(text, origin, skip=device)
     except Exception as e:  # noqa: BLE001 - ntfy and the displays still get it
         log(f"push: {type(e).__name__}: {e}")
+    alexa = False
+    try:
+        alexa = _alexa_announcement(text)
+    except Exception as e:  # noqa: BLE001 - never the token: only the kind of failure
+        log(f"alexa: {type(e).__name__}" + (f" {e.code}" if isinstance(e, urllib.error.HTTPError) else ""))
     relayed = _relay_announcement(text)
-    return False if not apple and relayed is False else None
+    return False if not apple and not alexa and relayed is False else None
 
 
 def push_register_route(body):
@@ -2751,6 +2762,32 @@ def push_register_route(body):
     if not isinstance(req, dict) or not PUSH_DEVICES.register(req.get("token"), req.get("screen"), req.get("env")):
         return 400, json.dumps({"ok": False, "error": "That isn't a device's push token."})
     return 200, json.dumps({"ok": True, "set_up": APPLE_PUSH.ready()})
+
+
+ALEXA_URL = "https://api-v3.voicemonkey.io/announce"
+
+
+def alexa_devices(value=None):
+    """The Voice Monkey speaker IDs to announce on: letters, digits, - and _, 10 at most."""
+    value = app_setting("alexa_devices") if value is None else value
+    ids = [d.strip() for d in value.split(",")] if isinstance(value, str) else []
+    return [d for d in ids if re.fullmatch(r"[A-Za-z0-9_-]{1,60}", d)][:10]
+
+
+def _alexa_announcement(text, post=None):
+    """Say it on the Echo devices, through Voice Monkey. False when not set up or refused."""
+    token, devices = app_setting("alexa_token"), alexa_devices()
+    if not (isinstance(token, str) and token.strip() and devices):
+        return False
+    body = json.dumps({"token": token.strip(), "device": devices, "speech": text}).encode("utf-8")
+    req = urllib.request.Request(ALEXA_URL, data=body, method="POST",
+                                 headers={"Content-Type": "application/json", "User-Agent": OWN_UA})
+    with (post or urllib.request.urlopen)(req, timeout=8) as r:
+        answer = json.loads(r.read() or b"{}")
+    if not (isinstance(answer, dict) and answer.get("success")):
+        log("alexa: Voice Monkey didn't take the announcement")
+        return False
+    return True
 
 
 def _relay_announcement(text):
@@ -3141,6 +3178,7 @@ def _voice_state(note=None):
                      "critical": p["critical"], "ready": APPLE_PUSH.ready(),
                      "key_found": bool(p["key_file"]) and os.path.isfile(p["key_file"])},
             "ntfy_set": bool(text("announce_push_url")), "menuapp_set": bool(text("menuapp_grocery_url")),
+            "alexa": {"token_set": bool(text("alexa_token")), "devices": ", ".join(alexa_devices())},
             "devices": sorted(devices, key=lambda d: (d["screen"].lower(), d["id"]))}
 
 
@@ -3181,6 +3219,15 @@ def _voice_change(data):
         starts = ("https://",) if op == "set_ntfy" else ("http://", "https://")
         _need(not url or (url.startswith(starts) and not re.search(r"\s", url)), f"The address starts with {' or '.join(starts)}.")
         store_in("secrets", {"announce_push_url" if op == "set_ntfy" else "menuapp_grocery_url": url})
+    elif op == "set_alexa_token":
+        token = word("token", 300, "The token")
+        _need(not re.search(r"\s", token), "The token has no spaces in it.")
+        store_in("secrets", {"alexa_token": token})
+    elif op == "set_alexa_devices":
+        ids = [d.strip() for d in word("devices", 700, "The list of speakers").split(",") if d.strip()]
+        _need(len(ids) <= 10, "Voice Monkey takes 10 speakers at most.")
+        _need(ids == alexa_devices(",".join(ids)), "A speaker's ID is letters, digits, - and _ only. Separate them with commas.")
+        store_in("voice", {"alexa_devices": ", ".join(ids)})
     elif op == "forget_device":
         gone = {t for t in PUSH_DEVICES.all() if t[:12] == data.get("id")}
         _need(gone, "That device isn't on the list any more.")
@@ -3196,8 +3243,8 @@ def _voice_change(data):
             phones = _push_announcement(message, "Display Manager") is not False
         except Exception as e:  # noqa: BLE001 - the displays still have it
             log(f"announce from the app: the phones weren't reached ({type(e).__name__})")
-        note = "It is on the displays now" + (" and was sent to the phones and tablets." if phones
-                                              else ". Nothing went to phones or tablets.")
+        note = "It is on the displays now" + (" and was sent on (phones, tablets, Alexa)." if phones
+                                              else ". Nothing went to phones, tablets or Alexa.")
     else:
         raise BadRequest("The display server doesn't know that change. It may need updating.")
     return 200, _voice_state(note)

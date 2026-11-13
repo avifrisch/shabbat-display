@@ -9,7 +9,7 @@ namespace ShabbatManager.Pages;
 /// <summary>Announcements: send one, see which phones and tablets get them, and the keys that carry them. Each button saves at once.</summary>
 public sealed partial class PhonesPage : Page
 {
-    private const string AnnounceHelp = "Shown on every display for 45 seconds, said by iPads that are listening, and sent to the phones and tablets below.";
+    private const string AnnounceHelp = "Shown on every display for 45 seconds, said by iPads and PCs that are listening, and sent to the phones, tablets and Alexa speakers below.";
 
     private bool loaded;
 
@@ -39,7 +39,7 @@ public sealed partial class PhonesPage : Page
         Busy.IsActive = true;
         var r = await AppState.Call(c => c.ChangeVoiceAsync(op, more));
         Busy.IsActive = false;
-        return Take(r, r.Value?.Note ?? done, fields: op == "set_push");
+        return Take(r, r.Value?.Note ?? done, fields: op is "set_push" or "set_alexa_devices");
     }
 
     /// <summary>Shows the state. The push key boxes are filled on the first load and after saving them, so a refresh of the rest doesn't undo typing.</summary>
@@ -67,6 +67,7 @@ public sealed partial class PhonesPage : Page
             Devices.Children.Add(row);
         }
 
+        var first = !loaded;
         var (text, good) = VoiceSummary.Push(v.Push);
         PushState.Text = text;
         PushState.Foreground = good ? Ui.Green : Ui.Amber;
@@ -78,6 +79,12 @@ public sealed partial class PhonesPage : Page
             Critical.IsOn = p.Critical;
             loaded = true;
         }
+
+        var (alexa, alexaGood) = VoiceSummary.Alexa(v.Alexa);
+        AlexaState.Text = alexa;
+        AlexaState.Foreground = alexaGood ? Ui.Green : Ui.Dim;
+        RemoveAlexaToken.IsEnabled = v.Alexa?.TokenSet == true;
+        if (v.Alexa is { } a && (fields || first)) AlexaDevices.Text = a.Devices;
 
         NtfyState.Text = v.NtfySet ? "An address is saved." : "No address is saved.";
         NtfyState.Foreground = v.NtfySet ? Ui.Green : Ui.Dim;
@@ -108,6 +115,23 @@ public sealed partial class PhonesPage : Page
     private async void SavePush_Click(object sender, RoutedEventArgs e) =>
         await Change("set_push", "The push key settings are saved.", ("key_file", KeyFile.Text.Trim()), ("key_id", KeyId.Text.Trim()),
                      ("team_id", TeamId.Text.Trim()), ("critical", Critical.IsOn));
+
+    private async void SaveAlexaToken_Click(object sender, RoutedEventArgs e)
+    {
+        var token = AlexaToken.Password.Trim();
+        if (token.Length == 0)
+        {
+            Ui.Show(Message, "Paste the token first.");
+            return;
+        }
+        if (await Change("set_alexa_token", "The token is saved.", ("token", token))) AlexaToken.Password = "";
+    }
+
+    private async void RemoveAlexaToken_Click(object sender, RoutedEventArgs e) =>
+        await Change("set_alexa_token", "The token is removed.", ("token", ""));
+
+    private async void SaveAlexaDevices_Click(object sender, RoutedEventArgs e) =>
+        await Change("set_alexa_devices", "The speakers are saved.", ("devices", AlexaDevices.Text.Trim()));
 
     private async void SaveNtfy_Click(object sender, RoutedEventArgs e)
     {

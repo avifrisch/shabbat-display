@@ -224,7 +224,7 @@ class ManageTests(ManageCase):
 
             status, v = self.call("POST", "/api/manage/voice", {"op": "announce", "text": "Dinner is  ready"})
             self.assertEqual((status, sent, v["note"]), (200, [("Dinner is ready", "Display Manager")],
-                                                        "It is on the displays now and was sent to the phones and tablets."))
+                                                        "It is on the displays now and was sent on (phones, tablets, Alexa)."))
             self.assertEqual([i["text"] for i in server.ASSISTANT.announcements.since(0)["items"]][-1], "Dinner is ready")
             with mock.patch.object(server, "is_holy", lambda n=None: True):
                 status, out = self.call("POST", "/api/manage/voice", {"op": "announce", "text": "Dinner"})
@@ -232,6 +232,50 @@ class ManageTests(ManageCase):
 
             v = self.call("POST", "/api/manage/voice", {"op": "forget_device", "id": token[:12]})[1]
             self.assertEqual((v["devices"], server.PUSH_DEVICES.all()), ([], {}))
+
+    def test_alexa_token_and_speakers(self):
+        budget, devices = self.voice_files()
+        sent = []
+
+        class Answer:
+            def __init__(self, body):
+                self.body = body
+
+            def read(self):
+                return self.body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def post(req, timeout=None):
+            sent.append((req.full_url, json.loads(req.data), req.get_header("User-agent")))
+            return Answer(b'{"success": true, "data": "OK"}')
+        with budget, devices:
+            self.assertFalse(server._alexa_announcement("Dinner", post))   # nothing set: nothing sent
+            v = self.call("POST", "/api/manage/voice", {"op": "set_alexa_token", "token": "vm-secret-token"})[1]
+            self.assertEqual(v["alexa"], {"token_set": True, "devices": ""})
+            self.assertNotIn("vm-secret-token", json.dumps(v))
+            self.assertNotIn("vm-secret-token", json.dumps(self.call("GET", "/api/manage/household")[1]))
+            self.assertFalse(server._alexa_announcement("Dinner", post))   # no speaker chosen yet
+            v = self.call("POST", "/api/manage/voice", {"op": "set_alexa_devices", "devices": " kitchen-echo ,den_show, "})[1]
+            self.assertEqual(v["alexa"]["devices"], "kitchen-echo, den_show")
+            self.assertTrue(server._alexa_announcement("Dinner is ready", post))
+            self.assertEqual(sent, [("https://api-v3.voicemonkey.io/announce",
+                                     {"token": "vm-secret-token", "device": ["kitchen-echo", "den_show"], "speech": "Dinner is ready"},
+                                     server.OWN_UA)])
+            for body, error in (({"op": "set_alexa_devices", "devices": "kitchen echo"}, "A speaker's ID is letters"),
+                                ({"op": "set_alexa_devices", "devices": ",".join("d%d" % i for i in range(11))}, "10 speakers at most"),
+                                ({"op": "set_alexa_token", "token": "a b"}, "no spaces")):
+                status, out = self.call("POST", "/api/manage/voice", body)
+                self.assertEqual(status, 400, body)
+                self.assertIn(error, out["error"])
+            self.assertFalse(server._alexa_announcement("x", lambda req, timeout=None: Answer(b'{"success": false}')))
+            v = self.call("POST", "/api/manage/voice", {"op": "set_alexa_token", "token": ""})[1]
+            self.assertFalse(v["alexa"]["token_set"])
+            self.assertFalse(server._alexa_announcement("Dinner", post))
 
     def test_voice_values_in_a_damaged_household_are_dropped(self):
         h = server._fill_household({"voice": {"assistant_monthly_usd": "lots", "apns_critical": 1, "apns_key_id": "K1"},

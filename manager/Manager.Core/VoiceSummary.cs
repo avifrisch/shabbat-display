@@ -35,4 +35,15 @@ public static class VoiceSummary
         var when = d.At > 0 ? DateTimeOffset.FromUnixTimeSeconds(d.At).ToLocalTime().ToString("MMM d", CultureInfo.InvariantCulture) : "";
         return when.Length > 0 ? $"{name} · {build} · last registered {when}" : $"{name} · {build}";
     }
+
+    /// <summary>The Alexa line on the Phones page, and whether it is good news.</summary>
+    public static (string Text, bool Good) Alexa(AlexaSetup? a)
+    {
+        if (a is null) return ("The display server needs updating before it can send to Alexa.", false);
+        var n = a.Devices.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length;
+        if (!a.TokenSet && n == 0) return ("Not set up.", false);
+        if (!a.TokenSet) return ("The token is missing.", false);
+        if (n == 0) return ("No speaker is chosen yet.", false);
+        return (n == 1 ? "Set up: announcements are said on 1 speaker." : $"Set up: announcements are said on {n} speakers.", true);
+    }
 }

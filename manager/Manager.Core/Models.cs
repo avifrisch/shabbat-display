@@ -96,4 +96,8 @@ public record PushDevice(string Id, string Screen, string Env, long At);
 
 /// <summary>GET and POST /api/manage/voice: the voice assistant and the announcements, with no secret in it.</summary>
 public record VoiceState(bool KeySet, double MonthlyUsd, int DailyRequests, bool BudgetOk, double SpentUsd, int RequestsToday,
-                         PushSetup? Push, bool NtfySet, bool MenuappSet, List<PushDevice>? Devices, bool Holy, string? Note);
+                         PushSetup? Push, bool NtfySet, bool MenuappSet, List<PushDevice>? Devices, bool Holy, string? Note,
+                         AlexaSetup? Alexa = null);
+
+/// <summary>Announcements on Echo devices through Voice Monkey: whether its token is saved, and the speaker IDs, comma separated.</summary>
+public record AlexaSetup(bool TokenSet, string Devices);

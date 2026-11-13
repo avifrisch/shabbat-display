@@ -16,7 +16,7 @@
 
             <TextBlock Text="Announce" Style="{StaticResource SubtitleTextBlockStyle}" />
             <TextBlock x:Name="AnnounceNote" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                       Text="Shown on every display for 45 seconds, said by iPads that are listening, and sent to the phones and tablets below." />
+                       Text="Shown on every display for 45 seconds, said by iPads and PCs that are listening, and sent to the phones, tablets and Alexa speakers below." />
             <StackPanel Orientation="Horizontal" Spacing="8">
                 <TextBox x:Name="AnnounceText" PlaceholderText="Dinner is ready." Width="460" MaxLength="240" KeyDown="AnnounceText_KeyDown" AutomationProperties.Name="Announcement" />
                 <Button x:Name="AnnounceButton" Content="Announce" Style="{StaticResource AccentButtonStyle}" Click="Announce_Click" />
@@ -40,6 +40,23 @@
             <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                        Text="Leave off until Apple has granted the app Critical Alerts and that build is on the devices." />
             <Button Content="Save push key settings" Click="SavePush_Click" />
+
+            <TextBlock Text="Alexa" Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,20,0,0" />
+            <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="Optional: Echo devices say announcements, through the Voice Monkey skill. Make an account at voicemonkey.io, enable its skill in the Alexa app, and add a Speaker there for each Echo that should talk. Paste the account's API token here (never shown again) and list the Speakers' IDs. The free plan allows 200 a month, counted for each speaker." />
+            <TextBlock x:Name="AlexaState" TextWrapping="Wrap" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <PasswordBox x:Name="AlexaToken" PlaceholderText="Voice Monkey API token" Width="360" AutomationProperties.Name="Voice Monkey token" />
+                <Button Content="Save token" Click="SaveAlexaToken_Click" />
+                <Button x:Name="RemoveAlexaToken" Content="Remove token" Click="RemoveAlexaToken_Click" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBox x:Name="AlexaDevices" PlaceholderText="kitchen-echo, den-echo" Width="360" MaxLength="700" VerticalAlignment="Bottom"
+                         Header="Speakers that say announcements (IDs, separated by commas)" />
+                <Button Content="Save speakers" Click="SaveAlexaDevices_Click" VerticalAlignment="Bottom" />
+            </StackPanel>
+            <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="Leave an Echo off the list and it stays quiet. An empty list sends nothing to Alexa." />
 
             <TextBlock Text="ntfy" Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,20,0,0" />
             <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
