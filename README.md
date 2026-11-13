@@ -171,6 +171,7 @@ The iPad can also run the display as an app (`apple/`, built with Xcode on a Mac
 - "Hey display, set a pasta timer for ten minutes." Timers show in the corner, ring and say their name. Say "stop" or tap the timer to quiet it.
 - "Hey display, add milk and eggs to the shopping list." "What's on the list?" "Take the eggs off."
 - "Hey display, play some quiet jazz." "Pause." "Next." "Stop the music." Music comes from Apple Music, so the iPad needs to be signed in to an Apple Music subscription. A bar in the corner shows what is playing, with pause, next and stop buttons. The music goes quiet while you talk to the display.
+- "Hey display, turn off the kitchen lights." "Set the thermostat to 70." "Run Good Night." "Is the front door locked?" This is Apple Home: switch on **Control the Home** in the app's settings, and make sure the iPad's Apple ID is a member of your Home. Use the names your devices and scenes have in the Home app. The display will lock a door or close the garage, but it never unlocks or opens one.
 - "Hey display, reorder from Walmart." A code appears on the display; scan it with your phone and Walmart opens with your usual items in the cart. You review the cart and check out on the phone. The display never orders or pays for anything.
 - "Hey display, send the list to my phone." The code opens the shopping list page (below).
 - "Hey display, when is candle lighting?" It knows the time, the weather and the Shabbat times on the display, and answers general questions from what Claude knows. It can't search the internet.

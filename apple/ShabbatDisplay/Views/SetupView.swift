@@ -10,6 +10,7 @@ struct SetupView: View {
     @State private var voiceOn = false
     @State private var wakePhrase = ""
     @State private var voiceID = ""
+    @State private var homeOn = false
     @State private var voices: [SpokenVoice.Choice] = []
     @State private var checking = false
     @State private var problem: String?
@@ -53,6 +54,7 @@ struct SetupView: View {
                             }
                         }
                         Button("Hear this voice") { voice.tryVoice(voiceID) }
+                        Toggle("Control the Home", isOn: $homeOn)
                     }
                 } header: {
                     Text("Voice")
@@ -61,6 +63,9 @@ struct SetupView: View {
                         Text("Say the wake phrase, then a request: a timer, the shopping list, a question. The microphone is off from candle lighting to havdalah, and whenever the calendar can't be read.")
                         if voiceOn {
                             Text("For a more natural voice, download one marked Enhanced or Premium in the iPad's Settings → Accessibility → Spoken Content → Voices → English. It then appears here.")
+                        }
+                        if voiceOn && homeOn {
+                            Text("Lights, plugs, thermostats, shades and scenes from Apple Home, by the names they have there. This iPad's Apple ID must be a member of the Home. The display can lock a door or close the garage, but never unlocks or opens one.")
                         }
                         if voiceOn && !voice.recognizesOnDevice {
                             Text("This iPad can't recognize speech by itself, so what it hears after a sound is sent to Apple to be turned into words.")
@@ -99,6 +104,7 @@ struct SetupView: View {
                 voiceOn = voice.voiceOn
                 wakePhrase = voice.wakePhrase
                 voiceID = voice.voiceID
+                homeOn = voice.homeOn
                 voices = SpokenVoice.choices()
             }
         }
@@ -128,7 +134,7 @@ struct SetupView: View {
         }
         model.save(server: server, screen: name.isEmpty ? "iPad" : name)
         Settings().voiceID = voiceID
-        await voice.save(voiceOn: voiceOn, wakePhrase: phrase.isEmpty ? WakePhrase.standard : phrase)
+        await voice.save(voiceOn: voiceOn, wakePhrase: phrase.isEmpty ? WakePhrase.standard : phrase, homeOn: homeOn)
         // A refused microphone stays on screen; everything else is done.
         if voiceOn && !voice.voiceOn {
             voiceOn = false

@@ -29,6 +29,7 @@ final class VoiceController {
     /// A code for a phone to scan, while it is on screen.
     private(set) var code: PhoneCode?
     let music = MusicBox()
+    let home = HomeBox()
 
     private let model: AppModel
     private let settings = Settings()
@@ -56,6 +57,7 @@ final class VoiceController {
     }
 
     var voiceOn: Bool { settings.voiceOn }
+    var homeOn: Bool { settings.homeOn }
     var wakePhrase: String { settings.wakePhrase }
 
     /// The app came to the front or left it.
@@ -73,8 +75,9 @@ final class VoiceController {
     }
 
     /// Saves the settings screen's choices. Asks for the microphone the first time it is switched on.
-    func save(voiceOn: Bool, wakePhrase: String) async {
+    func save(voiceOn: Bool, wakePhrase: String, homeOn: Bool) async {
         settings.wakePhrase = wakePhrase
+        settings.homeOn = homeOn && voiceOn
         if voiceOn && !Listener.permitted {
             let allowed = await Listener.askPermission()
             settings.voiceOn = allowed
@@ -104,6 +107,8 @@ final class VoiceController {
             history = []
         }
         scheduleCandles()
+        // The Home is only looked at on weekdays, with voice and Home control both switched on.
+        if weekday && active && settings.voiceOn && settings.homeOn { home.start() } else { home.stop() }
         let want = wanted
         if want && !listening {
             guard Listener.permitted else {
@@ -185,7 +190,7 @@ final class VoiceController {
         stage = .asking(request)
         if Date().timeIntervalSince(lastExchange) > 180 { history = [] }
         let reply = await AssistantClient.ask(server, text: request, timers: timers.report(now: Date()), history: history,
-                                              music: music.report)
+                                              music: music.report, home: home.report)
         // Shabbat may have begun while the answer was on its way.
         if model.holy.weekdayForCertain {
             var say: String
@@ -223,6 +228,14 @@ final class VoiceController {
                     trouble = (error as? MusicBox.Trouble ?? .failed).sentence
                 }
             case .musicControl(let command): await music.control(command)
+            case .homeSet(let device, let room, let what, let value):
+                do { try await home.set(device: device, room: room, action: what, value: value) } catch {
+                    trouble = (error as? HomeBox.Trouble ?? .failed(device)).sentence
+                }
+            case .homeScene(let name):
+                do { try await home.run(scene: name) } catch {
+                    trouble = (error as? HomeBox.Trouble ?? .failed(name)).sentence
+                }
             case .showCode(let title, let url, let path):
                 let link = url.flatMap(URL.init) ?? path.flatMap { URL(string: $0, relativeTo: server.base)?.absoluteURL }
                 if let link, let shown = PhoneCode(title: title, link: link) {
@@ -268,6 +281,7 @@ final class VoiceController {
         if wanted != listening || !model.holy.weekdayForCertain { refresh() }
         guard model.holy.weekdayForCertain else { return }
         music.look()
+        home.readValues()
         if code != nil, Date() > codeUntil { code = nil }
         if !busy, case .hearing = stage, awaitingUntil != .distantPast, Date() > awaitingUntil {
             // The wake phrase was said and nothing followed.

@@ -36,8 +36,13 @@ targets:
           NSAllowsLocalNetworking: true
         NSLocalNetworkUsageDescription: "Shows the Shabbat Display running on your home computer."
         NSMicrophoneUsageDescription: "Hears requests after the wake phrase, such as a timer or a shopping-list item. Off on Shabbat and Yom Tov."
+        NSHomeKitUsageDescription: "Switches lights and other devices in your Home when you ask."
         NSAppleMusicUsageDescription: "Plays the music you ask for from Apple Music."
         NSSpeechRecognitionUsageDescription: "Turns what you say after the wake phrase into words."
+    entitlements:
+      path: ShabbatDisplay/ShabbatDisplay.entitlements
+      properties:
+        com.apple.developer.homekit: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.avifrischlaw.shabbatdisplay

@@ -43,7 +43,10 @@ Use a tool whenever the request is something a tool does, and only say a thing i
 the tool has answered. You can keep a shopping list, set kitchen timers, play music from \
 Apple Music on the display, and put a code on the display that a phone scans to open the \
 shopping list or a Walmart cart of the family's usual items. You cannot place an order, pay, \
-send messages or control other devices; checkout always happens on the phone. Say so briefly \
+or send messages; checkout always happens on the phone. When the facts below list home \
+devices, you can also switch them, dim lights, set thermostats, move shades and run scenes with \
+the home tools, using the exact device, room and scene names listed. You can lock a door or \
+close a garage door, but never unlock or open one: tell them to use the Home app for that. Say so briefly \
 if asked. When you start music, just say what you are putting on; the display itself says so \
 if it can't find it. You have no internet search: answer from what you know and from the facts below, and say so \
 when you don't know.
@@ -80,6 +83,18 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "command": {"type": "string", "enum": ["pause", "resume", "next", "previous", "stop"]}},
          "required": ["command"]}},
+    {"name": "home_set",
+     "description": "Change one device in the home (Apple Home). Call it once per device; for 'all the kitchen lights', call it for each light listed in that room.",
+     "input_schema": {"type": "object", "properties": {
+         "device": {"type": "string", "description": "The device's name exactly as listed in the facts."},
+         "room": {"type": "string", "description": "Its room exactly as listed, to tell apart devices with the same name."},
+         "action": {"type": "string", "enum": ["on", "off", "brightness", "temperature", "position", "lock", "close"],
+                    "description": "on/off for lights, switches, plugs and fans; brightness 0-100 for lights; temperature in Fahrenheit for a thermostat; position 0 (closed) to 100 (open) for shades; lock for a door lock; close for a garage door."},
+         "value": {"type": "number", "description": "The number for brightness, temperature or position."}},
+         "required": ["device", "action"]}},
+    {"name": "home_scene",
+     "description": "Run one of the home's scenes (Apple Home), by its exact listed name.",
+     "input_schema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
     {"name": "send_to_phone",
      "description": "Show a code on the display for a phone's camera. 'cart' opens Walmart with the family's usual items in the cart, ready for them to check out; 'list' opens the shopping list page, where items can be ticked off and the usual Walmart items are set up.",
      "input_schema": {"type": "object", "properties": {
@@ -414,6 +429,26 @@ def _clean_timers(value):
     return out[:10]
 
 
+HOME_KINDS = ("light", "switch", "plug", "fan", "thermostat", "shade", "lock", "garage door", "sensor")
+HOME_ACTIONS = {"on": ("light", "switch", "plug", "fan"), "off": ("light", "switch", "plug", "fan"),
+                "brightness": ("light",), "temperature": ("thermostat",), "position": ("shade",),
+                "lock": ("lock",), "close": ("garage door",)}
+HOME_RANGE = {"brightness": (0, 100), "temperature": (50, 90), "position": (0, 100)}
+
+
+def _clean_home(value):
+    """What the iPad sees in Apple Home: {devices: [{name, room, kind, state}], scenes: [name]}, or None."""
+    if not isinstance(value, dict):
+        return None
+    devices = []
+    for d in value.get("devices") if isinstance(value.get("devices"), list) else []:
+        if isinstance(d, dict) and d.get("kind") in HOME_KINDS and _clean_text(d.get("name"), 60):
+            devices.append({"name": _clean_text(d.get("name"), 60), "room": _clean_text(d.get("room"), 40),
+                            "kind": d["kind"], "state": _clean_text(d.get("state"), 40)})
+    scenes = [_clean_text(n, 60) for n in (value.get("scenes") if isinstance(value.get("scenes"), list) else [])]
+    return {"devices": devices[:120], "scenes": [n for n in scenes if n][:60]}
+
+
 def _clean_music(value):
     """What the iPad is playing: {playing, title}."""
     if not isinstance(value, dict):
@@ -463,11 +498,12 @@ class Assistant:
             return 503, {"ok": False, "error": "not_set_up",
                          "say": "The assistant isn't set up yet. The display computer needs its Claude key."}
         timers = _clean_timers(body.get("timers"))
+        home = _clean_home(body.get("home"))
         messages = []
         for h in _clean_history(body.get("history")):
             messages += [{"role": "user", "content": h["q"]}, {"role": "assistant", "content": h["a"]}]
         messages.append({"role": "user", "content": text})
-        system = SYSTEM + "\n\nFacts right now:\n" + self._facts(facts, timers, _clean_music(body.get("music")))
+        system = SYSTEM + "\n\nFacts right now:\n" + self._facts(facts, timers, _clean_music(body.get("music")), home)
 
         actions, said = [], []
         for _ in range(MAX_STEPS):
@@ -499,7 +535,7 @@ class Assistant:
             said = []  # words before a tool call are superseded by the answer after it
             messages.append({"role": "assistant", "content": content})
             messages.append({"role": "user", "content": [
-                {"type": "tool_result", "tool_use_id": c.get("id"), **self._run(c, actions, timers)} for c in calls]})
+                {"type": "tool_result", "tool_use_id": c.get("id"), **self._run(c, actions, timers, home)} for c in calls]})
         say = _clean_text(" ".join(t for t in said if t), 600)
         return 200, {"ok": True, "say": say, "actions": actions}
 
@@ -512,7 +548,7 @@ class Assistant:
             return "I can't read my spending record, so I've stopped. It needs a look on the display computer."
         return "I've reached this month's spending limit."
 
-    def _facts(self, facts, timers, music=None):
+    def _facts(self, facts, timers, music=None, home=None):
         lines = [facts.strip()] if facts and facts.strip() else []
         items = [i["text"] for i in self.shopping.items()]
         lines.append("Shopping list: " + ("; ".join(items) if items else "empty") + ".")
@@ -526,6 +562,7 @@ class Assistant:
             lines.append(f"Music: {music['title']} ({'playing' if music['playing'] else 'paused'}).")
         else:
             lines.append("Music: nothing playing.")
+        lines += self._home_facts(home)
         usual = self.usuals.items()
         if usual:
             lines.append("Usual Walmart items: " + "; ".join(
@@ -535,7 +572,53 @@ class Assistant:
             lines.append("Usual Walmart items: none set up.")
         return "\n".join(lines)
 
-    def _run(self, call, actions, timers):
+    def _home_facts(self, home):
+        if home is None:
+            return ["Home devices: home control isn't switched on on this display."]
+        rooms = {}
+        for d in home["devices"]:
+            rooms.setdefault(d["room"] or "No room", []).append(
+                f"{d['name']} ({d['kind']}" + (f", {d['state']}" if d["state"] else "") + ")")
+        lines = ["Home devices, by room:"] + [f"  {room}: " + "; ".join(names) + "." for room, names in rooms.items()]
+        if not home["devices"]:
+            lines = ["Home devices: none found."]
+        lines.append("Home scenes: " + ("; ".join(home["scenes"]) if home["scenes"] else "none") + ".")
+        return lines
+
+    def _home_tool(self, name, args, actions, home):
+        if home is None:
+            return {"content": "Home control isn't switched on in the display's settings.", "is_error": True}
+        if name == "home_scene":
+            want = _clean_text(args.get("name"), 60).casefold()
+            scene = next((n for n in home["scenes"] if n.casefold() == want), None)
+            if not scene:
+                return {"content": "There is no scene with that name. The scenes are: " + ("; ".join(home["scenes"]) or "none") + ".",
+                        "is_error": True}
+            actions.append({"type": "home_scene", "name": scene})
+            return {"content": f"The display is running {scene}, and will say so if it couldn't."}
+        action = args.get("action")
+        if action not in HOME_ACTIONS:
+            return {"content": "That isn't something the display can do to a device. Unlocking and opening are done in the Home app.",
+                    "is_error": True}
+        want, room = _clean_text(args.get("device"), 60).casefold(), _clean_text(args.get("room"), 40).casefold()
+        found = [d for d in home["devices"] if d["name"].casefold() == want and (not room or d["room"].casefold() == room)]
+        if not found:
+            return {"content": "No device has that name" + (" in that room" if room else "") + ". Use a name from the list.", "is_error": True}
+        if len(found) > 1:
+            return {"content": "More than one device has that name; give its room: " + ", ".join(d["room"] for d in found) + ".", "is_error": True}
+        device = found[0]
+        if device["kind"] not in HOME_ACTIONS[action]:
+            return {"content": f"{device['name']} is a {device['kind']}; '{action}' doesn't apply to it.", "is_error": True}
+        out = {"type": "home_set", "device": device["name"], "room": device["room"], "action": action}
+        if action in HOME_RANGE:
+            value, (low, high) = args.get("value"), HOME_RANGE[action]
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or not low <= value <= high:
+                return {"content": f"{action} needs a number from {low} to {high}.", "is_error": True}
+            out["value"] = round(value)
+        actions.append(out)
+        return {"content": "The display is doing that now, and will say so if it couldn't."}
+
+    def _run(self, call, actions, timers, home=None):
         """Run one tool call. Returns the tool_result's `content` (and `is_error`)."""
         name = call.get("name")
         args = call.get("input") if isinstance(call.get("input"), dict) else {}
@@ -575,6 +658,8 @@ class Assistant:
                     return {"content": "The commands are pause, resume, next, previous and stop.", "is_error": True}
                 actions.append({"type": "music_control", "command": command})
                 return {"content": "Done."}
+            if name in ("home_set", "home_scene"):
+                return self._home_tool(name, args, actions, home)
             if name == "send_to_phone":
                 if args.get("what") == "list":
                     actions.append({"type": "show_code", "path": "/shop", "title": "Shopping list"})

@@ -33,6 +33,12 @@ struct Settings {
         nonmutating set { store.set(newValue, forKey: "wakePhrase") }
     }
 
+    /// Apple Home control, off until someone turns it on.
+    var homeOn: Bool {
+        get { store.bool(forKey: "homeOn") }
+        nonmutating set { store.set(newValue, forKey: "homeOn") }
+    }
+
     /// The voice answers are spoken in; empty = the best one installed.
     var voiceID: String {
         get { store.string(forKey: "voiceID") ?? "" }

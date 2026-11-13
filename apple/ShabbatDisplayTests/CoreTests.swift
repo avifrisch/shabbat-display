@@ -1,4 +1,5 @@
 import XCTest
+import HomeKit
 @testable import ShabbatDisplay
 
 final class ServerAddressTests: XCTestCase {
@@ -247,5 +248,33 @@ final class SpokenVoiceTests: XCTestCase {
         XCTAssertEqual(choices.map(\.rank), choices.map(\.rank).sorted(by: >))
         XCTAssertNotNil(SpokenVoice.chosen(""))
         XCTAssertNotNil(SpokenVoice.chosen("com.example.not-installed"))
+    }
+}
+
+final class HomeTests: XCTestCase {
+    func testTemperatures() {
+        XCTAssertEqual(HomeMath.fahrenheit(20), 68)
+        XCTAssertEqual(HomeMath.fahrenheit(21.5), 71)
+        XCTAssertEqual(HomeMath.celsius(70), 21.0)
+        XCTAssertEqual(HomeMath.celsius(68), 20.0)
+        XCTAssertEqual(HomeMath.celsius(73), 23.0)
+    }
+
+    func testOnlyLockingAndClosingArePassed() {
+        let lock = "00000019-0000-1000-8000-0026BB765291"   // target lock state
+        XCTAssertTrue(HomeMath.opensADoor(characteristicType: HMCharacteristicTypeTargetLockMechanismState, value: 0))
+        XCTAssertFalse(HomeMath.opensADoor(characteristicType: HMCharacteristicTypeTargetLockMechanismState, value: 1))
+        XCTAssertTrue(HomeMath.opensADoor(characteristicType: HMCharacteristicTypeTargetDoorState, value: 0))
+        XCTAssertTrue(HomeMath.opensADoor(characteristicType: HMCharacteristicTypeTargetDoorState, value: nil))
+        XCTAssertFalse(HomeMath.opensADoor(characteristicType: HMCharacteristicTypePowerState, value: 0))
+        _ = lock
+    }
+
+    func testHomeActions() throws {
+        let json = #"{"ok": true, "say": "Okay.", "actions": [{"type": "home_set", "device": "Lamp", "room": "Den", "action": "brightness", "value": 30}, {"type": "home_set", "device": "Front door", "action": "unlock"}, {"type": "home_set", "device": "Front door", "action": "lock"}, {"type": "home_scene", "name": "Good Night"}, {"type": "home_scene", "name": ""}]}"#
+        let reply = try XCTUnwrap(AssistantReply.parse(Data(json.utf8)))
+        XCTAssertEqual(reply.actions, [.homeSet(device: "Lamp", room: "Den", action: "brightness", value: 30),
+                                       .homeSet(device: "Front door", room: "", action: "lock", value: nil),
+                                       .homeScene("Good Night")])
     }
 }

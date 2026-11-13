@@ -287,6 +287,71 @@ class MusicAndWalmart(Case):
         self.assertEqual(self.a.usuals.items(), [])
 
 
+class Home(Case):
+    HOME = {"devices": [{"name": "Ceiling lights", "room": "Kitchen", "kind": "light", "state": "on, 80%"},
+                        {"name": "Lamp", "room": "Den", "kind": "light", "state": "off"},
+                        {"name": "Lamp", "room": "Bedroom", "kind": "light", "state": "off"},
+                        {"name": "Thermostat", "room": "Hallway", "kind": "thermostat", "state": "68 F, set to 70"},
+                        {"name": "Front door", "room": "Hallway", "kind": "lock", "state": "unlocked"},
+                        {"name": "Garage", "room": "Garage", "kind": "garage door", "state": "open"},
+                        {"name": "Toaster", "room": "Kitchen", "kind": "rocket", "state": "?"}, "junk"],
+            "scenes": ["Good Night", "", 7, "Movie time"]}
+
+    def run_tool(self, name, args, home=HOME):
+        self.answers = [tool(name, args), text("Okay.")]
+        out = self.ask("home", **({"home": home} if home is not None else {}))[1]
+        return out["actions"], self.sent[-1]["messages"][2]["content"][0]
+
+    def test_devices_and_scenes_reach_claude(self):
+        self.answers = [text("It's unlocked.")]
+        self.ask("is the front door locked", home=self.HOME)
+        system = self.sent[0]["system"]
+        self.assertIn("  Kitchen: Ceiling lights (light, on, 80%).", system)
+        self.assertIn("  Hallway: Thermostat (thermostat, 68 F, set to 70); Front door (lock, unlocked).", system)
+        self.assertIn("Home scenes: Good Night; Movie time.", system)
+        self.assertNotIn("Toaster", system)
+        self.answers = [text("x")]
+        self.ask("hello")
+        self.assertIn("home control isn't switched on", self.sent[-1]["system"])
+
+    def test_switching_dimming_and_the_thermostat(self):
+        self.assertEqual(self.run_tool("home_set", {"device": "ceiling lights", "action": "off"})[0],
+                         [{"type": "home_set", "device": "Ceiling lights", "room": "Kitchen", "action": "off"}])
+        self.assertEqual(self.run_tool("home_set", {"device": "Ceiling lights", "room": "kitchen", "action": "brightness", "value": 30.4})[0][0]["value"], 30)
+        self.assertEqual(self.run_tool("home_set", {"device": "Thermostat", "action": "temperature", "value": 70})[0][0],
+                         {"type": "home_set", "device": "Thermostat", "room": "Hallway", "action": "temperature", "value": 70})
+
+    def test_what_is_refused(self):
+        for args, why in (({"device": "Lamp", "action": "on"}, "More than one"),
+                          ({"device": "Chandelier", "action": "on"}, "No device has that name"),
+                          ({"device": "Thermostat", "action": "on"}, "doesn't apply"),
+                          ({"device": "Thermostat", "action": "temperature", "value": 120}, "from 50 to 90"),
+                          ({"device": "Ceiling lights", "action": "brightness"}, "from 0 to 100"),
+                          ({"device": "Front door", "action": "unlock"}, "Unlocking and opening"),
+                          ({"device": "Garage", "action": "open"}, "Unlocking and opening"),
+                          ({"device": "Front door", "action": "off"}, "doesn't apply")):
+            actions, result = self.run_tool("home_set", args)
+            self.assertEqual(actions, [], args)
+            self.assertTrue(result["is_error"])
+            self.assertIn(why, result["content"])
+        self.assertEqual(self.run_tool("home_set", {"device": "Lamp", "room": "Den", "action": "on"})[0][0]["room"], "Den")
+
+    def test_locking_and_closing_are_allowed(self):
+        self.assertEqual(self.run_tool("home_set", {"device": "Front door", "action": "lock"})[0][0]["action"], "lock")
+        self.assertEqual(self.run_tool("home_set", {"device": "Garage", "action": "close"})[0][0]["action"], "close")
+
+    def test_scenes(self):
+        self.assertEqual(self.run_tool("home_scene", {"name": "good night"})[0], [{"type": "home_scene", "name": "Good Night"}])
+        actions, result = self.run_tool("home_scene", {"name": "Party"})
+        self.assertEqual(actions, [])
+        self.assertIn("Good Night; Movie time", result["content"])
+
+    def test_without_home_control_the_tools_say_so(self):
+        actions, result = self.run_tool("home_set", {"device": "Lamp", "action": "on"}, home=None)
+        self.assertEqual(actions, [])
+        self.assertIn("isn't switched on", result["content"])
+
+
 class Spending(Case):
     def test_every_answer_is_counted(self):
         self.answers = [tool("set_timer", {"seconds": 60}, tokens_in=2000, tokens_out=100),
