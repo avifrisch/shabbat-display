@@ -7,6 +7,24 @@ struct VoiceOverlay: View {
     var body: some View {
         ZStack {
             VStack(alignment: .trailing, spacing: 10) {
+                if let station = voice.radio.station {
+                    MusicChip(title: station, playing: voice.radio.playing, live: true) { command in
+                        voice.radio.control(command)
+                    }
+                }
+                ForEach(voice.reminders.all.prefix(3)) { reminder in
+                    HStack(spacing: 10) {
+                        Image(systemName: "bell")
+                        Text(reminder.text).lineLimit(1).frame(maxWidth: 260, alignment: .leading)
+                        Text(reminder.when, format: Calendar.current.isDateInToday(reminder.when) ? .dateTime.hour().minute() : .dateTime.weekday().hour().minute())
+                            .fontWeight(.semibold)
+                    }
+                    .font(.title3)
+                    .foregroundStyle(Theme.text)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 11)
+                    .background(.ultraThinMaterial, in: Capsule())
+                }
                 if let title = voice.music.title {
                     MusicChip(title: title, playing: voice.music.playing) { command in
                         Task { await voice.music.control(command) }
@@ -82,6 +100,8 @@ struct VoiceOverlay: View {
         .animation(.easeInOut(duration: 0.2), value: voice.stage)
         .animation(.easeInOut(duration: 0.2), value: voice.timers)
         .animation(.easeInOut(duration: 0.2), value: voice.code)
+        .animation(.easeInOut(duration: 0.2), value: voice.reminders)
+        .animation(.easeInOut(duration: 0.2), value: voice.radio.station)
         .animation(.easeInOut(duration: 0.2), value: voice.music.title)
     }
 
@@ -136,14 +156,15 @@ private struct TimerChip: View {
 private struct MusicChip: View {
     let title: String
     let playing: Bool
+    var live = false
     let control: (String) -> Void
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "music.note").foregroundStyle(Theme.gold)
+            Image(systemName: live ? "antenna.radiowaves.left.and.right" : "music.note").foregroundStyle(Theme.gold)
             Text(title).lineLimit(1).frame(maxWidth: 320, alignment: .leading).padding(.trailing, 6)
             button(playing ? "pause.fill" : "play.fill", playing ? "pause" : "resume", playing ? "Pause" : "Play")
-            button("forward.fill", "next", "Next")
+            if !live { button("forward.fill", "next", "Next") }
             button("xmark", "stop", "Stop the music")
         }
         .font(.title3)

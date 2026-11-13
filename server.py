@@ -2681,8 +2681,18 @@ def is_holy(n=None):
     return bool(last) and last[-1][1] == "candles"
 
 
-def assistant_facts(n=None):
-    """A few lines the assistant can answer from: the time, the weather, the calendar."""
+ZMAN_NAMES = {"alot": "Dawn (alot hashachar)", "sunrise": "Sunrise", "shema_mga": "Latest Shema (Magen Avraham)",
+              "shema": "Latest Shema (Gra)", "tefilla": "Latest Shacharit", "chatzot": "Midday (chatzot)",
+              "mincha_gedola": "Earliest Mincha", "plag": "Plag hamincha", "sunset": "Sunset", "tzeit": "Nightfall (tzeit)"}
+
+
+def _clock(when):
+    return f"{when:%I:%M %p}".lstrip("0")
+
+
+def assistant_facts(n=None, screen=None):
+    """A few lines the assistant can answer from: the time, the weather, the calendars. The agenda
+    is included only for a screen whose rotation shows it, as on the display itself."""
     n = n or now()
     lines = [f"It is {n:%A, %B} {n.day}, {n.year}, {n:%I:%M %p}".replace(" 0", " ") + f" in {CONFIG['location_name']}."]
     try:
@@ -2700,9 +2710,23 @@ def assistant_facts(n=None):
             elif it.get("category") in ("parashat", "holiday", "roshchodesh") and it.get("title") \
                     and str(it.get("date"))[:10] >= n.date().isoformat():
                 lines.append(f"{it['title']}: {str(it['date'])[:10]}.")
+        h = store.get("hebdate") or {}
+        if h.get("english"):
+            lines.append(f"Hebrew date: {h['english']}" + (" (after sunset, so the next Hebrew day)" if h.get("after_sunset") else "") + ".")
+        z = store.get("zmanim") or {}
+        times = [(ZMAN_NAMES[k], parse_dt(v)) for k, v in (z.get("times") or {}).items() if k in ZMAN_NAMES and parse_dt(v)]
+        if times:
+            lines.append(f"Zmanim for {z.get('date')}: " + "; ".join(f"{name} {_clock(t)}" for name, t in times) + ".")
+        if valid_screen(screen or "") and "agenda" in [r["scene"] for r in effective_rotation(screen)]:
+            events = []
+            for e in (store.get("agenda") or {}).get("items", [])[:25]:
+                start = parse_dt(e.get("start"))
+                if e.get("title") and start:
+                    events.append(f"{start:%a %b} {start.day} " + ("all day" if e.get("all_day") else _clock(start)) + f" {e['title']}")
+            lines.append("Agenda: " + ("; ".join(events) if events else "nothing in the next few days") + ".")
     except (TypeError, ValueError, AttributeError, KeyError):
         pass  # the time alone is enough to answer with
-    return "\n".join(lines[:20])
+    return "\n".join(lines[:40])
 
 
 def assistant_route(body):
@@ -2710,8 +2734,20 @@ def assistant_route(body):
         req = json.loads(body.decode("utf-8")) if body else None
     except (ValueError, UnicodeDecodeError):
         req = None
-    status, answer = ASSISTANT.handle(req, facts=assistant_facts(), holy=is_holy())
+    screen = req.get("screen") if isinstance(req, dict) and isinstance(req.get("screen"), str) else None
+    status, answer = ASSISTANT.handle(req, facts=assistant_facts(screen=screen), holy=is_holy())
     return status, json.dumps(answer)
+
+
+def announcements_route(query):
+    """Announcements newer than ?since=, for every screen to say or show. Nothing on Shabbat."""
+    try:
+        since = int((urllib.parse.parse_qs(query).get("since") or ["0"])[0])
+    except ValueError:
+        since = 0
+    if is_holy():
+        return 200, json.dumps({"ok": True, "last": ASSISTANT.announcements.last, "items": []})
+    return 200, json.dumps(ASSISTANT.announcements.since(since))
 
 
 def shopping_route():
@@ -3124,6 +3160,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/manage/"):
                 self._send(*manage_route("GET", path, parsed.query, self.headers.get("X-Manage-Key"), b""),
                            "application/json")
+            elif path == "/api/announcements":
+                self._send(*announcements_route(parsed.query), "application/json")
             elif path == "/api/shopping":
                 self._send(*shopping_route(), "application/json")
             elif path == "/api/shop":

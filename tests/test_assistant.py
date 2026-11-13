@@ -352,6 +352,50 @@ class Home(Case):
         self.assertIn("isn't switched on", result["content"])
 
 
+class RemindersAnnouncementsRadio(Case):
+    def run_tool(self, name, args, **body):
+        self.answers = [tool(name, args), text("Okay.")]
+        out = self.ask("x", **body)[1]
+        return out["actions"], self.sent[-1]["messages"][2]["content"][0]
+
+    def test_a_reminder_becomes_an_action(self):
+        actions, result = self.run_tool("set_reminder", {"when": "2026-11-12T16:00", "text": " take the challah  out "})
+        self.assertEqual(actions, [{"type": "set_reminder", "when": "2026-11-12T16:00", "text": "take the challah out", "repeat": "none"}])
+        self.assertIn("Set for Thursday November 12 at 4:00 PM.", result["content"])
+        actions, result = self.run_tool("set_reminder", {"when": "2026-11-13T07:00", "text": "wake up", "repeat": "weekdays"})
+        self.assertEqual(actions[0]["repeat"], "weekdays")
+
+    def test_bad_reminders(self):
+        for args in ({"when": "2026-11-12T08:00", "text": "too late"},          # the clock says 9:00
+                     {"when": "tomorrow at 4", "text": "x"}, {"when": "2026-11-13T07:00", "text": ""},
+                     {"when": "2028-11-13T07:00", "text": "too far"}, {"text": "no time"}):
+            actions, result = self.run_tool("set_reminder", args)
+            self.assertEqual(actions, [], args)
+            self.assertTrue(result["is_error"])
+        self.assertEqual(self.run_tool("set_reminder", {"when": "2026-11-12T08:00", "text": "daily", "repeat": "daily"})[0][0]["repeat"], "daily")
+
+    def test_reminders_reach_claude_and_can_be_cancelled(self):
+        self.answers = [text("One.")]
+        self.ask("what reminders", reminders=[{"text": "challah", "when": "2026-11-12T16:00:00", "repeat": "none"},
+                                               {"text": "wake up", "when": "2026-11-13T07:00", "repeat": "weekdays"}, {"text": ""}])
+        self.assertIn("Reminders: challah at 2026-11-12 16:00; wake up at 2026-11-13 07:00, weekdays.", self.sent[0]["system"])
+        self.assertEqual(self.run_tool("cancel_reminder", {"text": "challah"})[0], [{"type": "cancel_reminder", "text": "challah"}])
+
+    def test_an_announcement_reaches_the_other_screens_once_and_expires(self):
+        actions, result = self.run_tool("announce", {"message": "Dinner is ready."}, screen="Kitchen iPad")
+        self.assertEqual(actions, [])
+        got = self.a.announcements.since(0)
+        self.assertEqual(got, {"ok": True, "last": 1, "items": [{"id": 1, "text": "Dinner is ready.", "from": "Kitchen iPad"}]})
+        self.assertEqual(self.a.announcements.since(1)["items"], [])
+        self.clock = datetime(2026, 11, 12, 9, 3)
+        self.assertEqual(self.a.announcements.since(0), {"ok": True, "last": 1, "items": []})
+        self.assertTrue(self.run_tool("announce", {"message": " "})[1]["is_error"])
+
+    def test_radio(self):
+        self.assertEqual(self.run_tool("play_radio", {"station": "WNYC"})[0], [{"type": "play_radio", "station": "WNYC"}])
+        self.assertTrue(self.run_tool("play_radio", {"station": ""})[1]["is_error"])
+
+
 class Spending(Case):
     def test_every_answer_is_counted(self):
         self.answers = [tool("set_timer", {"seconds": 60}, tokens_in=2000, tokens_out=100),
@@ -516,6 +560,33 @@ class Route(HouseholdCase):
         with mock.patch.object(server.urllib.request, "urlopen", urlopen):
             self.assertIsNone(server._forward_shopping(["milk", "eggs"]))
         self.assertEqual(got, [("https://recipes.example/grocery-inbox/token", {"items": ["milk", "eggs"], "source": "display"}, "POST")])
+
+    def test_zmanim_hebrew_date_and_the_agenda_only_for_a_screen_that_shows_it(self):
+        extra = {"hebdate": {"english": "3 Kislev 5787", "after_sunset": False},
+                 "zmanim": {"date": "2026-11-12", "times": {"shema": "2026-11-12T09:11:00-05:00", "sunset": "2026-11-12T16:39:00-05:00", "odd": "x"}},
+                 "agenda": {"items": [{"title": "Dentist", "start": "2026-11-13T15:00:00-05:00", "all_day": False},
+                                      {"title": "Trip", "start": "2026-11-15T00:00:00-05:00", "all_day": True}]}}
+        base = server.store.get
+        with mock.patch.object(server.store, "get", lambda key: extra.get(key) or base(key)):
+            plain = server.assistant_facts(screen="iPad")
+            self.assertIn("Hebrew date: 3 Kislev 5787.", plain)
+            self.assertIn("Zmanim for 2026-11-12: Latest Shema (Gra) 9:11 AM; Sunset 4:39 PM.", plain)
+            self.assertNotIn("Dentist", plain)
+            self.assertNotIn("Dentist", server.assistant_facts())
+            h = server.household()
+            h["screens"]["Office"] = {"rotation": [{"scene": "agenda", "seconds": 20, "on": True}]}
+            server.save_household(h)
+            self.assertIn("Agenda: Fri Nov 13 3:00 PM Dentist; Sun Nov 15 all day Trip.", server.assistant_facts(screen="Office"))
+
+    def test_announcements_for_the_screens(self):
+        server.ASSISTANT.announcements.add("Dinner is ready.", "iPad")
+        last = server.ASSISTANT.announcements.last
+        status, got = self.call(f"/api/announcements?since={last - 1}")
+        self.assertEqual((status, got["items"]), (200, [{"id": last, "text": "Dinner is ready.", "from": "iPad"}]))
+        self.assertEqual(self.call(f"/api/announcements?since={last}")[1]["items"], [])
+        self.assertEqual(self.call("/api/announcements?since=nonsense")[0], 200)
+        self.at("2026-11-14T12:00:00-05:00")
+        self.assertEqual(self.call("/api/announcements?since=0")[1]["items"], [])
 
     def test_the_phones_shopping_page(self):
         with urllib.request.urlopen(self.base + "/shop", timeout=5) as r:

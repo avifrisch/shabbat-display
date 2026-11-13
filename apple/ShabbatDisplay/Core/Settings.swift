@@ -33,6 +33,14 @@ struct Settings {
         nonmutating set { store.set(newValue, forKey: "wakePhrase") }
     }
 
+    var reminders: [Reminder] {
+        get {
+            guard let data = store.data(forKey: "reminders") else { return [] }
+            return (try? JSONDecoder().decode([Reminder].self, from: data)) ?? []
+        }
+        nonmutating set { store.set(try? JSONEncoder().encode(newValue), forKey: "reminders") }
+    }
+
     /// Apple Home control, off until someone turns it on.
     var homeOn: Bool {
         get { store.bool(forKey: "homeOn") }

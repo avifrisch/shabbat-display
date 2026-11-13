@@ -49,6 +49,17 @@ final class HomeBox: NSObject, HMHomeManagerDelegate {
             self.readValues(force: true)
             #if DEBUG
             print("HOME homes: \(self.manager?.homes.count ?? 0), devices: \(self.devices.count), scenes: \(self.home?.actionSets.count ?? 0)")
+            for (index, home) in (self.manager?.homes ?? []).enumerated() {
+                var types: [String: Int] = [:]
+                for accessory in home.accessories {
+                    for service in accessory.services { types[service.localizedDescription + " " + service.serviceType.prefix(8), default: 0] += 1 }
+                }
+                for accessory in home.accessories {
+                    print("HOME   accessory '\(accessory.name)' category=\(accessory.category.localizedDescription) maker=\(accessory.manufacturer ?? "?") model=\(accessory.model ?? "?") reachable=\(accessory.isReachable) bridged=\(accessory.isBridged)")
+                }
+                let reachable = home.accessories.filter(\.isReachable).count
+                print("HOME home \(index) primary=\(home.isPrimary) accessories=\(home.accessories.count) reachable=\(reachable) scenes=\(home.actionSets.count) services=\(types.sorted { $0.key < $1.key })")
+            }
             #endif
         }
     }

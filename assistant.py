@@ -51,6 +51,12 @@ if asked. When you start music, just say what you are putting on; the display it
 if it can't find it. You have no internet search: answer from what you know and from the facts below, and say so \
 when you don't know.
 
+You can set reminders and alarms for a time of day (set_reminder), announce a message on the \
+family's other displays (announce), and play live radio stations (play_radio; music_control \
+also pauses or stops the radio). Work out dates and times from the current time in the facts. \
+If they say good morning or ask for a briefing, give a short one from the facts: the weather, \
+today's agenda if listed, and candle lighting if it is Friday or the eve of a holiday.
+
 If the words look like something the display overheard rather than a request to it, answer \
 with an empty reply."""
 
@@ -83,6 +89,24 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "command": {"type": "string", "enum": ["pause", "resume", "next", "previous", "stop"]}},
          "required": ["command"]}},
+    {"name": "set_reminder",
+     "description": "Remind the family at a time of day: the display chimes and says the text then. Also for alarms ('wake me at 7').",
+     "input_schema": {"type": "object", "properties": {
+         "when": {"type": "string", "description": "Local date and time, YYYY-MM-DDTHH:MM (24-hour). For a repeating reminder, its first time."},
+         "text": {"type": "string", "description": "What to say, as a short phrase: 'take the challah out'."},
+         "repeat": {"type": "string", "enum": ["none", "daily", "weekdays"], "description": "weekdays = Sunday to Thursday mornings plus Friday; never on Shabbat. Default none."}},
+         "required": ["when", "text"]}},
+    {"name": "cancel_reminder",
+     "description": "Cancel a reminder by its text, or 'all'.",
+     "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
+    {"name": "announce",
+     "description": "Say a message on the family's other displays around the house, and show it on their screens.",
+     "input_schema": {"type": "object", "properties": {
+         "message": {"type": "string", "description": "The announcement, worded to be heard: 'Dinner is ready.'"}},
+         "required": ["message"]}},
+    {"name": "play_radio",
+     "description": "Play a live radio station on the display, by its name or call letters ('WNYC', 'BBC World Service', 'Kol Israel').",
+     "input_schema": {"type": "object", "properties": {"station": {"type": "string"}}, "required": ["station"]}},
     {"name": "home_set",
      "description": "Change one device in the home (Apple Home). Call it once per device; for 'all the kitchen lights', call it for each light listed in that room.",
      "input_schema": {"type": "object", "properties": {
@@ -429,6 +453,39 @@ def _clean_timers(value):
     return out[:10]
 
 
+class Announcements:
+    """Messages for every display, kept in memory for two minutes: long enough for each screen
+    to fetch them once, short enough that a screen switched on later doesn't replay old ones."""
+    KEEP = 120
+
+    def __init__(self, now=datetime.now):
+        self.now, self.lock, self.items, self.last = now, threading.Lock(), [], 0
+
+    def add(self, text, origin=""):
+        with self.lock:
+            self.last += 1
+            self.items.append({"id": self.last, "text": text, "from": origin, "at": self.now()})
+            return self.last
+
+    def since(self, last_seen):
+        """Announcements newer than `last_seen` and still fresh, plus the newest id."""
+        with self.lock:
+            cutoff = self.now()
+            self.items = [i for i in self.items if (cutoff - i["at"]).total_seconds() <= self.KEEP]
+            return {"ok": True, "last": self.last,
+                    "items": [{"id": i["id"], "text": i["text"], "from": i["from"]} for i in self.items if i["id"] > last_seen]}
+
+
+def _clean_reminders(value):
+    """The iPad's reminders: [{text, when, repeat}]."""
+    out = []
+    for r in value if isinstance(value, list) else []:
+        if isinstance(r, dict) and _clean_text(r.get("text"), 120) and isinstance(r.get("when"), str):
+            out.append({"text": _clean_text(r.get("text"), 120), "when": r["when"][:16],
+                        "repeat": r.get("repeat") if r.get("repeat") in ("daily", "weekdays") else "none"})
+    return out[:30]
+
+
 HOME_KINDS = ("light", "switch", "plug", "fan", "thermostat", "shade", "lock", "garage door", "sensor")
 HOME_ACTIONS = {"on": ("light", "switch", "plug", "fan"), "off": ("light", "switch", "plug", "fan"),
                 "brightness": ("light",), "temperature": ("thermostat",), "position": ("shade",),
@@ -478,11 +535,14 @@ class Assistant:
     """One per server. `settings()` gives {"api_key", "monthly_usd", "daily_requests"} each time,
     so a changed settings file takes effect without rebuilding this."""
 
-    def __init__(self, settings, budget, shopping, usuals, post=post_json, log=print, forward=None):
+    def __init__(self, settings, budget, shopping, usuals, post=post_json, log=print, forward=None, announcements=None):
         self.settings, self.budget, self.shopping, self.usuals = settings, budget, shopping, usuals
         self.post, self.log, self.forward = post, log, forward
+        self.announcements = announcements or Announcements(budget.now)
 
     # -- what the iPad asks
+
+    _screen = ""
 
     def handle(self, body, facts="", holy=False):
         """Answer one spoken request. Returns (http status, dict); the dict's `say` is read aloud."""
@@ -499,11 +559,13 @@ class Assistant:
                          "say": "The assistant isn't set up yet. The display computer needs its Claude key."}
         timers = _clean_timers(body.get("timers"))
         home = _clean_home(body.get("home"))
+        reminders = _clean_reminders(body.get("reminders"))
+        self._screen = _clean_text(body.get("screen"), 40)
         messages = []
         for h in _clean_history(body.get("history")):
             messages += [{"role": "user", "content": h["q"]}, {"role": "assistant", "content": h["a"]}]
         messages.append({"role": "user", "content": text})
-        system = SYSTEM + "\n\nFacts right now:\n" + self._facts(facts, timers, _clean_music(body.get("music")), home)
+        system = SYSTEM + "\n\nFacts right now:\n" + self._facts(facts, timers, _clean_music(body.get("music")), home, reminders)
 
         actions, said = [], []
         for _ in range(MAX_STEPS):
@@ -548,7 +610,7 @@ class Assistant:
             return "I can't read my spending record, so I've stopped. It needs a look on the display computer."
         return "I've reached this month's spending limit."
 
-    def _facts(self, facts, timers, music=None, home=None):
+    def _facts(self, facts, timers, music=None, home=None, reminders=()):
         lines = [facts.strip()] if facts and facts.strip() else []
         items = [i["text"] for i in self.shopping.items()]
         lines.append("Shopping list: " + ("; ".join(items) if items else "empty") + ".")
@@ -562,6 +624,9 @@ class Assistant:
             lines.append(f"Music: {music['title']} ({'playing' if music['playing'] else 'paused'}).")
         else:
             lines.append("Music: nothing playing.")
+        lines.append("Reminders: " + ("; ".join(
+            f"{r['text']} at {r['when'].replace('T', ' ')}" + ("" if r["repeat"] == "none" else f", {r['repeat']}")
+            for r in reminders) if reminders else "none") + ".")
         lines += self._home_facts(home)
         usual = self.usuals.items()
         if usual:
@@ -658,6 +723,38 @@ class Assistant:
                     return {"content": "The commands are pause, resume, next, previous and stop.", "is_error": True}
                 actions.append({"type": "music_control", "command": command})
                 return {"content": "Done."}
+            if name == "set_reminder":
+                text = _clean_text(args.get("text"), 120)
+                try:
+                    when = datetime.strptime(args.get("when") if isinstance(args.get("when"), str) else "", "%Y-%m-%dT%H:%M")
+                except ValueError:
+                    when = None
+                if not text or when is None:
+                    return {"content": "A reminder needs a text and a time as YYYY-MM-DDTHH:MM.", "is_error": True}
+                repeat = args.get("repeat") if args.get("repeat") in ("daily", "weekdays") else "none"
+                now = self.budget.now().replace(tzinfo=None)
+                if repeat == "none" and (when - now).total_seconds() < -60:
+                    return {"content": f"That time has passed. It is now {now:%Y-%m-%dT%H:%M}.", "is_error": True}
+                if (when - now).days > 366:
+                    return {"content": "A reminder can be up to a year ahead.", "is_error": True}
+                actions.append({"type": "set_reminder", "when": when.strftime("%Y-%m-%dT%H:%M"), "text": text, "repeat": repeat})
+                return {"content": f"Set for {when:%A %B} {when.day} at {when:%I:%M %p}".replace(" 0", " ")
+                                   + ("" if repeat == "none" else f", {repeat}") + ". The display skips reminders that fall on Shabbat or Yom Tov."}
+            if name == "cancel_reminder":
+                actions.append({"type": "cancel_reminder", "text": _clean_text(args.get("text"), 120) or "all"})
+                return {"content": "Cancelled if there was one."}
+            if name == "announce":
+                message = _clean_text(args.get("message"), 240)
+                if not message:
+                    return {"content": "Say what to announce.", "is_error": True}
+                self.announcements.add(message, self._screen)
+                return {"content": "It is being said on the other displays now. Screens that are off or closed won't hear it."}
+            if name == "play_radio":
+                station = _clean_text(args.get("station"), 80)
+                if not station:
+                    return {"content": "Say which station.", "is_error": True}
+                actions.append({"type": "play_radio", "station": station})
+                return {"content": f"The display is looking for the station '{station}' and will play it, or say that it couldn't."}
             if name in ("home_set", "home_scene"):
                 return self._home_tool(name, args, actions, home)
             if name == "send_to_phone":

@@ -278,3 +278,81 @@ final class HomeTests: XCTestCase {
                                        .homeScene("Good Night")])
     }
 }
+
+final class RemindersTests: XCTestCase {
+    private var calendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        return calendar
+    }()
+
+    private func at(_ text: String) -> Date { Reminders.date(from: text, calendar: calendar)! }
+
+    func testTimesGoBothWays() {
+        XCTAssertEqual(Reminders.text(from: at("2026-11-12T16:00"), calendar: calendar), "2026-11-12T16:00")
+        XCTAssertNotNil(Reminders.date(from: "2026-11-12T16:00:30", calendar: calendar))
+        XCTAssertNil(Reminders.date(from: "tomorrow", calendar: calendar))
+    }
+
+    func testAReminderIsSaidOnceWhenDue() {
+        var reminders = Reminders()
+        reminders.add(text: " take the challah out ", when: at("2026-11-12T16:00"), again: .none)
+        XCTAssertTrue(reminders.advance(to: at("2026-11-12T15:59"), calendar: calendar).isEmpty)
+        XCTAssertEqual(reminders.advance(to: at("2026-11-12T16:00"), calendar: calendar).map(\.text), ["take the challah out"])
+        XCTAssertTrue(reminders.all.isEmpty)
+    }
+
+    func testOneMissedByMoreThanTenMinutesIsDroppedSilently() {
+        var reminders = Reminders()
+        reminders.add(text: "old", when: at("2026-11-12T16:00"), again: .none)
+        XCTAssertTrue(reminders.advance(to: at("2026-11-12T16:11"), calendar: calendar).isEmpty)
+        XCTAssertTrue(reminders.all.isEmpty)
+    }
+
+    func testDailyAndWeekdayRepeats() {
+        var reminders = Reminders()
+        reminders.add(text: "vitamins", when: at("2026-11-12T08:00"), again: .daily)
+        reminders.add(text: "wake up", when: at("2026-11-13T07:00"), again: .weekdays)   // a Friday
+        XCTAssertEqual(reminders.advance(to: at("2026-11-12T08:00"), calendar: calendar).map(\.text), ["vitamins"])
+        XCTAssertEqual(reminders.advance(to: at("2026-11-13T07:00"), calendar: calendar).map(\.text), ["wake up"])
+        let next = Dictionary(uniqueKeysWithValues: reminders.all.map { ($0.text, Reminders.text(from: $0.when, calendar: calendar)) })
+        XCTAssertEqual(next["vitamins"], "2026-11-13T08:00")
+        XCTAssertEqual(next["wake up"], "2026-11-15T07:00", "Saturday is skipped")
+        // The app was closed for three days: the daily one comes back at its next time, said once at most.
+        XCTAssertTrue(reminders.advance(to: at("2026-11-16T12:00"), calendar: calendar).isEmpty)
+        XCTAssertEqual(reminders.all.first { $0.text == "vitamins" }.map { Reminders.text(from: $0.when, calendar: calendar) }, "2026-11-17T08:00")
+    }
+
+    func testCancelAndReport() {
+        var reminders = Reminders()
+        reminders.add(text: "take the challah out", when: at("2026-11-12T16:00"), again: .none)
+        reminders.add(text: "wake up", when: at("2026-11-13T07:00"), again: .weekdays)
+        XCTAssertEqual(reminders.report(calendar: calendar).last?["repeat"] as? String, "weekdays")
+        reminders.cancel(text: "Challah")
+        XCTAssertEqual(reminders.all.map(\.text), ["wake up"])
+        reminders.cancel(text: "all")
+        XCTAssertTrue(reminders.all.isEmpty)
+    }
+}
+
+final class FeedsTests: XCTestCase {
+    func testAnnouncementsFromOtherScreensOnly() throws {
+        let json = #"{"ok": true, "last": 7, "items": [{"id": 6, "text": "Dinner is ready.", "from": "Kitchen"}, {"id": 7, "text": "My own.", "from": "iPad"}, {"id": 8, "text": ""}]}"#
+        XCTAssertEqual(AnnouncementFeed.parse(Data(json.utf8), mine: "iPad"), AnnouncementFeed.Batch(last: 7, texts: ["Dinner is ready."]))
+        XCTAssertNil(AnnouncementFeed.parse(Data("{}".utf8), mine: "iPad"))
+    }
+
+    func testRadioStationChoice() throws {
+        let json = #"[{"name": "No stream", "url": ""}, {"name": " WNYC-FM ", "url": "http://old", "url_resolved": "https://fm939.wnyc.org/wnycfm"}, {"name": "Other", "url_resolved": "https://x"}]"#
+        let station = try XCTUnwrap(RadioBox.pick(from: Data(json.utf8)))
+        XCTAssertEqual(station, RadioBox.Station(name: "WNYC-FM", stream: URL(string: "https://fm939.wnyc.org/wnycfm")!))
+        XCTAssertNil(RadioBox.pick(from: Data("[]".utf8)))
+        XCTAssertTrue(RadioBox.search("BBC World").absoluteString.contains("name=BBC%20World"))
+    }
+
+    func testReminderAndRadioActions() throws {
+        let json = #"{"ok": true, "say": "Okay.", "actions": [{"type": "set_reminder", "when": "2026-11-12T16:00", "text": "challah", "repeat": "none"}, {"type": "cancel_reminder", "text": "challah"}, {"type": "play_radio", "station": "WNYC"}, {"type": "play_radio", "station": ""}]}"#
+        XCTAssertEqual(try XCTUnwrap(AssistantReply.parse(Data(json.utf8))).actions,
+                       [.setReminder(when: "2026-11-12T16:00", text: "challah", again: "none"), .cancelReminder("challah"), .playRadio("WNYC")])
+    }
+}

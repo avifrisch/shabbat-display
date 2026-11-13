@@ -1650,6 +1650,34 @@ function makeDemo() {
   };
 }
 
+// Announcements from the voice assistant ("tell everyone dinner is ready"): shown on every screen
+// for 45 seconds. The iPad app says them aloud itself; a browser can't speak without a tap.
+let announceSeen = null;
+async function pollAnnouncements() {
+  if (location.protocol === "file:" || document.body.classList.contains("holy")) return;
+  try {
+    const r = await fetch("/api/announcements?since=" + (announceSeen == null ? 0 : announceSeen), {cache: "no-store"});
+    const j = await r.json();
+    const first = announceSeen == null;
+    announceSeen = j.last;
+    // Ones made before this page opened are skipped; they were for whoever was there then.
+    if (first || !j.items || !j.items.length) return;
+    let box = document.getElementById("announce");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "announce";
+      box.style.cssText = "position:fixed;left:50%;top:6%;transform:translateX(-50%);max-width:70%;z-index:50;padding:1.4rem 2.2rem;border-radius:1.2rem;background:rgba(13,23,38,.96);border:.12rem solid #E5BA5E;color:#EFE9DC;font-size:2.6rem;font-weight:600;text-align:center;box-shadow:0 1rem 3rem rgba(0,0,0,.5)";
+      document.body.appendChild(box);
+    }
+    box.textContent = j.items[j.items.length - 1].text;
+    box.hidden = false;
+    clearTimeout(box.timer);
+    box.timer = setTimeout(() => { box.hidden = true; }, 45000);
+  } catch (e) {}
+}
+setInterval(pollAnnouncements, 5000);
+pollAnnouncements();
+
 poll();
 </script>
 </body>

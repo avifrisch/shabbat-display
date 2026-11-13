@@ -30,6 +30,11 @@ final class VoiceController {
     private(set) var code: PhoneCode?
     let music = MusicBox()
     let home = HomeBox()
+    let radio = RadioBox()
+    private(set) var reminders: Reminders
+    private var announcementsSeen: Int?
+    private var ticks = 0
+    private var fetchingAnnouncements = false
 
     private let model: AppModel
     private let settings = Settings()
@@ -46,11 +51,13 @@ final class VoiceController {
     private var candles: Task<Void, Never>?
     private var lastAlarm = Date.distantPast
     private var busy = false
+    private var askedAQuestion = false
     private var codeUntil = Date.distantPast
 
     init(model: AppModel) {
         self.model = model
         timers = KitchenTimers(Settings().timers)
+        reminders = Reminders(Settings().reminders)
         listener.onEvent = { [weak self] event in
             Task { @MainActor in self?.handle(event) }
         }
@@ -102,6 +109,8 @@ final class VoiceController {
             // Shabbat, Yom Tov, or a calendar that can't say: no sound of any kind.
             sounds.stopSpeaking()
             music.stop()
+            radio.stop()
+            announcementsSeen = nil
             code = nil
             if !timers.all.isEmpty { timers.removeAll(); settings.timers = [] }
             history = []
@@ -155,7 +164,7 @@ final class VoiceController {
             if Date() < awaitingUntil {
                 stage = .hearing(words)
             } else if let command = wake.command(in: words) {
-                if !chimed { chimed = true; music.holdForSpeech(); sounds.chime() }
+                if !chimed { chimed = true; music.holdForSpeech(); radio.holdForSpeech(); sounds.chime() }
                 stage = .hearing(command)
             }
         case .heard(let words):
@@ -175,6 +184,7 @@ final class VoiceController {
                 }
             } else if case .hearing = stage {
                 stage = .waiting
+                radio.carryOn()
                 Task { await self.music.carryOn() }
             }
         }
@@ -187,10 +197,12 @@ final class VoiceController {
         busy = true
         listener.mute(true)
         music.holdForSpeech()
+        radio.holdForSpeech()
         stage = .asking(request)
         if Date().timeIntervalSince(lastExchange) > 180 { history = [] }
         let reply = await AssistantClient.ask(server, text: request, timers: timers.report(now: Date()), history: history,
-                                              music: music.report, home: home.report)
+                                              music: radio.station.map { ["playing": radio.playing, "title": "Radio: " + $0] } ?? music.report,
+                                              home: home.report, reminders: reminders.report(), screen: model.screen)
         // Shabbat may have begun while the answer was on its way.
         if model.holy.weekdayForCertain {
             var say: String
@@ -208,12 +220,20 @@ final class VoiceController {
             if !say.isEmpty {
                 stage = .answering(say)
                 await sounds.say(say)
+                askedAQuestion = reply?.error == nil && say.hasSuffix("?")
             }
         }
-        if model.holy.weekdayForCertain { await music.carryOn() } else { music.stop() }
+        if model.holy.weekdayForCertain { await music.carryOn(); radio.carryOn() } else { music.stop(); radio.stop() }
         busy = false
         listener.mute(false)
-        stage = listening ? .waiting : .off
+        if listening, askedAQuestion {
+            // The display asked something back: the answer needs no wake phrase.
+            askedAQuestion = false
+            awaitingUntil = Date().addingTimeInterval(8)
+            stage = .hearing("")
+        } else {
+            stage = listening ? .waiting : .off
+        }
     }
 
     /// Carries out the answer's actions. Returns a sentence to say instead of the answer when one failed.
@@ -224,10 +244,23 @@ final class VoiceController {
             case .setTimer(let seconds, let label): timers.add(seconds: seconds, label: label, now: Date())
             case .cancelTimer(let label): timers.cancel(label: label)
             case .playMusic(let query, let kind):
+                radio.stop()
                 do { try await music.play(query: query, kind: kind) } catch {
                     trouble = (error as? MusicBox.Trouble ?? .failed).sentence
                 }
-            case .musicControl(let command): await music.control(command)
+            case .musicControl(let command):
+                if radio.station != nil { radio.control(command) } else { await music.control(command) }
+            case .playRadio(let station):
+                music.stop()
+                if await !radio.play(station) { trouble = "I couldn't find a station called \(station)." }
+            case .setReminder(let when, let text, let again):
+                if let date = Reminders.date(from: when) {
+                    reminders.add(text: text, when: date, again: Reminder.Repeat(rawValue: again) ?? .none)
+                    settings.reminders = reminders.all
+                }
+            case .cancelReminder(let text):
+                reminders.cancel(text: text)
+                settings.reminders = reminders.all
             case .homeSet(let device, let room, let what, let value):
                 do { try await home.set(device: device, room: room, action: what, value: value) } catch {
                     trouble = (error as? HomeBox.Trouble ?? .failed(device)).sentence
@@ -277,11 +310,48 @@ final class VoiceController {
         settings.timers = timers.all
     }
 
+    /// Chimes and says something the display itself has to say (a reminder, an announcement).
+    private func say(_ sentences: [String]) {
+        guard model.holy.weekdayForCertain, !busy else { return }
+        busy = true
+        Task {
+            listener.mute(true)
+            music.holdForSpeech()
+            radio.holdForSpeech()
+            let words = sentences.joined(separator: " ")
+            stage = .answering(words)
+            sounds.chime()
+            try? await Task.sleep(for: .seconds(0.4))
+            await sounds.say(words)
+            if model.holy.weekdayForCertain { await music.carryOn(); radio.carryOn() }
+            busy = false
+            listener.mute(false)
+            stage = listening ? .waiting : .off
+        }
+    }
+
+    private func checkAnnouncements(_ server: ServerAddress) {
+        fetchingAnnouncements = true
+        Task {
+            defer { fetchingAnnouncements = false }
+            guard let batch = await AnnouncementFeed.fetch(server, since: announcementsSeen ?? 0, mine: model.screen) else { return }
+            // The first answer only sets the mark: older announcements were for whoever was here then.
+            let first = announcementsSeen == nil
+            announcementsSeen = batch.last
+            if !first, !batch.texts.isEmpty { say(batch.texts) }
+        }
+    }
+
     private func tick() {
         if wanted != listening || !model.holy.weekdayForCertain { refresh() }
         guard model.holy.weekdayForCertain else { return }
         music.look()
         home.readValues()
+        ticks += 1
+        let due = reminders.advance(to: Date())
+        if !due.isEmpty || reminders.all != settings.reminders { settings.reminders = reminders.all }
+        if !due.isEmpty, !busy { say(["Reminder."] + due.map { $0.text + "." }) }
+        if ticks % 3 == 0, settings.voiceOn, !fetchingAnnouncements, let server = model.server { checkAnnouncements(server) }
         if code != nil, Date() > codeUntil { code = nil }
         if !busy, case .hearing = stage, awaitingUntil != .distantPast, Date() > awaitingUntil {
             // The wake phrase was said and nothing followed.

@@ -34,6 +34,8 @@ targets:
         # The display server is plain http on the home network (or a Tailscale address).
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+          # Many radio stations still stream over plain http.
+          NSAllowsArbitraryLoadsForMedia: true
         NSLocalNetworkUsageDescription: "Shows the Shabbat Display running on your home computer."
         NSMicrophoneUsageDescription: "Hears requests after the wake phrase, such as a timer or a shopping-list item. Off on Shabbat and Yom Tov."
         NSHomeKitUsageDescription: "Switches lights and other devices in your Home when you ask."
